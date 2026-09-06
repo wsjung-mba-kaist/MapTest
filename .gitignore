@@ -1,7 +1,4 @@
 node_modules/
 dist/
 cache/
-public/data/
-public/models/eiffel.glb
-public/textures/
 *.log
