@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Paris · Tour Eiffel</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #0b0d12; color: #e8e6e1; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+    #app { display: block; width: 100vw; height: 100vh; height: 100dvh; outline: none; }
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+    #crosshair { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+    #help { position: absolute; left: 16px; bottom: 16px; font-size: 12px; line-height: 1.5; background: rgba(8,10,16,.55); padding: 10px 12px; border-radius: 8px; backdrop-filter: blur(6px); max-width: 360px; }
+    kbd { display: inline-block; min-width: 14px; padding: 0 5px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; font: 11px/16px ui-monospace, monospace; text-align: center; }
+    #overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: radial-gradient(ellipse at center, rgba(20,24,34,.92), rgba(8,10,16,.98)); pointer-events: auto; cursor: pointer; transition: opacity .35s; }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    #overlay h1 { font-weight: 500; letter-spacing: .04em; margin: 0; font-size: 28px; }
+    #overlay p { margin: 0; opacity: .75; font-size: 14px; }
+    /* While the time panel is open the pause overlay becomes a bottom hint so the scene stays visible and the panel clickable. */
+    #overlay.peek { background: none; justify-content: flex-end; padding-bottom: 56px; box-sizing: border-box; }
+    #overlay.peek h1, #overlay.peek #progress { display: none; }
+    #overlay.peek p { background: rgba(8,10,16,.6); padding: 8px 14px; border-radius: 8px; opacity: 1; backdrop-filter: blur(6px); }
+    #progress { width: 260px; height: 3px; background: rgba(255,255,255,.12); border-radius: 2px; overflow: hidden; }
+    #progress > i { display: block; height: 100%; width: 0%; background: #e8c27a; transition: width .2s; }
+    #timepanel { position: absolute; right: 16px; top: 80px; z-index: 20; width: 264px; background: rgba(8,10,16,.72); padding: 10px 12px; border-radius: 8px; font-size: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 8px; backdrop-filter: blur(6px); }
+    #timepanel[hidden] { display: none; }
+    #timepanel .row { display: flex; justify-content: space-between; align-items: baseline; }
+    #timepanel #timeval { font: 13px ui-monospace, monospace; color: #e8c27a; }
+    #timepanel input { width: 100%; margin: 0; cursor: pointer; accent-color: #e8c27a; }
+    #timepanel .presets { display: flex; gap: 4px; }
+    #timepanel button { flex: 1 1 0; padding: 3px 0; border: 1px solid rgba(255,255,255,.18); border-radius: 5px; background: rgba(255,255,255,.06); color: inherit; font-size: 11px; cursor: pointer; }
+    #timepanel button:hover { background: rgba(232,194,122,.28); }
+    #timepanel .hint { opacity: .55; font-size: 11px; line-height: 1.6; }
+    #toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.8); padding: 8px 14px; border-radius: 8px; font-size: 13px; pointer-events: none; }
+    #toast[hidden] { display: none; }
+    #prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.72); padding: 8px 14px; border-radius: 8px; font-size: 14px; pointer-events: none; border: 1px solid rgba(232,194,122,.45); }
+    #prompt kbd { display: inline-block; min-width: 18px; padding: 1px 6px; margin-right: 6px; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; background: rgba(255,255,255,.12); font: 12px ui-monospace, monospace; text-align: center; }
+    #prompt[hidden] { display: none; }
+    #status { position: absolute; right: 16px; top: 16px; font: 12px/1.4 ui-monospace, monospace; opacity: .7; text-align: right; white-space: pre; }
+    #minimap { position: absolute; right: 16px; bottom: 16px; width: 200px; height: 200px; border-radius: 10px; border: 1px solid rgba(255,255,255,.28); box-shadow: 0 2px 12px rgba(0,0,0,.4); z-index: 20; }
+    #minimap[hidden] { display: none; }
+    #touch { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+    #touch .stick-base { position: absolute; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.35); }
+    #touch .stick-base[hidden] { display: none; }
+    #touch .stick-knob { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.55); }
+    #touch .touch-row { position: absolute; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 58vw; pointer-events: auto; }
+    #touch .touch-row button { min-width: 48px; min-height: 44px; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(8,10,16,.62); color: #fff; font-size: 14px; touch-action: none; }
+    /* phones and tablets: hide the keyboard help and the debug status line, shrink the panels, keep the thumb zones clear */
+    html.touch:not(.debug) #status { display: none; }
+    html.touch #help { display: none; }
+    html.touch #help.shown { display: block; left: 10px; bottom: auto; top: 10px; max-width: min(360px, 70vw); font-size: 11px; }
+    html.touch #timepanel { width: 220px; top: calc(10px + env(safe-area-inset-top)); right: 10px; font-size: 11px; box-sizing: border-box; }
+    html.touch #timepanel .hint:last-child { display: none; }
+    html.touch.debug #status { top: auto; bottom: calc(120px + env(safe-area-inset-bottom)); left: 10px; right: auto; text-align: left; font-size: 10px; }
+    @media (max-width: 520px) { html.touch #timepanel { left: 10px; right: 10px; width: auto; } }
+    html.touch #minimap { width: 140px; height: 140px; right: 10px; bottom: calc(118px + env(safe-area-inset-bottom)); }
+    html.touch #overlay p { padding: 0 24px; text-align: center; }
+    html.touch #crosshair { display: none; }
+    #touch .touch-row button.on { background: rgba(232,194,122,.55); }
+  </style>
+</head>
+<body>
+  <canvas id="app" tabindex="0"></canvas>
+  <div id="hud">
+    <div id="crosshair" hidden></div>
+    <div id="status"></div>
+    <div id="toast" hidden></div>
+    <div id="prompt" hidden></div>
+    <div id="timepanel">
+      <div class="row"><label for="timeslider">시간 <span id="timeval">17:30</span></label><span class="hint" id="datelabel">오늘 · 파리</span></div>
+      <input id="timeslider" type="range" min="0" max="24" step="0.1" value="17.5" />
+      <div class="presets"></div>
+      <div class="hint"><kbd>,</kbd> <kbd>.</kbd> ±15분 · <kbd>Shift</kbd> ±1시간 · <kbd>N</kbd> 순환</div>
+    </div>
+    <div id="help">
+      <b>Paris · Champ de Mars</b><br/>
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · <kbd>Shift</kbd> 달리기 · 마우스 시점<br/>
+      <kbd>1</kbd>–<kbd>8</kbd> 명소 이동 · <kbd>F</kbd> 비행 · <kbd>T</kbd> 시간 패널 · <kbd>N</kbd> 야경 · <kbd>H</kbd> 도움말 · <kbd>Esc</kbd> 마우스 해제<br/>
+      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 · <kbd>V</kbd> 소리 끄기/켜기 · 게임패드 지원
+    </div>
+    <div id="overlay">
+      <h1>Tour Eiffel</h1>
+      <p id="overlay-msg">불러오는 중…</p>
+      <div id="progress"><i></i></div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

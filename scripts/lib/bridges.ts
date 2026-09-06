@@ -1,0 +1,199 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type { FeatureCollection, Geometry, LineString, Polygon, MultiPolygon } from 'geojson';
+import { log } from './log.ts';
+import { OUT_DIR } from '../config.ts';
+import type { OsmProps } from './overpass.ts';
+import { GeomBuilder, encodeBinMesh } from './binmesh.ts';
+import { triangulateCap } from './extrude.ts';
+import { frame } from '../../shared/geo.ts';
+import { SurfaceFlag, WORLD_HALF } from '../../shared/layout.ts';
+import type { Heightmap } from '../../shared/heightmap.ts';
+import { area, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
+
+const DECK_THICK = 2.2;
+const PARAPET_H = 1.05;
+const PARAPET_T = 0.45;
+const STONE: [number, number, number] = [196, 188, 172];
+const ROAD: [number, number, number] = [110, 108, 104];
+
+export interface Bridge { id: string; poly: Poly; deckTop: number; name: string; rail: boolean }
+/** Oriented pier footprint: centre, across-flow unit direction (dx,dz), half-length across the flow (2.25 m), half-width along the flow. */
+export interface PierBox { cx: number; cz: number; dx: number; dz: number; halfL: number; halfW: number; name: string }
+export type FlowField = (x: number, z: number) => [number, number] | null;
+
+function toWorldRing(coords: number[][]): Ring {
+  return cleanRing(coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }));
+}
+function toWorldPolys(geom: Polygon | MultiPolygon): Poly[] {
+  const out: Poly[] = [];
+  const push = (c: number[][][]) => { const rings = c.map(toWorldRing).filter(r => r.length >= 3); if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]); };
+  if (geom.type === 'Polygon') push(geom.coordinates); else geom.coordinates.forEach(push);
+  return out;
+}
+
+/** Buffer a polyline into a polygon of the given width (union of per-segment quads + round-ish joints). */
+function bufferLine(line: Pt[], width: number): Poly[] {
+  const h = width / 2;
+  const quads: Poly[] = [];
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [ax, az] = line[i], [bx, bz] = line[i + 1];
+    const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
+    if (len < 0.01) continue;
+    const nx = (-dz / len) * h, nz = (dx / len) * h;
+    quads.push([[[ax + nx, az + nz], [bx + nx, bz + nz], [bx - nx, bz - nz], [ax - nx, az - nz]]]);
+    if (i + 2 < line.length) { // joint disc
+      const disc: Ring = []; for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; disc.push([bx + Math.cos(a) * h, bz + Math.sin(a) * h]); }
+      quads.push([disc]);
+    }
+  }
+  return unionAll(quads);
+}
+
+function roadWidth(tags: Record<string, string>): number {
+  const w = parseFloat(tags.width ?? ''); if (w > 2) return w;
+  const lanes = parseFloat(tags.lanes ?? '');
+  if (tags.railway) return 9;
+  if (lanes > 0) return lanes * 3.25 + 5;
+  switch (tags.highway) {
+    case 'primary': case 'trunk': return 18; case 'secondary': return 14; case 'tertiary': return 12;
+    case 'footway': case 'path': case 'cycleway': case 'pedestrian': case 'steps': return 5;
+    default: return 10;
+  }
+}
+
+function addBox(gb: GeomBuilder, x0: number, z0: number, x1: number, z1: number, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
+  const ring: Ring = orient([[x0, z0], [x1, z0], [x1, z1], [x0, z1]], false);
+  addWalls(gb, ring, y0, y1, flag, tint);
+  addCapAt(gb, [ring], y1, flag, tint, true);
+}
+
+function addWalls(gb: GeomBuilder, ring: Ring, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
+  const n = ring.length; let u = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]); if (len < 0.02) continue;
+    const m: [number, number, number, number] = [3.1, 1, len, 2 * 256 + 17];
+    const c: [number, number, number, number] = [tint[0], tint[1], tint[2], flag];
+    const i0 = gb.vertex(a[0], y0, a[1], u, y0 - y0, m, c), i1 = gb.vertex(b[0], y0, b[1], u + len, 0, m, c);
+    const i2 = gb.vertex(b[0], y1, b[1], u + len, y1 - y0, m, c), i3 = gb.vertex(a[0], y1, a[1], u, y1 - y0, m, c);
+    gb.quad(i0, i1, i2, i3); u += len;
+  }
+}
+
+function addCapAt(gb: GeomBuilder, rings: Poly, y: number, flag: SurfaceFlag, tint: [number, number, number], up: boolean) {
+  const { flat, tris } = triangulateCap(rings);
+  const base = gb.vertexCount;
+  const m: [number, number, number, number] = [3.1, 1, 0, 2 * 256 + 17];
+  for (let i = 0; i < flat.length; i += 2) gb.vertex(flat[i], y, flat[i + 1], flat[i], flat[i + 1], m, [tint[0], tint[1], tint[2], flag]);
+  for (let t = 0; t < tris.length; t += 3) up ? gb.tri(base + tris[t], base + tris[t + 1], base + tris[t + 2]) : gb.tri(base + tris[t], base + tris[t + 2], base + tris[t + 1]);
+}
+
+/** Principal axis of a ring via covariance (unit direction, centre, half-length along the axis). */
+function principalAxis(ring: Ring): { cx: number; cz: number; dx: number; dz: number; half: number; width: number } {
+  let cx = 0, cz = 0; for (const p of ring) { cx += p[0]; cz += p[1]; } cx /= ring.length; cz /= ring.length;
+  let sxx = 0, sxz = 0, szz = 0; for (const p of ring) { const x = p[0] - cx, z = p[1] - cz; sxx += x * x; sxz += x * z; szz += z * z; }
+  const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+  const dx = Math.cos(ang), dz = Math.sin(ang);
+  let lo = Infinity, hi = -Infinity, wlo = Infinity, whi = -Infinity;
+  for (const p of ring) { const t = (p[0] - cx) * dx + (p[1] - cz) * dz; const w = -(p[0] - cx) * dz + (p[1] - cz) * dx; lo = Math.min(lo, t); hi = Math.max(hi, t); wlo = Math.min(wlo, w); whi = Math.max(whi, w); }
+  return { cx, cz, dx, dz, half: (hi - lo) / 2, width: whi - wlo };
+}
+
+/** Pier boxes of a deck along its principal axis (30 m spacing, only where the ground is under water). */
+function pierBoxes(b: Bridge, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): PierBox[] {
+  const ax = principalAxis(b.poly[0]);
+  const pierW = Math.max(3, Math.min(ax.width * 0.8, 40)), pierL = 4.5, spacing = 30;
+  const n = Math.max(0, Math.floor((ax.half * 2 - 20) / spacing));
+  const out: PierBox[] = [];
+  for (let k = 0; k < n; k++) {
+    const t = -ax.half + 10 + spacing * (k + 0.5) + (spacing * (n) < ax.half * 2 - 20 ? (ax.half * 2 - 20 - spacing * n) / 2 : 0);
+    const px = ax.cx + ax.dx * t, pz = ax.cz + ax.dz * t;
+    if (hm.sample(px, pz) > waterLevelY + 1.5) continue; // pier on land is a wall, skip
+    // Real piers are streamlined along the current; without a flow field fall back to the deck's perpendicular.
+    const flow = flowAt?.(px, pz);
+    const [fx, fz] = flow ?? [-ax.dz, ax.dx];
+    const halfW = Math.min(pierW / 2, flow ? 14 : pierW / 2);
+    out.push({ cx: px, cz: pz, dx: -fz, dz: fx, halfL: pierL / 2, halfW, name: b.name });
+  }
+  return out;
+}
+
+/** Deck polygons (from man_made=bridge outlines, else buffered bridge=yes lines) and their piers. */
+export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): { bridges: Bridge[]; piers: PierBox[]; outlines: number; fromLines: number } {
+  const bridges: Bridge[] = [];
+  const outlines: { poly: Poly; tags: Record<string, string>; id: string }[] = [];
+  for (const f of roads.features) {
+    const t = f.properties.tags ?? {};
+    if (t.man_made !== 'bridge') continue;
+    if (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon') continue;
+    for (const poly of toWorldPolys(f.geometry)) if (area(poly[0]) > 30) outlines.push({ poly, tags: t, id: `${f.properties.type}/${f.properties.id}` });
+  }
+  const lines: { pts: Pt[]; tags: Record<string, string>; id: string }[] = [];
+  for (const f of roads.features) {
+    const t = f.properties.tags ?? {};
+    if (!t.bridge || t.bridge === 'no' || f.geometry.type !== 'LineString') continue;
+    if (!(t.highway || t.railway)) continue;
+    if (t.highway === 'steps') continue;
+    const pts: Pt[] = (f.geometry as LineString).coordinates.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
+    if (pts.every(p => Math.abs(p[0]) > WORLD_HALF + 100 || Math.abs(p[1]) > WORLD_HALF + 100)) continue;
+    lines.push({ pts, tags: t, id: `${f.properties.type}/${f.properties.id}` });
+  }
+
+  const deckLevel = (ring: Ring): number => {
+    const ys = ring.map(p => hm.sample(p[0], p[1])).filter(y => y > waterLevelY + 1.0).sort((a, b) => a - b);
+    if (!ys.length) return waterLevelY + 8;
+    const top = ys.slice(Math.floor(ys.length * 0.5));
+    return top.reduce((s, v) => s + v, 0) / top.length + 0.15;
+  };
+
+  for (const o of outlines) {
+    const rail = /rail|subway|viaduc|métro|metro/i.test(o.tags.name ?? '') || !!o.tags.railway;
+    bridges.push({ id: o.id, poly: o.poly, deckTop: deckLevel(o.poly[0]), name: o.tags.name ?? o.id, rail });
+  }
+  // Lines not covered by an outline become simple decks (skip tiny spans, e.g. over a ditch).
+  let fromLines = 0;
+  for (const l of lines) {
+    const mid = l.pts[Math.floor(l.pts.length / 2)];
+    if (outlines.some(o => pointInPoly(mid[0], mid[1], o.poly))) continue;
+    const len = l.pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - l.pts[i - 1][0], p[1] - l.pts[i - 1][1]) : 0, 0);
+    if (len < 12) continue;
+    const polys = bufferLine(l.pts, roadWidth(l.tags));
+    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0]), name: l.tags.name ?? l.id, rail: !!l.tags.railway }); fromLines++; }
+  }
+  const piers: PierBox[] = [];
+  for (const b of bridges) piers.push(...pierBoxes(b, hm, waterLevelY, flowAt));
+  return { bridges, piers, outlines: outlines.length, fromLines };
+}
+
+export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): Promise<{ count: number; bytes: number; names: string[] }> {
+  const { bridges, outlines, fromLines } = collectBridges(roads, hm, waterLevelY, flowAt);
+  const deck = new GeomBuilder(), stone = new GeomBuilder(), parapet = new GeomBuilder();
+  for (const b of bridges) {
+    const outer = b.poly[0];
+    const top = b.deckTop, bottom = top - DECK_THICK;
+    // Deck top samples the overview ortho (flag 4), underside and sides are stone.
+    addCapAt(deck, b.poly, top, SurfaceFlag.RoofTopOverview, ROAD, true);
+    addCapAt(stone, b.poly, bottom, SurfaceFlag.Plinth, STONE, false);
+    for (const r of b.poly) addWalls(stone, r, bottom, top, SurfaceFlag.Plinth, STONE);
+    // Parapets along the outer ring.
+    const inner = insetRing(outer, PARAPET_T, 0.2);
+    if (inner) {
+      addWalls(parapet, outer, top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
+      addWalls(parapet, orient(inner, true), top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
+      addCapAt(parapet, [outer, orient(inner, true)], top + PARAPET_H, SurfaceFlag.Plinth, STONE, true);
+    }
+    // Piers along the principal axis (shared with the boat lanes of the path bake).
+    for (const p of pierBoxes(b, hm, waterLevelY, flowAt)) {
+      const hx = p.dx * p.halfL, hz = p.dz * p.halfL, wx = -p.dz * p.halfW, wz = p.dx * p.halfW;
+      const ring: Ring = orient([[p.cx - hx - wx, p.cz - hz - wz], [p.cx + hx - wx, p.cz + hz - wz], [p.cx + hx + wx, p.cz + hz + wz], [p.cx - hx + wx, p.cz - hz + wz]], false);
+      addWalls(stone, ring, waterLevelY - 3, bottom + 0.05, SurfaceFlag.Plinth, STONE);
+    }
+  }
+  void addBox;
+  const buf = encodeBinMesh({ x: 0, z: 0 }, [deck.toSection('deck'), stone.toSection('stone'), parapet.toSection('parapet')], { count: bridges.length });
+  await fs.writeFile(path.join(OUT_DIR, 'bridges.bin'), buf);
+  const names = [...new Set(bridges.map(b => b.name))];
+  log.info(`bridges: ${bridges.length} decks (${outlines} outlines, ${fromLines} from lines): ${names.slice(0, 12).join(', ')}${names.length > 12 ? '…' : ''}`);
+  return { count: bridges.length, bytes: buf.length, names };
+}
