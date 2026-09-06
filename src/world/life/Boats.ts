@@ -64,7 +64,8 @@ export class Boats {
       const hx = b.hx ?? 0, hz = b.hz ?? -1, rx = -hz, rz = hx;   // heading and its right normal
       const p = b.mesh.position;
       for (const side of [-1, 1]) {
-        out.push({ x: p.x + hx * 14 + rx * 2.6 * side, y: p.y + 2.6, z: p.z + hz * 14 + rz * 2.6 * side, radius: 60, r: 1.0, g: 0.97, b: 0.9, intensity: 120, kind: 'dynamic', dx: hx * 0.985 + rx * 0.17 * side, dy: -0.09, dz: hz * 0.985 + rz * 0.17 * side, cone: 24 * Math.PI / 180 });
+        // on the roof at the bow tip, so the cone never touches the boat's own hull
+        out.push({ x: p.x + hx * 17.2 + rx * 2.6 * side, y: p.y + 3.6, z: p.z + hz * 17.2 + rz * 2.6 * side, radius: 60, r: 1.0, g: 0.97, b: 0.9, intensity: 80, kind: 'dynamic', dx: hx * 0.985 + rx * 0.17 * side, dy: -0.09, dz: hz * 0.985 + rz * 0.17 * side, cone: 24 * Math.PI / 180 });
       }
     }
   }
@@ -82,7 +83,7 @@ export class Boats {
       const yaw = Math.atan2(-dx, -dz);   // hull faces -z at yaw 0: rotation r maps it to (-sin r, -cos r)
       b.mesh.position.set(p.x, p.y + 0.04 * Math.sin(t * 0.7 + b.seed), p.z);
       b.mesh.rotation.set(0.006 * Math.sin(t * 0.45 + b.seed), yaw, 0.012 * Math.sin(t * 0.5 + b.seed * 1.3), 'YXZ');
-      b.glass.emissiveIntensity = 1.6 * night;
+      b.glass.emissiveIntensity = 0.5 * night;   // cabin glow; the floods do the bright work
     }
   }
 }

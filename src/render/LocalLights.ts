@@ -33,7 +33,7 @@ export interface LocalLight {
 }
 
 export const LAMP_COLOR = new THREE.Color(1.0, 0.74, 0.46);   // ~3000 K street LED / warm sodium mix
-export const LAMP_INTENSITY = 52;
+export const LAMP_INTENSITY = 44;
 export const LAMP_RADIUS = 30;
 
 const FRAG_DECL = /* glsl */`
@@ -59,7 +59,10 @@ if (uLampNight > 0.001) {
     // a lamp do not burn to white under AgX
     float att = win / max(d2, 6.0);
     vec4 ld = uLampDir[i];
-    if (ld.w > -1.5) {   // spot: smooth cone edge
+    // lantern (w = -3): the glass radiates sideways and down, the cap and the reflector hold back most of the
+    // upward light, so tree canopies over a lamp glow softly instead of burning
+    if (ld.w < -2.5) att *= mix(1.0, 0.18, smoothstep(-0.05, 0.6, -Lw.y / d));
+    else if (ld.w > -1.5) {   // spot: smooth cone edge
       float c = dot(-Lw / d, ld.xyz);
       att *= smoothstep(ld.w, ld.w + 0.12, c);
       if (att <= 0.0) continue;
@@ -166,7 +169,7 @@ export class LocalLights {
     const col = this.debug ? [1, 0, 1] : [l.r, l.g, l.b];
     C[slot * 4] = col[0] * l.intensity * k; C[slot * 4 + 1] = col[1] * l.intensity * k; C[slot * 4 + 2] = col[2] * l.intensity * k; C[slot * 4 + 3] = 0;
     if (l.cone !== undefined && l.dx !== undefined) { D[slot * 4] = l.dx; D[slot * 4 + 1] = l.dy ?? 0; D[slot * 4 + 2] = l.dz ?? 0; D[slot * 4 + 3] = Math.cos(l.cone); }
-    else { D[slot * 4] = 0; D[slot * 4 + 1] = -1; D[slot * 4 + 2] = 0; D[slot * 4 + 3] = -2; }
+    else { D[slot * 4] = 0; D[slot * 4 + 1] = -1; D[slot * 4 + 2] = 0; D[slot * 4 + 3] = l.kind === 'lamp' ? -3 : -2; }
   }
 
   update(x: number, z: number, night: number, now = performance.now()) {

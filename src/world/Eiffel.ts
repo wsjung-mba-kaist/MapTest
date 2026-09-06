@@ -121,8 +121,8 @@ export class Eiffel {
               float under = max(0.0, -Nw.y);
               float band = 1.0 + 0.3 * (exp(-pow((vHeightE - 60.0) / 6.0, 2.0)) + exp(-pow((vHeightE - 118.0) / 6.0, 2.0)));
               float spire = 1.0 - 0.4 * smoothstep(250.0, 300.0, vHeightE);
-              float litk = (0.3 + 0.5 * under + 0.4 * inward) * band * spire;
-              totalEmissiveRadiance += vec3(1.0, 0.56, 0.20) * 1.8 * litk * uTowerLit;
+              float litk = (0.2 + 0.5 * under + 0.5 * inward) * band * spire;
+              totalEmissiveRadiance += vec3(1.0, 0.50, 0.15) * 0.9 * litk * uTowerLit;
             }`);
       };
       mat.emissive = new THREE.Color(0, 0, 0);
@@ -141,22 +141,27 @@ export class Eiffel {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
     const mat = new THREE.ShaderMaterial({
-      uniforms: this.uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: this.uniforms, transparent: true, depthWrite: false,
+      // plain additive (One, One): the bulb's brightness is written linearly, not squared through alpha
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation,
       vertexShader: /* glsl */`
         attribute float seed; uniform float uTime; uniform float uNight; uniform float uTowerLit; uniform float uSparkle; varying float vA;
         void main() {
           // 20 000 flash bulbs: during the five-minute show at each full hour every bulb flashes at its own phase;
           // outside the show only a faint random twinkle remains.
           float phase = fract(uTime * (0.6 + seed * 0.9) + seed * 7.0);
-          float flash = pow(max(0.0, 1.0 - phase * 6.0), 2.0);
+          float flash = pow(max(0.0, 1.0 - phase * 4.0), 2.0);
           vA = uNight * uTowerLit * flash * mix(0.08, 1.0, uSparkle);
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = (220.0 / max(1.0, -mv.z)) * (1.0 + 0.8 * uSparkle) + 1.0;
+          // the bulbs sit on the members they were sampled from: pull them 0.5 m toward the eye so they pass the depth
+          // test against their own girder while buildings in front still hide them
+          mv.xyz -= normalize(mv.xyz) * 0.5;
+          gl_PointSize = clamp(320.0 / max(1.0, -mv.z), 2.0, 14.0) * (1.0 + 0.8 * uSparkle) + 1.0;
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: /* glsl */`
         uniform float uSparkle; varying float vA;
-        void main() { float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard; float a = pow(1.0 - d, 1.8) * vA; gl_FragColor = vec4(vec3(1.0, 0.95, 0.82) * a * (1.0 + 1.5 * uSparkle), a); }`,
+        void main() { float d = length(gl_PointCoord - 0.5) * 2.0; if (d > 1.0) discard; float a = pow(1.0 - d, 1.8) * vA * mix(0.6, 2.6, uSparkle); gl_FragColor = vec4(vec3(1.0, 0.95, 0.82) * a, 1.0); }`,
     });
     this.sparkles = new THREE.Points(g, mat);
     this.sparkles.frustumCulled = false;
@@ -190,7 +195,7 @@ export class Eiffel {
     for (const m of this.materials) {
       if (m.userData.floodlit) continue;
       const k = m.emissiveMap ? 1.3 : (m.userData.latticePanel ? 0.22 : 0.38);
-      m.emissive.setRGB(1.0, 0.56, 0.20).multiplyScalar(k * on);
+      m.emissive.setRGB(1.0, 0.52, 0.17).multiplyScalar(k * on);
     }
     // the aviation beacon stays on all night, lights or not
     if (this.beacon) (this.beacon.material as THREE.SpriteMaterial).opacity = night * (0.5 + 0.5 * Math.abs(Math.sin(time * 1.6)));

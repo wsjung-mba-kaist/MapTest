@@ -187,14 +187,14 @@ export class Environment {
     }
     this.sun.visible = this.sun.intensity > 0.01;
     // night fill = the city's own skyglow: warm grey from above, lamp-lit ground bounce from below
-    this.hemi.intensity = THREE.MathUtils.lerp(0.55, 0.25, n);
+    this.hemi.intensity = THREE.MathUtils.lerp(0.55, 0.20, n);
     this.hemi.color.setRGB(THREE.MathUtils.lerp(0.81, 0.40, n), THREE.MathUtils.lerp(0.89, 0.34, n), THREE.MathUtils.lerp(1.0, 0.30, n));
     this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.42, 0.28, n), THREE.MathUtils.lerp(0.35, 0.20, n), THREE.MathUtils.lerp(0.28, 0.14, n));
     const dusk = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), -4, 12);
     // haze: daylight blue-grey -> dusk peach -> the skyglow colour itself (so the far ring dissolves into the sky, no seam)
     const fogDay = new THREE.Color(0xb7c9dc), fogDusk = new THREE.Color(0xd9a98a), fogNight = new THREE.Color(SKY_GLOW.x * 0.8, SKY_GLOW.y * 0.8, SKY_GLOW.z * 0.8);
     this.fog.color.copy(fogDay).lerp(fogDusk, 1 - dusk).lerp(fogNight, n);
-    this.fog.density = THREE.MathUtils.lerp(0.00030, 0.00045, n);
+    this.fog.density = THREE.MathUtils.lerp(0.00030, 0.00030, n);   // city haze at night is real, but the lights must punch through it
     buildingUniforms.uNight.value = n;
   }
 

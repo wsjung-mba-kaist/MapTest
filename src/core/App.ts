@@ -295,6 +295,7 @@ export class App {
     if (q.get('auto') === '1') this.hud.showOverlay(false);
     if (q.has('fov')) { this.camera.fov = parseFloat(q.get('fov')!); this.camera.updateProjectionMatrix(); }
     if (q.get('post') === '0') this.post.enabled = false;
+    if (q.get('ao') === '0') this.post.n8ao.enabled = false;                 // no ambient occlusion (A/B)
     if (q.get('noshadow') === '1') this.renderer.shadowMap.enabled = false;
     if (q.get('noenv') === '1') { this.scene.environment = null; this.env.disableHdri = true; }
     if (q.get('details') === '0') this.world.buildings.detailDistance = 0;
