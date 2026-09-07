@@ -27,7 +27,7 @@ vec3 nightExtra = vec3(0.0);
     vec2 hz = normalize(direction.xz + vec2(1e-5, 0.0));
     float toward = 1.0 + 0.5 * max(0.0, dot(hz, normalize(vec2(0.9, -0.45))));
     float yy = max(direction.y, 0.0);
-    float sg = (0.22 * exp(-3.0 * yy) + 0.65 * exp(-12.0 * yy)) * mix(0.5, 1.0, smoothstep(-0.25, 0.0, direction.y));
+    float sg = (0.22 * exp(-3.0 * yy) + 0.55 * exp(-12.0 * yy)) * mix(0.5, 1.0, smoothstep(-0.25, 0.0, direction.y));
     nightExtra += uGlow * sg * toward * nightAmt;
     // stars: only the bright ones survive the glow, and none near the horizon
     float horizonFade = smoothstep(0.10, 0.35, direction.y) * (1.0 - clamp(sg * 0.9, 0.0, 1.0));

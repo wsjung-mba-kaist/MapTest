@@ -175,6 +175,7 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
     else if (uHasOverview > 0.5) col = texture2D(uOverview, uvO).rgb;
     // Ortho roofs carry baked sunlight; flatten a little and cool the shadows so dynamic light dominates.
     col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), 0.15) * 0.92;
+    col *= 1.0 - 0.45 * uNight;   // the photo carries baked sunlight; at night roofs only catch skyglow
     diffuseColor.rgb = col;
     float fRough = 0.85; float fMetal = 0.0; vec3 fEmissive = vec3(0.0); float fAo = 1.0; vec3 fDetailN = vec3(0.0, 0.0, 1.0);
   `, shader => {

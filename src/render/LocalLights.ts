@@ -61,7 +61,7 @@ if (uLampNight > 0.001) {
     vec4 ld = uLampDir[i];
     // lantern (w = -3): the glass radiates sideways and down, the cap and the reflector hold back most of the
     // upward light, so tree canopies over a lamp glow softly instead of burning
-    if (ld.w < -2.5) att *= mix(1.0, 0.18, smoothstep(-0.05, 0.6, -Lw.y / d));
+    if (ld.w < -2.5) att *= mix(1.0, 0.12, smoothstep(-0.05, 0.6, -Lw.y / d));
     else if (ld.w > -1.5) {   // spot: smooth cone edge
       float c = dot(-Lw / d, ld.xyz);
       att *= smoothstep(ld.w, ld.w + 0.12, c);
@@ -128,6 +128,10 @@ export class LocalLights {
   /** brightness multipliers applied per kind at selection time (hour-dependent) */
   hour = 12;
   towerScale = 1;
+  private staticBudget = STATIC_N;
+  private dynBudget = DYN_N;
+  /** Fewer slots on weak GPUs (the shader loop skips empty slots cheaply, but not for free). */
+  setBudget(staticN: number, dynN: number) { this.staticBudget = Math.max(0, Math.min(STATIC_N, staticN)); this.dynBudget = Math.max(0, Math.min(DYN_N, dynN)); this.lastX = NaN; }
 
   /** Register / replace a named group of static lights (lamps, one group per building chunk for shop fronts...). */
   addLights(key: string, list: LocalLight[]) { this.groups.set(key, list); this.rebuild(); }
@@ -177,7 +181,7 @@ export class LocalLights {
     // dynamic slots every call (cheap)
     const P = lampUniforms.uLampPos.value;
     let dn = 0;
-    for (const l of this.dynamic) { if (dn >= DYN_N) break; this.write(STATIC_N + dn, l, 1); dn++; }
+    for (const l of this.dynamic) { if (dn >= this.dynBudget) break; this.write(STATIC_N + dn, l, 1); dn++; }
     for (let k = dn; k < DYN_N; k++) P[(STATIC_N + k) * 4 + 3] = 0;
     // static selection: throttled
     if (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) < 1.5 && now - this.lastT < 250) return;
@@ -193,10 +197,10 @@ export class LocalLights {
     }
     cand.sort((a, b) => a.d2 - b.d2);
     let n = 0, shops = 0;
-    for (let k = 0; k < cand.length && n < STATIC_N; k++) {
+    for (let k = 0; k < cand.length && n < this.staticBudget; k++) {
       const l = this.all[cand[k].i];
       if (l.kind === 'shop' || l.kind === 'restaurant') { if (shops >= 10) continue; shops++; }   // lamps keep priority
-      const fade = 1 - THREE.MathUtils.smoothstep(n, STATIC_N - 8, STATIC_N);   // the last slots fade so rank changes never pop
+      const fade = 1 - THREE.MathUtils.smoothstep(n, this.staticBudget - 8, this.staticBudget);   // the last slots fade so rank changes never pop
       this.write(n, l, fade);
       n++;
     }

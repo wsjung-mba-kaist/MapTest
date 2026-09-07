@@ -26,7 +26,9 @@
     "bake:deshadow": "tsx scripts/bake.ts --step=deshadow",
     "bake:markings": "tsx scripts/bake.ts --step=markings",
     "bake:streets": "tsx scripts/bake.ts --step=streets",
-    "bake:far": "tsx scripts/bake.ts --step=far"
+    "bake:far": "tsx scripts/bake.ts --step=far",
+    "compress": "tsx scripts/compress.ts dist",
+    "build:compressed": "vite build && tsx scripts/compress.ts dist"
   },
   "dependencies": {
     "clipper-lib": "^6.4.2",

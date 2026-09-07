@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { buildingUniforms } from '../materials/FacadeMaterial';
+import type { Season } from '../../shared/season';
 import { withLamps } from '../render/LocalLights';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CHUNK_SIZE, GRID_N, TREE_STRIDE, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
@@ -14,7 +16,10 @@ export class Trees {
   count = 0;
   lodDistance = 240;
   private cells = new Map<string, { lod0: THREE.Group; lod1: THREE.Group; cx: number; cz: number }>();
-  private readonly uniforms = { uTime: { value: 0 }, uWind: { value: 0.7 } };
+  private readonly uniforms = { uTime: { value: 0 }, uWind: { value: 0.7 }, uNight: buildingUniforms.uNight, uCoverage: { value: 1 }, uAutumn: { value: 0 }, uFresh: { value: 0 } };
+  /** Foliage by date (shared/season.ts): coverage drops cards, autumn/fresh retint the rest. */
+  setSeason(s: Season) { this.uniforms.uCoverage.value = s.coverage; this.uniforms.uAutumn.value = s.autumn; this.uniforms.uFresh.value = s.fresh; }
+  setWind(v: number) { this.uniforms.uWind.value = v; }
   private leafMats: THREE.MeshStandardMaterial[] = [];
   private trunkMat!: THREE.MeshStandardMaterial;
 
@@ -94,7 +99,7 @@ export class Trees {
     mat.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float sway;\nuniform float uTime; uniform float uWind;')
+        .replace('#include <common>', '#include <common>\nattribute float sway;\nuniform float uTime; uniform float uWind; uniform float uCoverage; varying float vKey;')
         .replace('#include <begin_vertex>', /* glsl */`
           vec3 transformed = position;
           #ifdef USE_INSTANCING
@@ -103,9 +108,25 @@ export class Trees {
             float phase = 0.0;
           #endif
           float g = sin(uTime * 1.2 + phase) * 0.5 + sin(uTime * 2.7 + phase * 1.7 + position.y * 3.0) * 0.5;
-          transformed.xz += g * 0.025 * uWind * sway * position.y;`);
+          transformed.xz += g * 0.025 * uWind * sway * position.y;
+          // seasonal leaf drop: each card has a stable key; cards above the coverage collapse to nothing
+          float dropKey = fract(sway * 53.17 + phase * 0.379);
+          vKey = dropKey;
+          if (dropKey > uCoverage) transformed = vec3(0.0);`);
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <color_fragment>', '#include <color_fragment>\nif (!gl_FrontFacing) diffuseColor.rgb *= 0.82;');
+        .replace('#include <common>', '#include <common>\nuniform float uNight; uniform float uAutumn; uniform float uFresh; varying float vKey;')
+        // leaves are thin and translucent by day; under the lamps at night the canopy should glow, not shine
+        .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
+          if (!gl_FrontFacing) diffuseColor.rgb *= 0.82;
+          {
+            // autumn: gold to rust built from the green channel, cards turning at different times; spring: pale fresh green
+            float g = diffuseColor.g;
+            vec3 aut = mix(vec3(1.9, 1.15, 0.30), vec3(1.5, 0.75, 0.30), fract(vKey * 7.31)) * g;
+            float turn = clamp(uAutumn * 1.35 - fract(vKey * 3.7) * 0.35, 0.0, 1.0);
+            diffuseColor.rgb = mix(diffuseColor.rgb, aut, turn);
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.05, 1.12, 0.72) + vec3(0.05, 0.08, 0.0), uFresh * 0.8);
+          }
+          diffuseColor.rgb *= 1.0 - 0.35 * uNight;`);
     };
     withLamps(mat);
     return mat;

@@ -81,12 +81,13 @@ function patchSignShader(mat: THREE.MeshStandardMaterial, key: string, glow: boo
   mat.onBeforeCompile = shader => {
     shader.uniforms.uNight = buildingUniforms.uNight;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aRect; attribute float aLit; varying vec2 vSignUv; varying float vLit;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvSignUv = mix(aRect.xy, aRect.zw, uv); vLit = aLit;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 aRect; attribute float aLit; attribute float aNeon; varying vec2 vSignUv; varying float vLit; varying float vNeon;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvSignUv = mix(aRect.xy, aRect.zw, uv); vLit = aLit; vNeon = aNeon;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vSignUv; varying float vLit; uniform float uNight;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSignUv; varying float vLit; varying float vNeon; uniform float uNight;')
       .replace('#include <map_fragment>', 'vec4 signTex = texture2D(map, vSignUv); diffuseColor *= signTex;')
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${glow ? 'totalEmissiveRadiance += signTex.rgb * (0.15 + vLit * uNight * 1.1);' : ''}`);
+      // a sixth of the lit signs are neon tubes: saturated pink / blue / red-orange after dark
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${glow ? 'vec3 neonCol = vNeon < 0.34 ? vec3(1.0, 0.22, 0.45) : (vNeon < 0.67 ? vec3(0.25, 0.65, 1.0) : vec3(1.0, 0.35, 0.15)); totalEmissiveRadiance += signTex.rgb * (0.15 + vLit * uNight * 1.1) * mix(vec3(1.0), neonCol * 2.2, step(0.01, vNeon) * uNight);' : ''}`);
   };
   withLamps(mat);
 }

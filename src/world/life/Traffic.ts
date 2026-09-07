@@ -3,6 +3,7 @@ import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
 import { EdgeFlag, NodeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
+import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shared/signals';
 import { carColor, loadCarKit, makeCarMaterial, type CarModel } from './CarKit';
 import type { LocalLight } from '../../render/LocalLights';
 
@@ -13,6 +14,7 @@ const GAP_MIN = 7.5;          // bumper-to-bumper target gap at standstill (m)
 const JUNCTION_RUN_IN = 8;    // metres of the next edge consumed by the junction curve
 const NO_SPAWN_NEAR = 12;
 const NO_SPAWN_VIEW = 120;
+const STOP_BACK = 5;          // stop line: metres before the junction node
 
 /**
  * Moving cars on the drivable graph: right-hand lanes, leader following, hash-chosen turns, quadratic junction
@@ -55,8 +57,21 @@ export class Traffic {
   private readonly color = new THREE.Color();
   private readonly camDir = new THREE.Vector3(0, 0, -1);
   private laneLists = new Map<number, number[]>();
+  /** signal phase per (edge, end): index e*2 + (arriving at b ? 1 : 0); -1 = no signal */
+  private readonly sigPhase: Float32Array;
+  /** time-of-day volume factor (shared/nightlife activity) */
+  activity = 1;
+  /** Returns true when the change is big enough that the caller should re-seed the active edges. */
+  setActivity(a: number): boolean {
+    const prev = this.activity;
+    if (Math.abs(a - prev) < 0.06) return false;
+    this.activity = a;
+    if (a < prev) { const keep = a / prev; for (let i = this.count - 1; i >= 0; i--) if (hash32(this.seed[i], 29) > keep) this.remove(i); return false; }
+    this.seeded.clear();
+    return true;
+  }
 
-  constructor(readonly graph: PathGraph, readonly clock: SimClock) { this.group.name = 'traffic'; }
+  constructor(readonly graph: PathGraph, readonly clock: SimClock) { this.group.name = 'traffic'; this.sigPhase = buildSignalTable(graph); }
 
   async load() {
     const kit = await loadCarKit(VARIANTS);
@@ -106,7 +121,7 @@ export class Traffic {
     for (const dir of dirs) {
       const nl = Math.max(1, g.lanes(e, dir));
       for (let lane = 0; lane < nl; lane++) {
-        const dens = this.density(e) * (lane === 0 ? 1 : 0.7);
+        const dens = this.density(e) * this.activity * (lane === 0 ? 1 : 0.7);
         for (let k = 0; k < slots; k++) {
           const h0 = hash32(e, dir + 2 + lane * 4, k, 21);
           if (h0 > dens) continue;
@@ -207,6 +222,13 @@ export class Traffic {
         let vT = this.vCruise[i];
         if (gap < Infinity) vT = Math.min(vT, Math.max(0, 0.8 * (gap - carLen - GAP_MIN)));
         if (this.nextE[i] < 0) { const rem = L - prog; vT = Math.min(vT, Math.max(0, 0.6 * (rem - 2))); }
+        // ---- traffic signals: brake to the stop line on red; on amber only cars still more than 8 m out stop
+        const ph = this.sigPhase[this.edge[i] * 2 + (this.dir[i] > 0 ? 1 : 0)];
+        if (ph >= 0 && this.jt[i] < 0) {
+          const st = signalState(this.clock.time, ph);
+          const rem = L - prog - STOP_BACK;
+          if (st !== SIGNAL_GREEN && rem > -1.5 && !(st === SIGNAL_AMBER && rem < 8)) vT = Math.min(vT, Math.max(0, 0.7 * (rem - 0.5)));
+        }
         const dv = vT - this.v[i];
         this.v[i] += Math.max(-6 * dt, Math.min(2.5 * dt, dv));
         if (this.v[i] < 0.02 && vT < 0.02) this.v[i] = 0;
@@ -304,6 +326,25 @@ export class Traffic {
     this.edge[i] = ne; this.dir[i] = nd; this.lane[i] = lane; this.s[i] = s1; this.seg[i] = p1.seg; this.hop[i]++;
     this.chooseNext(i);
   }
+}
+
+/** Phase of the signal facing each drivable arm, indexed e*2 + (arriving at b ? 1 : 0); -1 where there is none. */
+function buildSignalTable(g: PathGraph): Float32Array {
+  const t = new Float32Array(g.eLen.length * 2).fill(-1);
+  const inc: number[] = [];
+  for (let n = 0; n < g.nodeCount; n++) {
+    if (!g.nodeFlag(n, NodeFlag.SIGNAL)) continue;
+    for (const e of g.incident(n, inc)) {
+      if (!g.drivable(e)) continue;
+      const v0 = g.eV0[e], nv = g.eNv[e]; if (nv < 2) continue;
+      const atEnd = g.eB[e] === n;
+      if (g.isOneway(e) && !atEnd) continue;
+      const i = atEnd ? v0 + nv - 2 : v0 + 1, j = atEnd ? v0 + nv - 1 : v0;
+      const dx = g.vPos[j * 3] - g.vPos[i * 3], dz = g.vPos[j * 3 + 2] - g.vPos[i * 3 + 2], l = Math.hypot(dx, dz) || 1;
+      t[e * 2 + (atEnd ? 1 : 0)] = armPhase(n, dx / l, dz / l);
+    }
+  }
+  return t;
 }
 
 function pickVariant(r: number): number {

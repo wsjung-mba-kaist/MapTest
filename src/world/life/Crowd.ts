@@ -43,6 +43,16 @@ export class Crowd {
   private readonly ident = new Array<string>(CAP);
   private readonly alive = new Set<string>();
   private readonly seeded = new Set<number>();
+  /** time-of-day volume factor (shared/nightlife activity) */
+  activity = 1;
+  setActivity(a: number): boolean {
+    const prev = this.activity;
+    if (Math.abs(a - prev) < 0.06) return false;
+    this.activity = a;
+    if (a < prev) { const keep = a / prev; for (let i = this.count - 1; i >= 0; i--) if (hash32(this.seed[i], 29) > keep) this.remove(i); this.mesh.count = this.count; return false; }
+    this.seeded.clear();
+    return true;
+  }
   private activeSet = new Set<number>();
   private radius = 220;
   private readonly tmp: EdgePoint = { x: 0, y: 0, z: 0, ux: 0, uz: -1, seg: 0 };
@@ -98,7 +108,7 @@ export class Crowd {
     for (const tr of tracks) {
       for (let k = 0; k < slots; k++) {
         const h0 = hash32(e, tr.track + 2, k, 1);
-        if (h0 > tr.density) continue;
+        if (h0 > tr.density * this.activity) continue;
         const dir: 1 | -1 = hash32(e, tr.track + 2, k, 2) < 0.5 ? 1 : -1;
         const speed = (f & EdgeFlag.STEPS) ? 0.55 : (park ? 0.95 : 1.15) + hash32(e, tr.track + 2, k, 3) * 0.5;
         const phi = hash32(e, tr.track + 2, k, 4) * SPACING;

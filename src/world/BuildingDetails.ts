@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildingUniforms } from '../materials/FacadeMaterial';
 import { withLamps, type LocalLight } from '../render/LocalLights';
 import { PHARMACY, PHARMACY_CELL, SHOP_NAMES, SIGN_PALETTES, plaqueArmsNear, plaqueCanvas, plaqueMaterial, shopSignMaterial, signCell, signRect, signageDebug, signageEnabled, type PlaqueArm } from './Signage';
 
@@ -64,10 +65,37 @@ function materials() {
   return { boxMat, railMat, awningMat };
 }
 
+/** Warm terrace bulbs (additive points) in front of cafes, on from 17:00 until 01:00. */
+function terraceGlare(xyz: Float32Array): THREE.Points {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(xyz, 3));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uNight: buildingUniforms.uNight, uHour: buildingUniforms.uHour }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      uniform float uNight; uniform float uHour; varying float vA;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        float d = max(1.0, -mv.z);
+        float h = mod(uHour, 24.0);
+        float open = (h >= 17.0 || h < 1.0) ? 1.0 : 0.0;
+        gl_PointSize = clamp(260.0 / d, 4.0, 40.0);
+        vA = uNight * open * clamp(1.3 - d / 120.0, 0.3, 1.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      varying float vA;
+      void main() { if (vA <= 0.001) discard; float r = length(gl_PointCoord - 0.5) * 2.0; if (r > 1.0) discard; float a = pow(1.0 - r, 2.4) * 0.45 * vA; gl_FragColor = vec4(vec3(1.0, 0.62, 0.30) * a, a); }`,
+  });
+  const p = new THREE.Points(g, mat);
+  p.frustumCulled = false;
+  p.name = 'terrace_lights';
+  return p;
+}
+
 /** Same deterministic shop rule as facade.glsl (integer arithmetic only). */
 export const isShopBay = (seed: number, b: number) => ((seed * 7 + b * 13) % 10) < 5;
 
-interface SignInst { m: THREE.Matrix4; rect: [number, number, number, number]; lit: number }
+interface SignInst { m: THREE.Matrix4; rect: [number, number, number, number]; lit: number; neon?: number }
 let shopLightsOn = true;
 /** ?shoplights=0 */
 export function setShopLights(v: boolean) { shopLightsOn = v; }
@@ -75,10 +103,11 @@ export function setShopLights(v: boolean) { shopLightsOn = v; }
 // Geometry is chunk-local; the chunk group already carries the origin, so the meshes stay at the group origin.
 function instancedQuads(list: SignInst[], mat: THREE.Material, shadows: boolean): THREE.InstancedMesh {
   const geom = planeGeom.clone();
-  const rect = new Float32Array(list.length * 4), lit = new Float32Array(list.length);
-  list.forEach((s, i) => { rect.set(s.rect, i * 4); lit[i] = s.lit; });
+  const rect = new Float32Array(list.length * 4), lit = new Float32Array(list.length), neon = new Float32Array(list.length);
+  list.forEach((s, i) => { rect.set(s.rect, i * 4); lit[i] = s.lit; neon[i] = s.neon ?? 0; });
   geom.setAttribute('aRect', new THREE.InstancedBufferAttribute(rect, 4));
   geom.setAttribute('aLit', new THREE.InstancedBufferAttribute(lit, 1));
+  geom.setAttribute('aNeon', new THREE.InstancedBufferAttribute(neon, 1));
   const mesh = new THREE.InstancedMesh(geom, mat, list.length);
   list.forEach((s, i) => mesh.setMatrixAt(i, s.m));
   mesh.instanceMatrix.needsUpdate = true;
@@ -98,6 +127,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
   const rails: { m: THREE.Matrix4; len: number }[] = [];
   const awnings: { m: THREE.Matrix4; c: THREE.Color }[] = [];
   const signs: SignInst[] = [];
+  const terrace: number[] = [];
   const lights: LocalLight[] = [];
   const plaqueCands: { arm: PlaqueArm; side: number; pd: number; m: THREE.Matrix4 }[] = [];
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3();
@@ -203,12 +233,15 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
             const tc = (t0 + t1) / 2;
             P.set(ax + dx * tc + nx * 0.08, groundY + SIGN_Y, az + dz * tc + nz * 0.08);
             S.set(t1 - t0, SIGN_H, 1);
-            signs.push({ m: M.compose(P, faceOut, S).clone(), rect: signRect(signCell(nameIdx, (seed + b) % SIGN_PALETTES)), lit });
+            const rest = ((seed * 3 + b) % 10) < 3;   // some shops are restaurants / cafes open late
+            const neon = lit && ((seed * 11 + b * 3 + q) % 6) === 0 ? 0.2 + 0.8 * (((seed + b) % 7) / 7) : 0;
+            signs.push({ m: M.compose(P, faceOut, S).clone(), rect: signRect(signCell(nameIdx, (seed + b) % SIGN_PALETTES)), lit, neon });
             if (shopLightsOn) {
-              // the display window lights the sidewalk in front of it (cool white, ~11 m); some are restaurants open late
-              const rest = ((seed * 3 + b) % 10) < 3;
-              lights.push({ x: chunkOrigin.x + ax + dx * tc + nx * 1.2, y: groundY + 2.2, z: chunkOrigin.z + az + dz * tc + nz * 1.2, radius: 11, r: 0.95, g: 0.93, b: 0.85, intensity: 9, kind: rest ? 'restaurant' : 'shop' });
+              // the display window lights the sidewalk in front of it (cool white, ~11 m); cafes glow warmer
+              lights.push({ x: chunkOrigin.x + ax + dx * tc + nx * 1.2, y: groundY + 2.2, z: chunkOrigin.z + az + dz * tc + nz * 1.2, radius: 11, r: rest ? 1.0 : 0.95, g: rest ? 0.8 : 0.93, b: rest ? 0.55 : 0.85, intensity: rest ? 10 : 9, kind: rest ? 'restaurant' : 'shop' });
             }
+            // terrace: a string of warm bulbs under the awning, lit while the cafe is open
+            if (rest) for (let t = t0 + 0.5; t < t1 - 0.2; t += 1.5) terrace.push(ax + dx * t + nx * 0.95, groundY + 2.55, az + dz * t + nz * 0.95);
             if (nameIdx === PHARMACY) {
               // perpendicular green-cross flag over the shop entrance
               const tf = t0 + 0.3;
@@ -268,6 +301,8 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
   const meshes: THREE.Object3D[] = [boxesMesh, railsMesh, awningsMesh];
   if (signsMesh) meshes.push(signsMesh);
   if (plaquesMesh) meshes.push(plaquesMesh);
+  const terraceMesh = terrace.length ? terraceGlare(new Float32Array(terrace)) : null;
+  if (terraceMesh) meshes.push(terraceMesh);
   return {
     boxes: boxesMesh, rails: railsMesh, awnings: awningsMesh, signs: signsMesh, plaques: plaquesMesh, meshes,
     count: boxes.length + rails.length + awnings.length + signs.length + best.size, signCount: signs.length, plaqueCount: best.size, lights,
@@ -275,6 +310,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
       boxesMesh.dispose(); railsMesh.dispose(); awningsMesh.dispose(); railGeom.dispose();
       if (signsMesh) { signsMesh.geometry.dispose(); signsMesh.dispose(); }
       if (plaquesMesh) { plaquesMesh.geometry.dispose(); plaquesMesh.dispose(); }
+      if (terraceMesh) { terraceMesh.geometry.dispose(); (terraceMesh.material as THREE.Material).dispose(); }
       plaqueMat?.dispose(); plaqueTex?.dispose();
     },
   };

@@ -2,15 +2,14 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { PathGraph } from './PathGraph';
 import { NodeFlag } from '../../../shared/paths';
-import { hash32 } from '../../../shared/hash';
+import { armPhase, SIGNAL_CYCLE, GREEN_END, AMBER_END } from '../../../shared/signals';
 import { withLamps } from '../../render/LocalLights';
 
 /**
  * Traffic lights at the graph's signal junctions (3+ drivable arms): one post per incoming arm on the right-hand
- * kerb, three lamps cycling red 14 s / green 15 s / amber 3 s with a per-junction phase. Visual only: cars do not
- * stop for them (yet). One instanced draw call.
+ * kerb, three lamps on the shared 32 s cycle (shared/signals.ts): arms are grouped by bearing and the two groups
+ * alternate, and Traffic stops its cars at the same lines. One instanced draw call.
  */
-const CYCLE = 32;
 
 export class Signals {
   readonly group = new THREE.Group();
@@ -24,7 +23,6 @@ export class Signals {
     const seen = new Set<string>();
     for (let n = 0; n < graph.nodeCount; n++) {
       if (!graph.nodeFlag(n, NodeFlag.SIGNAL)) continue;
-      const phase = hash32(n, 41);
       for (const e of graph.incident(n, inc)) {
         if (!graph.drivable(e)) continue;
         // direction of travel INTO the node along this edge, from the last / first segment
@@ -41,7 +39,7 @@ export class Signals {
         const key = `${Math.round(x)}_${Math.round(z)}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        posts.push({ x, y: graph.vPos[j * 3 + 1], z, yaw: Math.atan2(-ux, -uz) + Math.PI, phase });   // lamps face the arriving cars
+        posts.push({ x, y: graph.vPos[j * 3 + 1], z, yaw: Math.atan2(-ux, -uz) + Math.PI, phase: armPhase(n, ux, uz) });   // lamps face the arriving cars
       }
     }
     this.count = posts.length;
@@ -87,8 +85,8 @@ function signalMaterial(uniforms: { uTime: { value: number }; uNight: { value: n
       .replace('#include <common>', '#include <common>\nuniform float uTime; uniform float uNight; varying float vEmit; varying float vPhase;')
       .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
         if (vEmit > 0.5) {
-          float t = fract((uTime + vPhase * ${CYCLE.toFixed(1)}) / ${CYCLE.toFixed(1)});
-          int state = t < 0.47 ? 3 : (t < 0.56 ? 2 : 1);          // green, amber, red
+          float t = fract(uTime / ${SIGNAL_CYCLE.toFixed(1)} + vPhase);
+          int state = t < ${GREEN_END.toFixed(2)} ? 3 : (t < ${AMBER_END.toFixed(2)} ? 2 : 1);          // green, amber, red
           bool on = int(vEmit + 0.5) == state;
           vec3 col = vEmit < 1.5 ? vec3(1.0, 0.08, 0.03) : (vEmit < 2.5 ? vec3(1.0, 0.55, 0.05) : vec3(0.10, 1.0, 0.35));
           diffuseColor.rgb = on ? col * 0.6 : col * 0.08;

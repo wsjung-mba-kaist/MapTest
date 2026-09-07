@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { dayOfYear } from '../../shared/season';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import * as SunCalc from 'suncalc';
 import { ORIGIN } from '../../shared/geo';
 
 /** Paris skyglow (linear radiance at the horizon): the one constant the night sky, haze and fill light derive from. */
+export type Weather = 'clear' | 'overcast' | 'rain' | 'fog';
 export const SKY_GLOW = new THREE.Vector3(0.16, 0.11, 0.075);
 import { buildingUniforms } from '../materials/FacadeMaterial';
 import { NIGHT_SKY_BODY, NIGHT_SKY_DECL, localSiderealTime, moonDirection, starMatrix, starTexture } from './NightSky';
@@ -53,13 +55,15 @@ export class Environment {
     Object.assign(mat.uniforms, {
       uStars: { value: starTexture() }, uStarMat: { value: starMatrix(ORIGIN.lat) }, uLST: { value: 0 },
       uMoonDir: { value: new THREE.Vector3(0, 1, 0) }, uMoonOn: { value: 0 }, uMoonLit: { value: 0 }, uStarsOn: { value: 1 }, uTimeSky: { value: 0 },
-      uGlow: { value: SKY_GLOW.clone() },
+      uGlow: { value: SKY_GLOW.clone() }, uOvercast: { value: 0 },
     });
     if (!mat.fragmentShader.includes('gl_FragColor = vec4( texColor, 1.0 );')) console.warn('Sky shader changed: night sky patch not applied');
     mat.fragmentShader = mat.fragmentShader
-      .replace('uniform float mieDirectionalG;', 'uniform float mieDirectionalG; uniform float uDim;' + NIGHT_SKY_DECL)
+      .replace('uniform float mieDirectionalG;', 'uniform float mieDirectionalG; uniform float uDim; uniform float uOvercast;' + NIGHT_SKY_DECL)
       // clamp: the raw sun disc overflows half-float targets and poisons bloom with NaN; then stars, moon and city glow
-      .replace('gl_FragColor = vec4( texColor, 1.0 );', NIGHT_SKY_BODY + '\ngl_FragColor = vec4( min(texColor, vec3(24.0)) * uDim + vec3(0.006, 0.006, 0.009) * (1.0 - uDim) + nightExtra, 1.0 );');
+      // overcast: a flat grey dome (brighter toward the horizon) replaces the clear-sky model; uDim still takes it down at night
+      .replace('gl_FragColor = vec4( texColor, 1.0 );', NIGHT_SKY_BODY + '\nvec3 overcastSky = vec3(0.62, 0.65, 0.70) * mix(0.5, 1.0, pow(1.0 - max(direction.y, 0.0), 2.0)) * 1.4;'
+        + '\ngl_FragColor = vec4( mix(min(texColor, vec3(24.0)), overcastSky, uOvercast) * uDim + vec3(0.006, 0.006, 0.009) * (1.0 - uDim) + nightExtra, 1.0 );');
     mat.needsUpdate = true;
     this.sky.layers.enable(REFLECT_LAYER);
     scene.add(this.sky);
@@ -109,6 +113,7 @@ export class Environment {
   /** Change the calendar day, keeping the local hour. */
   setDate(ymd: [number, number, number]) { const h = this.hour; this.ymd = ymd; this.setHour(h); }
   dateLabel(): string { return `${this.ymd[1]}월 ${this.ymd[2]}일`; }
+  dayOfYear(): number { return dayOfYear(this.ymd[0], this.ymd[1], this.ymd[2]); }
   /** Sunrise / sunset as local hours for the current day (suncalc). */
   sunTimes(): { sunrise: number; sunset: number } {
     const t = SunCalc.getTimes(localDate(this.ymd, 12), ORIGIN.lat, ORIGIN.lon);
@@ -129,7 +134,7 @@ export class Environment {
     const moon = moonDirection(date, this.moonDir);
     this.moonAlt = moon.alt; this.moonFraction = moon.fraction;
     const su = (this.sky.material as THREE.ShaderMaterial).uniforms;
-    su.uMoonDir.value.copy(this.moonDir); su.uMoonOn.value = moon.alt > -1 ? 1 : 0; su.uMoonLit.value = moon.fraction;
+    su.uMoonDir.value.copy(this.moonDir); su.uMoonOn.value = moon.alt > -1 && this.weather === 'clear' ? 1 : 0; su.uMoonLit.value = moon.fraction;
     su.uLST.value = localSiderealTime(date, ORIGIN.lon);
     this.applyNight();
     this.refreshSkyEnv();
@@ -139,7 +144,7 @@ export class Environment {
   refreshSkyEnv(force = false) {
     // by day the HDRI is the environment; after dusk the analytic sky (skyglow, moon) is baked instead so glass, car
     // paint and wet stone pick up the warm city glow rather than a dimmed daylight sky
-    const wantSky = !this.useHdri || this.night > 0.6;
+    const wantSky = !this.useHdri || this.night > 0.6 || this.weather !== 'clear';
     if (wantSky) {
       const thr = Math.abs(this.sunElev) < 10 ? 0.05 : 0.15;   // dusk changes fastest
       if (force || this.envMode !== 'sky' || !this.envTarget || Math.abs(this.hour - this.lastEnvHour) >= thr) {
@@ -164,7 +169,28 @@ export class Environment {
   }
 
   /** ?glow=0: no city skyglow (astronomical night sky, for comparison). */
-  setGlow(on: boolean) { (this.sky.material as THREE.ShaderMaterial).uniforms.uGlow.value.copy(on ? SKY_GLOW : new THREE.Vector3()); this.refreshSkyEnv(true); }
+  setGlow(on: boolean) { this.glowOn = on; this.applyGlow(); }
+  private glowOn = true;
+  weather: Weather = 'clear';
+  private applyGlow() {
+    // low cloud throws the city's light back down: Paris overcast nights are distinctly orange
+    const k = this.weather === 'overcast' || this.weather === 'rain' ? 1.7 : this.weather === 'fog' ? 1.25 : 1;
+    (this.sky.material as THREE.ShaderMaterial).uniforms.uGlow.value.copy(this.glowOn ? SKY_GLOW.clone().multiplyScalar(k) : new THREE.Vector3());
+  }
+  /** Sky, sun, fog and fill light for a weather type; the caller handles wet ground, rain particles and wind. */
+  setWeather(w: Weather) {
+    this.weather = w;
+    const su = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    su.uOvercast.value = w === 'overcast' || w === 'rain' ? 1 : w === 'fog' ? 0.75 : 0;
+    su.uStarsOn.value = w === 'clear' && this.starsOn ? 1 : 0;
+    this.sun.castShadow = w === 'clear' || w === 'fog';
+    this.applyGlow();
+    this.setTime(this.date);
+    this.refreshSkyEnv(true);
+  }
+  starsOn = true;
+  private sunK() { return this.weather === 'clear' ? 1 : this.weather === 'fog' ? 0.3 : this.weather === 'overcast' ? 0.15 : 0.1; }
+  private cloud() { return this.weather === 'overcast' || this.weather === 'rain' ? 1 : this.weather === 'fog' ? 0.8 : 0; }
 
   private applyNight() {
     const n = this.night;
@@ -172,9 +198,9 @@ export class Environment {
     (this.sky.material as THREE.ShaderMaterial).uniforms.uDim.value = THREE.MathUtils.lerp(1, 0.02, n);
     const warm = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), 0, 25); // 0 near horizon
     this.sun.color.setRGB(1.0, THREE.MathUtils.lerp(0.62, 0.95, warm), THREE.MathUtils.lerp(0.35, 0.88, warm));
-    this.sun.intensity = (1 - n) * THREE.MathUtils.lerp(1.1, 2.4, warm) * THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), -2, 6);
+    this.sun.intensity = (1 - n) * THREE.MathUtils.lerp(1.1, 2.4, warm) * THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), -2, 6) * this.sunK();
     if (n > 0.6) { // moonlight from the real moon when it is up, else a faint sky light
-      if (this.moonAlt > 2) {
+      if (this.moonAlt > 2 && this.weather === 'clear') {
         // full moon is a percent or two of the street lighting; keep it a cool accent, the skyglow does the filling
         this.sunDir.copy(this.moonDir);
         this.sun.color.setRGB(0.62, 0.72, 1.0);
@@ -187,14 +213,20 @@ export class Environment {
     }
     this.sun.visible = this.sun.intensity > 0.01;
     // night fill = the city's own skyglow: warm grey from above, lamp-lit ground bounce from below
-    this.hemi.intensity = THREE.MathUtils.lerp(0.55, 0.20, n);
-    this.hemi.color.setRGB(THREE.MathUtils.lerp(0.81, 0.40, n), THREE.MathUtils.lerp(0.89, 0.34, n), THREE.MathUtils.lerp(1.0, 0.30, n));
-    this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(0.42, 0.28, n), THREE.MathUtils.lerp(0.35, 0.20, n), THREE.MathUtils.lerp(0.28, 0.14, n));
+    const oc = this.cloud();
+    // under cloud the sky dome is the light source: stronger, neutral grey fill by day
+    this.hemi.intensity = THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.55, 0.95, oc), 0.16 * (1 + 0.5 * oc), n);
+    this.hemi.color.setRGB(THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.81, 0.64, oc), 0.40, n), THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.89, 0.66, oc), 0.34, n), THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.0, 0.70, oc), 0.30, n));
+    this.hemi.groundColor.setRGB(THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.42, 0.36, oc), 0.28, n), THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.35, 0.35, oc), 0.20, n), THREE.MathUtils.lerp(THREE.MathUtils.lerp(0.28, 0.33, oc), 0.14, n));
     const dusk = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), -4, 12);
     // haze: daylight blue-grey -> dusk peach -> the skyglow colour itself (so the far ring dissolves into the sky, no seam)
-    const fogDay = new THREE.Color(0xb7c9dc), fogDusk = new THREE.Color(0xd9a98a), fogNight = new THREE.Color(SKY_GLOW.x * 0.8, SKY_GLOW.y * 0.8, SKY_GLOW.z * 0.8);
+    const glowK = 0.55 * (1 + 0.6 * oc);
+    const fogDay = new THREE.Color(0xb7c9dc).lerp(new THREE.Color(0.58, 0.61, 0.65), oc), fogDusk = new THREE.Color(0xd9a98a).lerp(new THREE.Color(0.5, 0.5, 0.52), oc);
+    const fogNight = new THREE.Color(SKY_GLOW.x * glowK, SKY_GLOW.y * glowK, SKY_GLOW.z * glowK);
     this.fog.color.copy(fogDay).lerp(fogDusk, 1 - dusk).lerp(fogNight, n);
-    this.fog.density = THREE.MathUtils.lerp(0.00030, 0.00030, n);   // city haze at night is real, but the lights must punch through it
+    // city haze at night is real, but the lights must punch through it; cloud, rain and fog thicken it
+    const fogK = this.weather === 'fog' ? 9 : this.weather === 'rain' ? 3 : this.weather === 'overcast' ? 2.2 : 1;
+    this.fog.density = 0.00030 * fogK;
     buildingUniforms.uNight.value = n;
   }
 

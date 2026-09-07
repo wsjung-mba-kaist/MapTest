@@ -8,6 +8,21 @@ export const LIT_ANCHORS: [number, number][] = [
   [17, 0.05], [18, 0.09], [19, 0.15], [20, 0.28], [21, 0.40], [22, 0.40], [23, 0.35], [24, 0.20],
 ];
 
+/** Relative traffic / pedestrian volume over the day (1 = daytime peak), cyclic over 24 h. */
+export const CAR_ANCHORS: [number, number][] = [[0, 0.25], [2, 0.12], [4, 0.08], [5, 0.15], [6, 0.45], [7, 0.8], [8, 1.0], [10, 0.85], [12, 0.9], [17, 1.0], [19, 0.9], [21, 0.6], [23, 0.4], [24, 0.25]];
+export const WALK_ANCHORS: [number, number][] = [[0, 0.15], [2, 0.05], [5, 0.03], [6, 0.1], [7, 0.35], [9, 0.7], [11, 1.0], [14, 1.0], [18, 1.0], [20, 0.8], [22, 0.5], [23, 0.3], [24, 0.15]];
+
+function interp(table: [number, number][], hour: number): number {
+  const h = ((hour % 24) + 24) % 24;
+  for (let i = 0; i + 1 < table.length; i++) {
+    const [h0, p0] = table[i], [h1, p1] = table[i + 1];
+    if (h >= h0 && h <= h1) return h1 > h0 ? p0 + (p1 - p0) * (h - h0) / (h1 - h0) : p0;
+  }
+  return table[0][1];
+}
+
+export function activity(hour: number, kind: 'car' | 'walk'): number { return interp(kind === 'car' ? CAR_ANCHORS : WALK_ANCHORS, hour); }
+
 /** Fraction of windows lit at a local hour (0..24). */
 export function litProbability(hour: number): number {
   const h = ((hour % 24) + 24) % 24;

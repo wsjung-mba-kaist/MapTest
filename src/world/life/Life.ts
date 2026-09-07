@@ -7,7 +7,9 @@ import type { Crowd } from './Crowd';
 import type { Traffic } from './Traffic';
 import type { Boats } from './Boats';
 import type { Signals } from './Signals';
+import type { FarTraffic } from './FarTraffic';
 import type { LocalLight } from '../../render/LocalLights';
+import { activity } from '../../../shared/nightlife';
 
 /**
  * The moving city: owns the path graph, the simulation clock and the crowd / traffic / boat layers, and keeps
@@ -22,6 +24,7 @@ export class Life {
   traffic?: Traffic;
   boats?: Boats;
   signals?: Signals;
+  farTraffic?: FarTraffic;
   /** activation radii (metres) */
   walkRadius = 220;
   driveRadius = 350;
@@ -34,13 +37,14 @@ export class Life {
 
   constructor() { this.group.name = 'life'; }
 
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
     await this.graph.load();
     this.debugOn = !!opts.debug;
     if (opts.crowd) { const { Crowd } = await import('./Crowd'); this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
     if (opts.traffic) { const { Traffic } = await import('./Traffic'); this.traffic = new Traffic(this.graph, this.clock); await this.traffic.load(); this.group.add(this.traffic.group); }
     if (opts.boats) { const { Boats } = await import('./Boats'); this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
     if (opts.signals !== false) { const { Signals } = await import('./Signals'); this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
+    if (opts.traffic && opts.farTraffic !== false) { const { FarTraffic } = await import('./FarTraffic'); this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
   }
 
   /** Dynamic local lights (boat floodlights first, then the nearest cars' headlights); `cars` = 0 disables headlights. */
@@ -51,22 +55,26 @@ export class Life {
     return out;
   }
 
-  update(dt: number, x: number, z: number, camDir: THREE.Vector3, night: number) {
+  update(dt: number, x: number, z: number, camDir: THREE.Vector3, night: number, hour = 12) {
     const t0 = performance.now();
     const simDt = this.clock.tick(dt);
     const moved = !Number.isFinite(this.lastX) || Math.hypot(x - this.lastX, z - this.lastZ) > 32;
+    // time of day thins or refills the streets (rush hour vs. 4 am)
+    const reseedWalk = this.crowd?.setActivity(activity(hour, 'walk')) ?? false;
+    const reseedDrive = this.traffic?.setActivity(activity(hour, 'car')) ?? false;
     if (moved) {
       this.lastX = x; this.lastZ = z;
       this.graph.edgesNear(x, z, this.walkRadius, this.activeWalk);
       this.graph.edgesNear(x, z, this.driveRadius, this.activeDrive);
-      this.crowd?.setActive(this.activeWalk, x, z, this.walkRadius);
-      this.traffic?.setActive(this.activeDrive, x, z, this.driveRadius);
       if (this.debugOn) this.rebuildDebug();
     }
+    if (moved || reseedWalk) this.crowd?.setActive(this.activeWalk, x, z, this.walkRadius);
+    if (moved || reseedDrive) this.traffic?.setActive(this.activeDrive, x, z, this.driveRadius);
     this.crowd?.update(simDt, x, z, camDir, night);
     this.traffic?.update(simDt, x, z, camDir, night);
     this.boats?.update(simDt, night);
     this.signals?.update(this.clock.time, night);
+    if (night > 0.02) this.farTraffic?.update(simDt);
     this.lastMs = performance.now() - t0;
   }
 

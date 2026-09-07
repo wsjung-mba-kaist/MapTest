@@ -40,8 +40,10 @@ export class Furniture {
     this.lanternMat = withLamps(new THREE.MeshStandardMaterial({ color: 0xfff2d0, emissive: 0xffd9a0, emissiveIntensity: 0, roughness: 0.4 }));
     this.poolMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: this.uniforms,
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }',
-      fragmentShader: 'uniform float uNight; varying vec2 vUv; void main(){ float d = length(vUv - 0.5) * 2.0; float a = pow(max(0.0, 1.0 - d), 2.2) * 0.10 * uNight; gl_FragColor = vec4(vec3(1.0, 0.82, 0.55) * a, a); }',
+      // faint up close (the real lamp light does the work there); stronger with distance so streets read as chains
+      // of orange pools from the tower, as in aerial night photos
+      vertexShader: 'varying vec2 vUv; varying float vD; void main(){ vUv = uv; vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0); vD = -mv.z; gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform float uNight; varying vec2 vUv; varying float vD; void main(){ float d = length(vUv - 0.5) * 2.0; float a = pow(max(0.0, 1.0 - d), 2.2) * 0.10 * uNight * mix(1.0, 3.2, smoothstep(120.0, 500.0, vD)); gl_FragColor = vec4(vec3(1.0, 0.82, 0.55) * a, a); }',
     });
 
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
