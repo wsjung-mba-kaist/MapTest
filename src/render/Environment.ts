@@ -113,21 +113,32 @@ export class Environment {
     } catch (e) { console.warn('HDRI missing', e); }
   }
 
+  /**
+   * The render loop reads `hour` about seven times a frame and `sunTimes()` once. Both used to go through
+   * `parisOffset`, which builds an `Intl.DateTimeFormat` on every call — ten of them per frame, plus a SunCalc
+   * pass, for values that only change when the clock or the calendar day is set. Cache them instead.
+   */
+  private cachedHour = 12;
+  private cachedSun: { sunrise: number; sunset: number } | null = null;
+  private cachedDoy = 0;
+
   /** Hours since local midnight (Europe/Paris, DST-aware) on the current calendar day. */
   setHour(hour: number) { this.setTime(localDate(this.ymd, hour)); }
-  get hour(): number { return localHour(this.date, this.ymd); }
+  get hour(): number { return this.cachedHour; }
   /** Change the calendar day, keeping the local hour. */
-  setDate(ymd: [number, number, number]) { const h = this.hour; this.ymd = ymd; this.setHour(h); }
+  setDate(ymd: [number, number, number]) { const h = this.hour; this.ymd = ymd; this.cachedSun = null; this.cachedDoy = 0; this.setHour(h); }
   dateLabel(): string { return `${this.ymd[1]}월 ${this.ymd[2]}일`; }
-  dayOfYear(): number { return dayOfYear(this.ymd[0], this.ymd[1], this.ymd[2]); }
+  dayOfYear(): number { return this.cachedDoy || (this.cachedDoy = dayOfYear(this.ymd[0], this.ymd[1], this.ymd[2])); }
   /** Sunrise / sunset as local hours for the current day (suncalc). */
   sunTimes(): { sunrise: number; sunset: number } {
+    if (this.cachedSun) return this.cachedSun;
     const t = SunCalc.getTimes(localDate(this.ymd, 12), ORIGIN.lat, ORIGIN.lon);
-    return { sunrise: localHour(t.sunrise ?? localDate(this.ymd, 6), this.ymd), sunset: localHour(t.sunset ?? localDate(this.ymd, 20), this.ymd) };
+    return (this.cachedSun = { sunrise: localHour(t.sunrise ?? localDate(this.ymd, 6), this.ymd), sunset: localHour(t.sunset ?? localDate(this.ymd, 20), this.ymd) });
   }
 
   setTime(date: Date) {
     this.date = date;
+    this.cachedHour = localHour(date, this.ymd);
     // suncalc 2.x returns DEGREES with a north-based clockwise azimuth (0 = N, 90 = E, 180 = S).
     // World frame: x east, z south, so north is -z.
     const pos = SunCalc.getPosition(date, ORIGIN.lat, ORIGIN.lon);
@@ -292,7 +303,16 @@ export function todayParis(): [number, number, number] {
   const n = new Date(); return [n.getFullYear(), n.getMonth() + 1, n.getDate()];
 }
 /** UTC offset (hours) of Europe/Paris at noon on that day: 1 in winter, 2 in summer. */
+let offsetKey = '';
+let offsetVal = 2;
 export function parisOffset(ymd: [number, number, number]): number {
+  // One Intl.DateTimeFormat per calendar day instead of one per call.
+  const key = `${ymd[0]}-${ymd[1]}-${ymd[2]}`;
+  if (key === offsetKey) return offsetVal;
+  offsetKey = key;
+  return (offsetVal = computeParisOffset(ymd));
+}
+function computeParisOffset(ymd: [number, number, number]): number {
   try {
     const probe = new Date(Date.UTC(ymd[0], ymd[1] - 1, ymd[2], 12));
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', hour: 'numeric', hourCycle: 'h23' }).formatToParts(probe);

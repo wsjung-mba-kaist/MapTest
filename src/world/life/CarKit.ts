@@ -156,12 +156,19 @@ export async function loadCarModel(name: string, targetLength: number): Promise<
   return { geometry, length: b.max.z - b.min.z, width: w, height: h };
 }
 
+/**
+ * One parse per model, shared. Both the parked cars in Furniture and the moving traffic ask for overlapping sets,
+ * and without this cache every shared GLB was fetched, parsed and merged twice, leaving two copies on the GPU.
+ */
+const carCache = new Map<string, Promise<CarModel>>();
+
 export async function loadCarKit(names: readonly string[]): Promise<Map<string, CarModel>> {
-  const out = new Map<string, CarModel>();
-  for (const n of names) {
-    try { out.set(n, await loadCarModel(n, n === 'van' || n === 'delivery' ? 5.2 : 4.4)); } catch (e) { console.warn(`car model ${n} missing`, e); }
-  }
-  return out;
+  const entries = await Promise.all(names.map(async n => {
+    let p = carCache.get(n);
+    if (!p) { p = loadCarModel(n, n === 'van' || n === 'delivery' ? 5.2 : 4.4); carCache.set(n, p); }
+    try { return [n, await p] as const; } catch (e) { carCache.delete(n); console.warn(`car model ${n} missing`, e); return null; }
+  }));
+  return new Map(entries.filter((e): e is readonly [string, CarModel] => e !== null));
 }
 
 export function carTexture() { return texture; }

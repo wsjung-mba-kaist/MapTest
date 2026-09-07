@@ -139,7 +139,7 @@ function instancedQuads(list: SignInst[], mat: THREE.Material, shadows: boolean)
   const mesh = new THREE.InstancedMesh(geom, mat, list.length);
   list.forEach((s, i) => mesh.setMatrixAt(i, s.m));
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.castShadow = shadows; mesh.receiveShadow = true; mesh.frustumCulled = false;
+  mesh.castShadow = shadows; mesh.receiveShadow = true;
   return mesh;
 }
 
@@ -327,7 +327,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     list.forEach((b, i) => { mesh.setMatrixAt(i, b.m); mesh.setColorAt(i, b.c); });
     mesh.count = list.length;
     mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+    mesh.castShadow = true; mesh.receiveShadow = true;
     return mesh;
   };
   const boxesMesh = mkBoxes(boxes, boxMat, boxGeom);
@@ -338,14 +338,14 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
   rails.forEach((r, i) => railsMesh.setMatrixAt(i, r.m));
   railsMesh.count = rails.length;
   railsMesh.instanceMatrix.needsUpdate = true;
-  railsMesh.castShadow = true; railsMesh.frustumCulled = false;
+  railsMesh.castShadow = true;
   const balGeom = planeGeom.clone();
   balGeom.setAttribute('railLen', new THREE.InstancedBufferAttribute(new Float32Array(balusters.map(r => r.len)), 1));
   const balMesh = new THREE.InstancedMesh(balGeom, balMat, Math.max(1, balusters.length));
   balusters.forEach((r, i) => balMesh.setMatrixAt(i, r.m));
   balMesh.count = balusters.length;
   balMesh.instanceMatrix.needsUpdate = true;
-  balMesh.castShadow = true; balMesh.receiveShadow = true; balMesh.frustumCulled = false;
+  balMesh.castShadow = true; balMesh.receiveShadow = true;
 
   const signsMesh = signs.length ? instancedQuads(signs, shopSignMaterial(), false) : null;
   let plaquesMesh: THREE.InstancedMesh | null = null;

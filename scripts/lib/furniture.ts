@@ -54,9 +54,15 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
   };
   if (points) {
     for (const f of points.features) {
-      if (f.geometry.type !== 'Point') continue;
       const t = f.properties.tags ?? {};
-      const [lon, lat] = f.geometry.coordinates;
+      // A few statues are mapped as small areas rather than nodes; stand them at the footprint centre.
+      let lon: number, lat: number;
+      if (f.geometry.type === 'Point') { [lon, lat] = f.geometry.coordinates; }
+      else if (f.geometry.type === 'Polygon' && (t.man_made === 'statue' || t.tourism === 'artwork')) {
+        const r = f.geometry.coordinates[0];
+        lon = r.reduce((a, p) => a + p[0], 0) / r.length;
+        lat = r.reduce((a, p) => a + p[1], 0) / r.length;
+      } else continue;
       const w = frame.toWorld(lon, lat);
       const seed = (f.properties.id * 0.618) % 1;
       if (t.highway === 'street_lamp') {
@@ -73,6 +79,12 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
       else if (t.amenity === 'bicycle_parking' || t.amenity === 'bicycle_rental') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.BikeRack, t.amenity === 'bicycle_rental' ? 1.6 : 1)) fromOsm++; }
       else if (t.amenity === 'waste_basket') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.WasteBasket)) fromOsm++; }
       else if (t.man_made === 'flagpole') { if (place(w.x, w.z, 0, FurnitureKind.Flagpole)) fromOsm++; }
+      // Statues and memorials (the Liberty replica on the Ile aux Cygnes, the Flame of Liberty, park bronzes).
+      // OSM rarely gives a height, so scale 1 is a ~4.5 m figure on a plinth and the tagged height overrides it.
+      else if (t.man_made === 'statue' || t.historic === 'memorial' || t.tourism === 'artwork') {
+        const h = parseFloat(t.height ?? '');
+        if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.Statue, Number.isFinite(h) && h > 1 ? Math.min(6, h / 4.5) : 1)) fromOsm++;
+      }
     }
   }
 

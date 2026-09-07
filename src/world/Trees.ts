@@ -93,7 +93,7 @@ export class Trees {
           this.pitMat ??= withLamps(new THREE.MeshStandardMaterial({ map: grateTexture(), alphaTest: 0.5, color: 0x9a9a9c, roughness: 0.75, metalness: 0.35, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
           const mesh = new THREE.InstancedMesh(this.pitGeom, this.pitMat, pits.length / 4);
           for (let n = 0; n < pits.length / 4; n++) { p.set(pits[n * 4], pits[n * 4 + 1], pits[n * 4 + 2]); q.setFromAxisAngle(UP, frac(pits[n * 4 + 3] * 0.13) * Math.PI); s.set(1, 1, 1); m.compose(p, q, s); mesh.setMatrixAt(n, m); }
-          mesh.instanceMatrix.needsUpdate = true; mesh.receiveShadow = true; mesh.frustumCulled = false; mesh.name = 'tree_pits';
+          mesh.instanceMatrix.needsUpdate = true; mesh.receiveShadow = true; mesh.name = 'tree_pits';
           this.pitCount += pits.length / 4;
           cell.lod0.add(mesh);
         }
@@ -118,7 +118,9 @@ export class Trees {
         canopy.instanceMatrix.needsUpdate = true; trunk.instanceMatrix.needsUpdate = true;
         if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
         canopy.castShadow = true; canopy.receiveShadow = true; trunk.castShadow = true;   // LOD1 too: no shadow pop line at 240 m
-        canopy.frustumCulled = false; trunk.frustumCulled = false;
+        // Per-cell instances cull against their own instance-derived sphere; pad it for the vertex-shader wind sway.
+        canopy.computeBoundingSphere(); if (canopy.boundingSphere) canopy.boundingSphere.radius += 1.5;
+        trunk.computeBoundingSphere();
         (lod === 0 ? cell.lod0 : cell.lod1).add(canopy, trunk);
       }
     }

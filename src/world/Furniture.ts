@@ -106,6 +106,8 @@ export class Furniture {
     if (racks.length) place(bikeRack(), metal, racks);
     const bins = byKind.get(FurnitureKind.WasteBasket) ?? [];
     if (bins.length) place(wasteBasket(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 })), bins);
+    const statues = byKind.get(FurnitureKind.Statue) ?? [];
+    if (statues.length) place(statue(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 })), statues).layers.enable(REFLECT_LAYER);
     const poles = byKind.get(FurnitureKind.Flagpole) ?? [];
     if (poles.length) place(flagpole(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide })), poles, { shadow: false });
 
@@ -252,6 +254,41 @@ function wasteBasket(): THREE.BufferGeometry {
 }
 
 /** 9 m flagpole with a tricolore (blue at the hoist). */
+/**
+ * A statue on its plinth: a stepped stone base carrying a standing bronze figure. Scale 1 is a ~4.5 m figure on a
+ * 2.6 m plinth, the size of a park bronze; the bake passes a larger scale where OSM tags a height, which is how the
+ * Liberty replica on the Île aux Cygnes comes out at its real 11.5 m on a tall pedestal.
+ *
+ * The figure is deliberately schematic — a robed body, arms and a head read correctly at the distance you actually
+ * see these from, and nothing here is trying to be a portrait.
+ */
+function statue(): THREE.BufferGeometry {
+  const STONE = 0xb9b2a4, BRONZE = 0x5d6b52;
+  const parts: THREE.BufferGeometry[] = [
+    // stepped plinth
+    tint(new THREE.BoxGeometry(2.6, 0.35, 2.6).translate(0, 0.175, 0), STONE),
+    tint(new THREE.BoxGeometry(2.1, 0.3, 2.1).translate(0, 0.5, 0), STONE),
+    tint(new THREE.BoxGeometry(1.6, 1.6, 1.6).translate(0, 1.45, 0), STONE),
+    tint(new THREE.BoxGeometry(1.9, 0.22, 1.9).translate(0, 2.36, 0), STONE),
+    // robed body: a tapered skirt up to the shoulders
+    tint(new THREE.CylinderGeometry(0.42, 0.75, 3.0, 12).translate(0, 3.97, 0), BRONZE),
+    tint(new THREE.SphereGeometry(0.44, 12, 8).translate(0, 5.5, 0), BRONZE),
+    // head
+    tint(new THREE.SphereGeometry(0.26, 10, 8).translate(0, 6.05, 0), BRONZE),
+    // raised right arm holding a torch, and a tablet held to the chest on the left
+    tint(new THREE.CylinderGeometry(0.11, 0.13, 1.7, 8).rotateZ(-0.28).translate(0.42, 6.1, 0), BRONZE),
+    tint(new THREE.CylinderGeometry(0.17, 0.1, 0.5, 8).translate(0.68, 7.1, 0), 0xc8a24a),
+    tint(new THREE.CylinderGeometry(0.1, 0.12, 1.3, 8).rotateZ(0.5).translate(-0.5, 4.9, 0.1), BRONZE),
+    tint(new THREE.BoxGeometry(0.5, 0.72, 0.16).rotateZ(0.35).translate(-0.62, 4.5, 0.24), BRONZE),
+  ];
+  // crown spikes: the detail that makes the silhouette read as this statue and not a generic bronze
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 6 - 0.5) * Math.PI * 1.5;
+    parts.push(tint(new THREE.ConeGeometry(0.055, 0.5, 5).translate(Math.sin(a) * 0.34, 6.42, Math.cos(a) * 0.34), BRONZE));
+  }
+  return mergeGeometries(parts, false)!;
+}
+
 function flagpole(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [tint(new THREE.CylinderGeometry(0.04, 0.07, 9, 8).translate(0, 4.5, 0), 0xe8e8e8), tint(new THREE.SphereGeometry(0.08, 8, 6).translate(0, 9.05, 0), 0xd4b25a)];
   const cols = [0x1f3a8a, 0xf2f2f2, 0xc8102e];

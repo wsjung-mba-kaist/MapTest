@@ -38,17 +38,16 @@ export class LandmarkModel {
   static async loadAll(url: string, groundY: (x: number, z: number) => number, lodOnly = false): Promise<LandmarkModel[]> {
     let index: { models: { id: string; glb: string; lod?: string; json: string }[] };
     try { index = await (await fetch(url)).json(); } catch { return []; }
-    const out: LandmarkModel[] = [];
-    for (const m of index.models ?? []) {
-      if (m.id === 'eiffel') continue;
+    // Load them side by side: awaiting each in turn made boot wait for the sum of every model's fetch and parse.
+    const loaded = await Promise.all((index.models ?? []).filter(m => m.id !== 'eiffel').map(async m => {
       try {
         const meta = await (await fetch(`/models/${m.json}`)).json() as LandmarkModelMeta;
         const lm = new LandmarkModel({ ...meta, id: m.id, lod: m.lod }, groundY);
         await lm.load(`/models/${m.glb}`, m.lod ? `/models/${m.lod}` : undefined, lodOnly);
-        out.push(lm);
-      } catch (e) { console.warn(`landmark model ${m.id} failed`, e); }
-    }
-    return out;
+        return lm;
+      } catch (e) { console.warn(`landmark model ${m.id} failed`, e); return null; }
+    }));
+    return loaded.filter((m): m is LandmarkModel => m !== null);
   }
 
   async load(glbUrl: string, lodUrl?: string, lodOnly = false) {

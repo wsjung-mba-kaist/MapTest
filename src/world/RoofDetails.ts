@@ -118,7 +118,7 @@ export function buildRoofDetails(rows: Float32Array, chunkOrigin: THREE.Vector3)
     if (lit) geom.setAttribute('aLit', new THREE.InstancedBufferAttribute(lit, 1));
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.castShadow = true; mesh.receiveShadow = true;
     mesh.name = `roofdetail_${kind}`;
     meshes.push(mesh);
   }

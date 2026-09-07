@@ -133,7 +133,15 @@ export class LocalLights {
   private staticBudget = STATIC_N;
   private dynBudget = DYN_N;
   /** Fewer slots on weak GPUs (the shader loop skips empty slots cheaply, but not for free). */
-  setBudget(staticN: number, dynN: number) { this.staticBudget = Math.max(0, Math.min(STATIC_N, staticN)); this.dynBudget = Math.max(0, Math.min(DYN_N, dynN)); this.lastX = NaN; }
+  setBudget(staticN: number, dynN: number) {
+    this.staticBudget = Math.max(0, Math.min(STATIC_N, staticN));
+    this.dynBudget = Math.max(0, Math.min(DYN_N, dynN));
+    // Shrink the shader's loop bound too, or the mobile preset saves nothing: the whole point of a smaller budget
+    // is fewer per-fragment iterations. Dynamic lights are packed right after the static ones (see update) so the
+    // used slots stay contiguous and the bound is simply the sum.
+    lampUniforms.uLampCount.value = this.staticBudget + this.dynBudget;
+    this.lastX = NaN;
+  }
 
   /** Register / replace a named group of static lights (lamps, one group per building chunk for shop fronts...). */
   addLights(key: string, list: LocalLight[]) { this.groups.set(key, list); this.rebuild(); }
@@ -190,8 +198,8 @@ export class LocalLights {
     // dynamic slots every call (cheap)
     const P = lampUniforms.uLampPos.value;
     let dn = 0;
-    for (const l of this.dynamic) { if (dn >= this.dynBudget) break; this.write(STATIC_N + dn, l, 1); dn++; }
-    for (let k = dn; k < DYN_N; k++) P[(STATIC_N + k) * 4 + 3] = 0;
+    for (const l of this.dynamic) { if (dn >= this.dynBudget) break; this.write(this.staticBudget + dn, l, 1); dn++; }
+    for (let k = dn; k < DYN_N && this.staticBudget + k < LAMP_N; k++) P[(this.staticBudget + k) * 4 + 3] = 0;
     // static selection: throttled
     if (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) < 1.5 && now - this.lastT < 250) return;
     this.lastX = x; this.lastZ = z; this.lastT = now;
@@ -213,7 +221,7 @@ export class LocalLights {
       this.write(n, l, fade);
       n++;
     }
-    for (let k = n; k < STATIC_N; k++) P[k * 4 + 3] = 0;
+    for (let k = n; k < this.staticBudget; k++) P[k * 4 + 3] = 0;
   }
 }
 

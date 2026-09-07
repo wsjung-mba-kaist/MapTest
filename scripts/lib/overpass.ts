@@ -12,7 +12,7 @@ export const THEMES: Record<string, string> = {
   roads: `( way["highway"]; way["railway"~"^(rail|subway|light_rail)$"]; way["man_made"="bridge"]; relation["man_made"="bridge"]; way["bridge"]["highway"]; );`,
   landcover: `( way["leisure"~"^(park|garden|pitch|playground)$"]; relation["leisure"~"^(park|garden)$"]; way["landuse"~"^(grass|forest|cemetery|flowerbed)$"]; way["natural"~"^(wood|scrub|grassland)$"]; way["highway"="pedestrian"]["area"="yes"]; way["place"="square"]; way["amenity"="parking"]; way["surface"]["area"="yes"]; );`,
   water: `( relation["natural"="water"]; way["natural"="water"]; way["waterway"~"^(river|canal)$"]; way["amenity"="fountain"]; way["water"]; );`,
-  points: `( node["highway"="street_lamp"]; node["amenity"~"^(bench|fountain|drinking_water|bicycle_parking|bicycle_rental|waste_basket|shelter)$"]; node["barrier"="bollard"]; node["advertising"="column"]; node["natural"="tree"]["genus"]; node["railway"="subway_entrance"]; node["highway"="bus_stop"]; node["man_made"="flagpole"]; );`,
+  points: `( node["highway"="street_lamp"]; node["amenity"~"^(bench|fountain|drinking_water|bicycle_parking|bicycle_rental|waste_basket|shelter)$"]; node["barrier"="bollard"]; node["advertising"="column"]; node["natural"="tree"]["genus"]; node["railway"="subway_entrance"]; node["highway"="bus_stop"]; node["man_made"="flagpole"]; node["man_made"="statue"]; node["historic"="memorial"]["memorial"!="plaque"]; node["tourism"="artwork"]["artwork_type"~"^(statue|sculpture)$"]; way["man_made"="statue"]; way["tourism"="artwork"]["artwork_type"~"^(statue|sculpture)$"]; );`,
 };
 
 export interface OsmProps {
