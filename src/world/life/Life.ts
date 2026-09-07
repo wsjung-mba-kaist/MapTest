@@ -8,6 +8,7 @@ import type { Traffic } from './Traffic';
 import type { Boats } from './Boats';
 import type { Signals } from './Signals';
 import type { FarTraffic } from './FarTraffic';
+import type { Metro } from './Metro';
 import type { LocalLight } from '../../render/LocalLights';
 import { activity } from '../../../shared/nightlife';
 import { buildCrossings } from '../../../shared/crossings';
@@ -26,6 +27,7 @@ export class Life {
   boats?: Boats;
   signals?: Signals;
   farTraffic?: FarTraffic;
+  metro?: Metro;
   /** activation radii (metres) */
   walkRadius = 220;
   driveRadius = 350;
@@ -39,7 +41,7 @@ export class Life {
   constructor() { this.group.name = 'life'; }
 
   crossingStats = '';
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
     await this.graph.load();
     this.debugOn = !!opts.debug;
     if (opts.crowd) { const { Crowd } = await import('./Crowd'); this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
@@ -47,6 +49,9 @@ export class Life {
     if (opts.boats) { const { Boats } = await import('./Boats'); this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
     if (opts.signals !== false) { const { Signals } = await import('./Signals'); this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
     if (opts.traffic && opts.farTraffic !== false) { const { FarTraffic } = await import('./FarTraffic'); this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
+    if (opts.metro !== false) {
+      try { const { Metro } = await import('./Metro'); const m = new Metro(this.clock); await m.load(); this.metro = m; this.group.add(m.group); } catch (e) { console.warn('rail.json missing: no métro', e); }
+    }
     if (opts.crossings !== false && this.crowd) {
       const table = buildCrossings(this.graph);
       this.crowd.setCrossings(table);
@@ -86,6 +91,7 @@ export class Life {
     this.boats?.update(simDt, night);
     this.signals?.update(this.clock.time, night);
     if (night > 0.02) this.farTraffic?.update(simDt);
+    this.metro?.update(night);
     this.lastMs = performance.now() - t0;
   }
 

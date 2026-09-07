@@ -6,6 +6,7 @@ import { Terrain } from './Terrain';
 import { Eiffel } from './Eiffel';
 import { Trees } from './Trees';
 import { Water } from './Water';
+import { Fountains } from './Fountains';
 import { Bridges } from './Bridges';
 import { Furniture } from './Furniture';
 import { FarRing } from './FarRing';
@@ -29,6 +30,7 @@ export class World {
   eiffel!: Eiffel;
   trees?: Trees;
   water?: Water;
+  fountains?: Fountains;
   bridges?: Bridges;
   towerKind: 'lattice' | 'scan' = 'scan';
   furniture?: Furniture;
@@ -43,7 +45,7 @@ export class World {
   /** 2 m surface class grid (sidewalk slabs, road, grass...); null when the streets bake has not run */
   surface: SurfaceGrid | null = null;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
-  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, debug: false };
+  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, debug: false };
 
   async load(onProgress: (frac: number, msg: string) => void) {
     onProgress(0.05, 'Loading manifest...');
@@ -65,6 +67,7 @@ export class World {
     this.group.add(this.buildings.group);
     onProgress(0.6, 'Loading water...');
     try { const w = new Water(); await w.load(); this.water = w; this.group.add(w.group); } catch (e) { console.warn('water layer missing', e); }
+    try { const f = new Fountains(); await f.load(); this.fountains = f; this.group.add(f.group); } catch (e) { console.warn('fountains missing', e); }
     try { const b = new Bridges(); await b.load(); this.bridges = b; b.setOverview(this.terrain.overview); b.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(b.group); } catch (e) { console.warn('bridges missing', e); }
     onProgress(0.7, 'Loading the tower...');
     this.eiffel = new Eiffel();

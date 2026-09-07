@@ -23,6 +23,7 @@ export class Crowd {
   count = 0;
   private readonly mesh: THREE.InstancedMesh;
   private readonly anim: THREE.InstancedBufferAttribute;
+  private readonly look: THREE.InstancedBufferAttribute;
   private readonly uniforms = { uTime: { value: 0 } };
   // agent state (SoA)
   private readonly edge = new Int32Array(CAP);
@@ -75,6 +76,9 @@ export class Crowd {
     this.anim = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 4), 4);
     this.anim.setUsage(THREE.DynamicDrawUsage);
     geom.setAttribute('aAnim', this.anim);
+    this.look = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 4), 4);
+    this.look.setUsage(THREE.DynamicDrawUsage);
+    geom.setAttribute('aLook', this.look);
     this.mesh = new THREE.InstancedMesh(geom, makePeopleMaterial(this.uniforms), CAP);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
@@ -157,10 +161,12 @@ export class Crowd {
         this.color.setHex(CLOTH_PALETTE[Math.floor(hash32(seed, 10) * CLOTH_PALETTE.length)]);
         this.mesh.setColorAt(i, this.color);
         this.anim.setXYZW(i, this.phase[i], this.walk[i], hash32(seed, 11), 0);
-        this.writeMatrix(i, this.tmp.x, this.tmp.y + (this.surface?.lift(this.tmp.x, this.tmp.z) ?? 0), this.tmp.z, 0.92 + hash32(seed, 12) * 0.16);
+        this.look.setXYZW(i, hash32(seed, 40), hash32(seed, 41), hash32(seed, 42), 0);
+        this.writeMatrix(i, this.tmp.x, this.tmp.y + (this.surface?.lift(this.tmp.x, this.tmp.z) ?? 0), this.tmp.z, 0.86 + hash32(seed, 12) * 0.28);
       }
     }
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.look.needsUpdate = true;
     this.mesh.count = this.count;
   }
 
@@ -176,6 +182,7 @@ export class Crowd {
       this.mesh.getMatrixAt(last, this.mat4); this.mesh.setMatrixAt(i, this.mat4);
       if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
       this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
+      this.look.setXYZW(i, this.look.getX(last), this.look.getY(last), this.look.getZ(last), this.look.getW(last)); this.look.needsUpdate = true;
     }
     this.count = last;
     this.mesh.count = last;

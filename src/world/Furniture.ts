@@ -117,6 +117,10 @@ export class Furniture {
       const anim = new THREE.InstancedBufferAttribute(new Float32Array(peopleIdx.length * 4), 4);
       peopleIdx.forEach((k, n) => anim.setXYZW(n, 0, 0, (k * 0.618) % 1, 0));
       geom.setAttribute('aAnim', anim);
+      const look = new THREE.InstancedBufferAttribute(new Float32Array(peopleIdx.length * 4), 4);
+      const fr = (v: number) => v - Math.floor(v);
+      peopleIdx.forEach((k, n) => look.setXYZW(n, fr(k * 0.7548), fr(k * 0.5698), fr(k * 0.3247), 0));
+      geom.setAttribute('aLook', look);
       this.peopleMat = makePeopleMaterial(this.peopleUniforms);
       place(geom, this.peopleMat, peopleIdx, { colors: k => clothColor(k), scale: () => 1 });
     }

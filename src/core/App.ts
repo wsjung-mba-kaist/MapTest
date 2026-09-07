@@ -113,7 +113,7 @@ export class App {
       const dateS = q.get('date');
       if (dateS && /^\d{4}-\d{2}-\d{2}$/.test(dateS)) { const [y, m, d] = dateS.split('-').map(Number); this.env.setDate([y, m, d]); }
       if (life === '0') this.world.lifeOptions = null;
-      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), debug: q.get('lifedebug') === '1' }; }
+      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), metro: set.has('traffic'), debug: q.get('lifedebug') === '1' }; }
       else if (this.world.lifeOptions) this.world.lifeOptions.debug = q.get('lifedebug') === '1';
       // ?marks=0 road markings, ?streets=0 sidewalk slabs, ?signs=0 shop signs + plaques; *debug=1 variants paint them magenta / log placements
       if (q.get('marks') === '0') this.world.marksEnabled = false;
@@ -128,6 +128,7 @@ export class App {
       if (q.get('signals') === '0' && this.world.lifeOptions) this.world.lifeOptions.signals = false;
       if (q.get('fartraffic') === '0' && this.world.lifeOptions) this.world.lifeOptions.farTraffic = false;
       if (q.get('crossings') === '0' && this.world.lifeOptions) this.world.lifeOptions.crossings = false;
+      if (q.get('metro') === '0' && this.world.lifeOptions) this.world.lifeOptions.metro = false;
       this.carLights = q.get('carlights') !== '0';
       if (q.get('shoplights') === '0') setShopLights(false);
       if (tower === 'lit') this.towerAlwaysOn = true;
@@ -202,12 +203,14 @@ export class App {
       if (life?.traffic) for (const c of life.traffic.nearest(p.x, p.z, 4)) src.push({ kind: 'car', x: c.x, y: c.y, z: c.z, level: 0.6, speed: c.v });
       if (life?.boats) for (const b of life.boats.nearest(p.x, p.z, 2)) src.push({ kind: 'boat', x: b.x, y: b.y, z: b.z, level: 0.5 });
       if (shopOpen(this.env.hour, true) > 0.3) for (const l of localLights.nearestOfKind('restaurant', p.x, p.z, 3)) src.push({ kind: 'terrace', x: l.x, y: l.y, z: l.z, level: 0.35 });
+      // fountains: the big basins (jets) first, then Wallace / drinking fountains, nearest two within earshot
+      const fps: { x: number; y: number; z: number; level: number; reach: number }[] = [];
+      for (const st of this.world.fountains?.sites ?? []) fps.push({ x: st.x, y: st.y, z: st.z, level: st.jets >= 10 ? 0.8 : 0.45, reach: st.jets >= 10 ? 140 : 60 });
       const fp = this.world.furniture?.fountainPositions;
-      if (fp && fp.length) {
-        let b0 = -1, b1 = -1, d0 = 1e9, d1 = 1e9;
-        for (let i = 0; i < fp.length / 3; i++) { const d = (fp[i * 3] - p.x) ** 2 + (fp[i * 3 + 2] - p.z) ** 2; if (d < d0) { d1 = d0; b1 = b0; d0 = d; b0 = i; } else if (d < d1) { d1 = d; b1 = i; } }
-        for (const i of [b0, b1]) if (i >= 0 && Math.sqrt(i === b0 ? d0 : d1) < 45) src.push({ kind: 'fountain', x: fp[i * 3], y: fp[i * 3 + 1], z: fp[i * 3 + 2], level: 0.4 });
-      }
+      if (fp) for (let i = 0; i < fp.length / 3; i++) fps.push({ x: fp[i * 3], y: fp[i * 3 + 1], z: fp[i * 3 + 2], level: 0.35, reach: 40 });
+      fps.sort((a, b) => ((a.x - p.x) ** 2 + (a.z - p.z) ** 2) / (a.reach * a.reach) - ((b.x - p.x) ** 2 + (b.z - p.z) ** 2) / (b.reach * b.reach));
+      for (const f of fps.slice(0, 2)) if (Math.hypot(f.x - p.x, f.z - p.z) < f.reach) src.push({ kind: 'fountain', x: f.x, y: f.y, z: f.z, level: f.level });
+      if (life?.metro) for (const h of life.metro.heads) if (Math.hypot(h.x - p.x, h.z - p.z) < 260 && h.v > 0.5) src.push({ kind: 'train', x: h.x, y: h.y, z: h.z, level: 0.25 + 0.55 * Math.min(1, h.v / 11.5) });
       this.camera.getWorldDirection(this.fwdTmp);
       this.audio.setListener(p.x, p.y, p.z, this.fwdTmp.x, this.fwdTmp.y, this.fwdTmp.z);
       this.audio.update(dt, p.x, p.z, this.env.hour, p.y - this.world.groundY(p.x, p.z), this.world.surface, src);

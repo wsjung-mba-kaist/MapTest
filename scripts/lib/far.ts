@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { BBOX_FAR_TALL, FAR_TALL_HALF_M, FAR_TALL_MIN_H, OUT_DIR } from '../config.ts';
 import { exists, fmtBytes } from './http.ts';
 import { fetchLayer } from './bdtopo.ts';
 import { frame, worldBoxToLonLatBox, DATUM_ALT } from '../../shared/geo.ts';
@@ -10,7 +10,11 @@ import { WORLD_HALF } from '../../shared/layout.ts';
 import { area, centroid, cleanRing, orient, type Ring } from './polygons.ts';
 import { encodeBinMesh, type SectionInput } from './binmesh.ts';
 
-/** Far skyline ring: flat-roofed BD TOPO buildings between the baked square and FAR_HALF, as one cheap mesh. */
+/**
+ * Far skyline ring: flat-roofed BD TOPO buildings between the baked square and FAR_HALF as one cheap mesh, plus only
+ * the tall ones (>= FAR_TALL_MIN_H) out to FAR_TALL_HALF_M so the horizon from the tower keeps La Défense, Montparnasse,
+ * Sacré-Cœur and the Invalides/Notre-Dame silhouettes instead of stopping at 3.4 km.
+ */
 const FAR_HALF = 3400;
 const MIN_AREA = 140;
 const MAX_VERTS = 8;
@@ -36,12 +40,19 @@ export async function run(ctx: BakeContext) {
   const bbox = worldBoxToLonLatBox(frame, 0, 0, FAR_HALF);
   const fc = await fetchLayer('BDTOPO_V3:batiment', bbox, 'batiment_far', false);
   log.info(`far: ${fc.features.length} BD TOPO buildings within ±${FAR_HALF} m`);
+  let tall: typeof fc.features = [];
+  try {
+    const tf = await fetchLayer('BDTOPO_V3:batiment', BBOX_FAR_TALL, 'batiment_tall', false, `hauteur>=${FAR_TALL_MIN_H}`);
+    tall = tf.features;
+    log.info(`far: ${tall.length} tall buildings (>= ${FAR_TALL_MIN_H} m) within ±${FAR_TALL_HALF_M} m`);
+  } catch (e) { log.warn(`far: tall-building fetch failed, outer ring skipped: ${(e as Error).message.slice(0, 100)}`); }
   const inner = WORLD_HALF + 120;
   // Compact vertex format: position (f32x3) + colour (u8x4) only.
   const pos: number[] = [], col: number[] = [], idx: number[] = [];
   const vtx = (x: number, y: number, z: number, c: [number, number, number, number]) => { pos.push(x, y, z); col.push(c[0], c[1], c[2], c[3]); return pos.length / 3 - 1; };
   let kept = 0;
-  for (const f of fc.features) {
+  const outerFeatures = tall.map(f => ({ f, outer: true }));
+  for (const { f, outer } of [...fc.features.map(f => ({ f, outer: false })), ...outerFeatures]) {
     const p = f.properties;
     const h = p.hauteur ?? 0;
     if (h < 3) continue;
@@ -51,7 +62,9 @@ export async function run(ctx: BakeContext) {
       if (ring.length < 3) continue;
       const c = centroid(ring);
       if (Math.abs(c[0]) < inner && Math.abs(c[1]) < inner) continue;
-      if (Math.abs(c[0]) > FAR_HALF || Math.abs(c[1]) > FAR_HALF) continue;
+      const lim = outer ? FAR_TALL_HALF_M : FAR_HALF;
+      if (outer && Math.abs(c[0]) <= FAR_HALF && Math.abs(c[1]) <= FAR_HALF) continue;   // already in the inner ring
+      if (Math.abs(c[0]) > lim || Math.abs(c[1]) > lim) continue;
       const a = area(ring);
       if (a < MIN_AREA) continue;
       const r = simplify(ring, MAX_VERTS);
@@ -78,7 +91,7 @@ export async function run(ctx: BakeContext) {
     { spec: { name: 'position', size: 3, type: 'f32' }, data: new Float32Array(pos) },
     { spec: { name: 'color', size: 4, type: 'u8', normalized: true }, data: new Uint8Array(col) },
   ] };
-  const buf = encodeBinMesh({ x: 0, z: 0 }, [section], { count: kept, farHalf: FAR_HALF });
+  const buf = encodeBinMesh({ x: 0, z: 0 }, [section], { count: kept, farHalf: FAR_TALL_HALF_M });
   await fs.writeFile(out, buf);
   log.info(`far: ${kept} buildings, ${fmtBytes(buf.length)}, ${(idx.length / 3 / 1e6).toFixed(2)} M tris`);
 }

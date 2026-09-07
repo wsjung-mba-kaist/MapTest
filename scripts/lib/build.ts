@@ -13,6 +13,8 @@ import { GeomBuilder, encodeBinMesh } from './binmesh.ts';
 import { buildBridges } from './bridges.ts';
 import { makeFlowField, riverArms } from './river.ts';
 import { buildFurniture } from './furniture.ts';
+import { buildFountains } from './fountains.ts';
+import { buildRail } from './rail.ts';
 import { Heightmap } from '../../shared/heightmap.ts';
 import { ORIGIN, DATUM_ALT, frame } from '../../shared/geo.ts';
 import { CHUNK_SIZE, GRID_N, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type Manifest } from '../../shared/layout.ts';
@@ -165,6 +167,8 @@ export async function run(_ctx: BakeContext) {
   const w = await buildWater(water, hm);
   const br = await buildBridges(roads, hm, w.waterLevelY, makeFlowField(riverArms(water)));
   const fu = await buildFurniture(roads, points, specs, hm, w.waterLevelY, land);
+  const fo = await buildFountains(water, hm);
+  const ra = await buildRail(roads, hm, w.waterLevelY, makeFlowField(riverArms(water)));
 
   // later steps (paths, markings, streets) add their own files/counts: keep them across a rebuild
   const prevManifest = await readJson<Manifest>(path.join(OUT_DIR, 'manifest.json')).catch(() => null);
@@ -178,9 +182,9 @@ export async function run(_ctx: BakeContext) {
     gridN: GRID_N,
     waterLevelY: w.waterLevelY,
     osmTimestamp: summary.buildings?.timestamp,
-    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows },
+    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines },
     heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat },
-    files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
+    files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };
   (manifest as Manifest & { chunks: typeof chunkInfo }).chunks = chunkInfo;
   await writeJson(path.join(OUT_DIR, 'manifest.json'), manifest);

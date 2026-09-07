@@ -5,10 +5,10 @@ import { noiseBuffer } from './Synth';
  * space (horns, sirens sweeping past, the hour bell from a distance, the tower lift). The listener follows the
  * camera, so turning the head finally moves the traffic hiss, the boat engine and the café murmur around you.
  */
-export type SpatialKind = 'car' | 'boat' | 'terrace' | 'fountain';
+export type SpatialKind = 'car' | 'boat' | 'terrace' | 'fountain' | 'train';
 export interface SpatialSource { kind: SpatialKind; x: number; y: number; z: number; level: number; speed?: number }
 
-const POOL: Record<SpatialKind, number> = { car: 4, boat: 2, terrace: 4, fountain: 2 };
+const POOL: Record<SpatialKind, number> = { car: 4, boat: 2, terrace: 4, fountain: 2, train: 1 };
 
 function panner(ctx: AudioContext, ref = 3, max = 150, rolloff = 1.1): PannerNode {
   const p = ctx.createPanner();
@@ -31,7 +31,7 @@ class Voice {
   active = false;
 
   constructor(private readonly ctx: AudioContext, readonly kind: SpatialKind, out: AudioNode) {
-    this.panner = panner(ctx, kind === 'boat' ? 6 : kind === 'car' ? 3 : 2, kind === 'boat' ? 220 : 120);
+    this.panner = panner(ctx, kind === 'boat' || kind === 'train' ? 6 : kind === 'car' ? 3 : 2, kind === 'boat' ? 220 : kind === 'train' ? 320 : 120);
     this.gain = ctx.createGain(); this.gain.gain.value = 0;
     this.gain.connect(this.panner).connect(out);
     const part = (kind: 'brown' | 'pink' | 'white', type: BiquadFilterType, freq: number, q: number, level: number) => {
@@ -51,6 +51,13 @@ class Voice {
         break;
       }
       case 'terrace': part('pink', 'bandpass', 700, 0.5, 0.3); break;
+      case 'train': {
+        // rubber-tyred métro on the viaduct: deep rumble plus a 4.5 Hz clatter
+        part('brown', 'lowpass', 130, 0.8, 0.7); part('pink', 'bandpass', 380, 1.2, 0.2);
+        const lfo = ctx.createOscillator(); lfo.frequency.value = 4.5; const lg = ctx.createGain(); lg.gain.value = 0.15;
+        lfo.connect(lg).connect(this.parts[1].g.gain); lfo.start(); this.lfo = lfo;
+        break;
+      }
       case 'fountain': part('pink', 'highpass', 1400, 0.7, 0.6); break;
     }
   }

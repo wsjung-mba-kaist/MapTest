@@ -28,7 +28,31 @@ export class FarRing {
     this.group.add(mesh);
     const pts = windowPoints(s.geometry, 120000);
     if (pts) { this.windows = pts.geometry.attributes.position.count; pts.layers.enable(REFLECT_LAYER); this.group.add(pts); }
+    // ground skirt: a flat ring from the baked square out to the horizon so the far buildings do not stand on the void
+    const farHalf = (bm.header.meta?.farHalf as number) ?? 3400;
+    const skirt = new THREE.Mesh(ringGeometry(1536, farHalf + 1500, -1.5), new THREE.MeshStandardMaterial({ color: 0x5a5852, roughness: 1, metalness: 0 }));
+    skirt.name = 'far_skirt'; skirt.receiveShadow = false; skirt.castShadow = false; skirt.matrixAutoUpdate = false;
+    skirt.layers.enable(REFLECT_LAYER);
+    this.group.add(skirt);
   }
+}
+
+/** Square ring (outer square minus inner square) at height y, 8 triangles. */
+function ringGeometry(inner: number, outer: number, y: number): THREE.BufferGeometry {
+  const o = outer, i = inner;
+  const P = [[-o, -o], [o, -o], [o, o], [-o, o], [-i, -i], [i, -i], [i, i], [-i, i]];
+  const pos = new Float32Array(P.length * 3);
+  P.forEach(([x, z], k) => { pos[k * 3] = x; pos[k * 3 + 1] = y; pos[k * 3 + 2] = z; });
+  // outer k, inner k+4; each side is a quad (k, k+1, k+5, k+4) wound to face +y
+  const idx: number[] = [];
+  for (let k = 0; k < 4; k++) { const a = k, b = (k + 1) % 4, c = 4 + (k + 1) % 4, d = 4 + k; idx.push(a, c, b, a, d, c); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // flip if the normals came out downward
+  const n = g.attributes.normal as THREE.BufferAttribute; if (n.getY(0) < 0) { const ix = g.index!; for (let t = 0; t < ix.count; t += 3) { const tmp = ix.getX(t + 1); ix.setX(t + 1, ix.getX(t + 2)); ix.setX(t + 2, tmp); } g.computeVertexNormals(); }
+  return g;
 }
 
 /** Candidate windows on the wall triangles (one per ~22 m2 of facade), lit per the hour's fraction in the shader. */

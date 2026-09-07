@@ -35,8 +35,12 @@ export const ORTHO_OVERVIEW_ZOOM = 17;
 export const WMS_ELEVATION = (b: LonLatBox, w: number, h: number) =>
   `https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES&STYLES=&FORMAT=image/x-bil;bits=32&CRS=EPSG:4326&BBOX=${b.south},${b.west},${b.north},${b.east}&WIDTH=${w}&HEIGHT=${h}`;
 
-export const WFS_BDTOPO = (typename: string, b: LonLatBox, count: number, start: number) =>
-  `https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=${typename}&OUTPUTFORMAT=application/json&COUNT=${count}&STARTINDEX=${start}&BBOX=${b.south},${b.west},${b.north},${b.east},urn:ogc:def:crs:EPSG::4326`;
+export const WFS_BDTOPO = (typename: string, b: LonLatBox, count: number, start: number, cql?: string) =>
+  `https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=${typename}&OUTPUTFORMAT=application/json&COUNT=${count}&STARTINDEX=${start}&${cql ? `CQL_FILTER=${encodeURIComponent(`${cql} AND BBOX(geometrie,${b.south},${b.west},${b.north},${b.east},'urn:ogc:def:crs:EPSG::4326')`)}` : `BBOX=${b.south},${b.west},${b.north},${b.east},urn:ogc:def:crs:EPSG::4326`}`;
+/** Outer skyline ring: only buildings this tall are fetched between FAR_HALF_M and FAR_TALL_HALF_M (La Défense, Sacré-Cœur, Montparnasse). */
+export const FAR_TALL_HALF_M = 6500;
+export const FAR_TALL_MIN_H = 22;
+export const BBOX_FAR_TALL: LonLatBox = worldBoxToLonLatBox(frame, 0, 0, FAR_TALL_HALF_M);
 
 export const PARIS_TREES = (lon: number, lat: number, radiusM: number) => {
   const where = `within_distance(geo_point_2d, geom'POINT(${lon} ${lat})', ${radiusM}m)`;

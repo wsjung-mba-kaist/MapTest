@@ -23,12 +23,12 @@ export type BdTopoFeature = Feature<Polygon | MultiPolygon, BdTopoProps>;
 const dir = path.join(CACHE_DIR, 'bdtopo');
 const PAGE = 5000;
 
-export async function fetchLayer(typename: string, bbox: LonLatBox, tag: string, force: boolean): Promise<FeatureCollection<Polygon | MultiPolygon, BdTopoProps>> {
+export async function fetchLayer(typename: string, bbox: LonLatBox, tag: string, force: boolean, cql?: string): Promise<FeatureCollection<Polygon | MultiPolygon, BdTopoProps>> {
   const out = path.join(dir, `${tag}.geojson`);
   if (!force && await exists(out)) return readJson(out);
   const features: BdTopoFeature[] = [];
   for (let start = 0; ; start += PAGE) {
-    const url = WFS_BDTOPO(typename, bbox, PAGE, start);
+    const url = WFS_BDTOPO(typename, bbox, PAGE, start, cql);
     const res = await fetchRetry(url, { timeoutMs: 180_000, onRetry: (n, why) => log.warn(`wfs retry ${n}: ${why}`) });
     const fc = await res.json() as FeatureCollection<Polygon | MultiPolygon, BdTopoProps> & { numberMatched?: number };
     features.push(...fc.features);
