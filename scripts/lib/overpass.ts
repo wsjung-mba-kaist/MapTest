@@ -29,7 +29,8 @@ const geoDir = path.join(CACHE_DIR, 'osm');
 
 function buildQuery(body: string): string {
   const b = BBOX_PADDED;
-  return `[out:json][timeout:180][maxsize:1073741824][bbox:${b.south},${b.west},${b.north},${b.east}];${body}out body geom;`;
+  // 256 MB is plenty for these themes; the public gateways answer a 1 GB reservation with an instant 504 when busy
+  return `[out:json][timeout:180][maxsize:268435456][bbox:${b.south},${b.west},${b.north},${b.east}];${body}out body geom;`;
 }
 
 async function fetchTheme(theme: string, force: boolean): Promise<{ raw: any; fromCache: boolean }> {

@@ -38,6 +38,8 @@ export class TouchControls {
     btn('▲', () => {}, { hold: d => { this.input.touchV = d ? 1 : 0; }, title: '비행 중 상승' });
     btn('▼', () => {}, { hold: d => { this.input.touchV = d ? -1 : 0; }, title: '비행 중 하강' });
     btn('E', () => this.input.emitKey('KeyE'), { title: '승강기' });
+    btn('명소', () => this.input.emitKey('KeyL'), { title: 'L · 명소 목록' });
+    btn('ⓘ', () => this.input.emitKey('KeyI'), { title: 'I · 명소 정보' });
     btn('지도', () => this.input.emitKey('KeyM'), { title: 'M' });
     btn('시간', () => this.input.emitKey('KeyT'), { title: 'T' });
     btn('야경', () => this.input.emitKey('KeyN'), { title: 'N' });
@@ -46,7 +48,7 @@ export class TouchControls {
     parent.appendChild(this.root);
     this.hideStick();
     const help = document.getElementById('help');
-    if (help) { const line = document.createElement('div'); line.textContent = '터치: 왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 버튼 열(달리기 · 비행 · ▲▼ 고도 · E 승강기 · 지도 · 시간 · 야경)'; line.style.marginBottom = '6px'; help.prepend(line); }
+    if (help) { const line = document.createElement('div'); line.textContent = '터치: 왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 버튼 열(달리기 · 비행 · ▲▼ 고도 · E 승강기 · 명소 · ⓘ 정보 · 지도 · 시간 · 야경)'; line.style.marginBottom = '6px'; help.prepend(line); }
 
     const surface = document.getElementById('app') as HTMLCanvasElement;
     surface.style.touchAction = 'none';

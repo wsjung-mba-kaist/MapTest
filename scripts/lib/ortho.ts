@@ -3,7 +3,8 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, OUT_DIR, ORTHO_OVERVIEW_ZOOM, ORTHO_ZOOM, WMTS_ORTHO, EIFFEL_OSM_WAY_ID } from '../config.ts';
+import { CACHE_DIR, OUT_DIR, ORTHO_OVERVIEW_ZOOM, ORTHO_ZOOM, WMTS_ORTHO } from '../config.ts';
+import { heroFootprints } from './landmarks_footprints.ts';
 import { cachedBytes, ensureDir, exists, limit } from './http.ts';
 import { frame, lonLatToTile, TILE_SIZE } from '../../shared/geo.ts';
 import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, ORTHO_TILE_PX, OVERVIEW_PX, WORLD_HALF, chunkOrigin, chunkKey } from '../../shared/layout.ts';
@@ -56,17 +57,18 @@ function worldToMercPx(x: number, z: number, zoom: number): [number, number] {
 
 interface Inpaint { ring: Ring; cx: number; cz: number; bbox: [number, number, number, number]; radius: number }
 
-async function loadEiffelFootprint(): Promise<Inpaint | null> {
+/** Hero-model footprints (the tower and the registry's other models): their roofs and shadows are erased from the ground photo. */
+async function loadHeroInpaints(): Promise<Inpaint[]> {
   try {
-    const fc = await loadTheme('buildings');
-    const f = fc.features.find(f => f.properties.type === 'way' && f.properties.id === EIFFEL_OSM_WAY_ID);
-    if (!f || f.geometry.type !== 'Polygon') return null;
-    const ring: Ring = f.geometry.coordinates[0].map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
-    let cx = 0, cz = 0; for (const p of ring) { cx += p[0]; cz += p[1]; } cx /= ring.length; cz /= ring.length;
-    const r = 12;
-    const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
-    return { ring, cx, cz, radius: r, bbox: [Math.min(...xs) - r, Math.min(...zs) - r, Math.max(...xs) + r, Math.max(...zs) + r] };
-  } catch { return null; }
+    const out: Inpaint[] = [];
+    for (const h of heroFootprints(await loadTheme('buildings'))) for (const ring of h.rings) {
+      let cx = 0, cz = 0; for (const p of ring) { cx += p[0]; cz += p[1]; } cx /= ring.length; cz /= ring.length;
+      const r = 12;
+      const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
+      out.push({ ring, cx, cz, radius: r, bbox: [Math.min(...xs) - r, Math.min(...zs) - r, Math.max(...xs) + r, Math.max(...zs) + r] });
+    }
+    return out;
+  } catch { return []; }
 }
 
 const hash = (x: number, y: number) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
@@ -75,7 +77,7 @@ const hash = (x: number, y: number) => { const s = Math.sin(x * 127.1 + y * 311.
  * Warp a square world region [x0,x0+size]x[z0,z0+size] into an outPx² RGB buffer,
  * sampling Mercator tiles with per-pixel inverse mapping (bilinearly interpolated on a coarse grid).
  */
-async function warpRegion(store: TileStore, x0: number, z0: number, size: number, outPx: number, inpaint: Inpaint | null): Promise<Buffer> {
+async function warpRegion(store: TileStore, x0: number, z0: number, size: number, outPx: number, inpaints: Inpaint[]): Promise<Buffer> {
   const CELL = 32;
   const g = outPx / CELL + 1;
   const gx = new Float64Array(g * g), gy = new Float64Array(g * g);
@@ -109,18 +111,17 @@ async function warpRegion(store: TileStore, x0: number, z0: number, size: number
     }
   };
 
-  const doInpaint = inpaint && !(x0 > inpaint.bbox[2] || x0 + size < inpaint.bbox[0] || z0 > inpaint.bbox[3] || z0 + size < inpaint.bbox[1]);
+  const active = inpaints.filter(ip => !(x0 > ip.bbox[2] || x0 + size < ip.bbox[0] || z0 > ip.bbox[3] || z0 + size < ip.bbox[1]));
   for (let py = 0; py < outPx; py++) {
     const cj = Math.min(g - 2, Math.floor(py / CELL)), fj = py / CELL - cj;
     const wz = z0 + (py + 0.5) * mpp;
     for (let px = 0; px < outPx; px++) {
       const ci = Math.min(g - 2, Math.floor(px / CELL)), fi = px / CELL - ci;
       const o = (py * outPx + px) * 3;
-      if (doInpaint) {
+      if (active.length) {
         const wx = x0 + (px + 0.5) * mpp;
-        const ip = inpaint!;
-        if (wx >= ip.bbox[0] && wx <= ip.bbox[2] && wz >= ip.bbox[1] && wz <= ip.bbox[3] &&
-            (pointInRing(wx, wz, ip.ring) || distToRing(wx, wz, ip.ring) <= ip.radius)) {
+        const ip = active.find(ip => wx >= ip.bbox[0] && wx <= ip.bbox[2] && wz >= ip.bbox[1] && wz <= ip.bbox[3] && (pointInRing(wx, wz, ip.ring) || distToRing(wx, wz, ip.ring) <= ip.radius));
+        if (ip) {
           // March outward from the footprint centre until outside the dilated footprint, then clone from just beyond.
           let dx = wx - ip.cx, dz = wz - ip.cz;
           const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
@@ -162,8 +163,8 @@ async function downloadRange(store: TileStore, half: number, label: string) {
 
 export async function run(ctx: BakeContext) {
   await ensureDir(tilesDir);
-  const inpaint = await loadEiffelFootprint();
-  log.info(inpaint ? `ortho: Eiffel footprint loaded (${inpaint.ring.length} pts, centre ${inpaint.cx.toFixed(1)},${inpaint.cz.toFixed(1)})` : 'ortho: no Eiffel footprint (run osm step first) - skipping inpaint');
+  const inpaint = await loadHeroInpaints();
+  log.info(inpaint.length ? `ortho: ${inpaint.length} hero footprint(s) to inpaint (${inpaint.map(i => `${i.cx.toFixed(0)},${i.cz.toFixed(0)}`).join('; ')})` : 'ortho: no hero footprint (run osm step first) - skipping inpaint');
 
   const near = new TileStore(ORTHO_ZOOM);
   const far = new TileStore(ORTHO_OVERVIEW_ZOOM, 400);
@@ -194,6 +195,6 @@ export async function run(ctx: BakeContext) {
     if (written % 12 === 0) log.info(`ortho: ${written} tiles written (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
   }
   log.info(`ortho: ${written} chunk tiles written, ${skipped} cached, ${CHUNK_SIZE} m chunks with ${ORTHO_MARGIN} m margin`);
-  await fs.writeFile(path.join(groundDir, 'ground.json'), JSON.stringify({ tilePx: ORTHO_TILE_PX, tileM: ORTHO_TILE_M, margin: ORTHO_MARGIN, overviewPx: OVERVIEW_PX, overviewHalf: WORLD_HALF, small: 512, inpaint: !!inpaint }));
+  await fs.writeFile(path.join(groundDir, 'ground.json'), JSON.stringify({ tilePx: ORTHO_TILE_PX, tileM: ORTHO_TILE_M, margin: ORTHO_MARGIN, overviewPx: OVERVIEW_PX, overviewHalf: WORLD_HALF, small: 512, inpaint: inpaint.length > 0 }));
   void CACHE_DIR;
 }

@@ -10,37 +10,10 @@ import { EIFFEL_3DMR_URL, EIFFEL_OSM_WAY_ID, EIFFEL_SOURCE_GLB, MODELS_DIR } fro
 import { cachedBytes, ensureDir, exists, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
-import { openRing, type Pt, type Ring } from './polygons.ts';
+import { minAreaRect, type Ring } from './polygons.ts';
 
 const LEG_SPREAD = 124.9;   // metres between opposite pillar outer edges
 const TARGET_TRIS = 600_000;
-
-function convexHull(pts: Pt[]): Ring {
-  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: Pt[] = []; for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
-  const upper: Pt[] = []; for (const q of p.reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
-  return lower.slice(0, -1).concat(upper.slice(0, -1));
-}
-
-/** Minimum-area bounding rectangle: returns edge angle (rad, in the x/z plane) and side lengths. */
-function minAreaRect(ring: Ring): { angle: number; w: number; h: number; cx: number; cz: number } {
-  const hull = convexHull(openRing(ring));
-  let best = { angle: 0, w: Infinity, h: Infinity, cx: 0, cz: 0 };
-  for (let i = 0; i < hull.length; i++) {
-    const a = hull[i], b = hull[(i + 1) % hull.length];
-    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-    const c = Math.cos(-ang), s = Math.sin(-ang);
-    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const p of hull) { const x = p[0] * c - p[1] * s, z = p[0] * s + p[1] * c; x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-    if ((x1 - x0) * (z1 - z0) < best.w * best.h) {
-      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-      const cc = Math.cos(ang), ss = Math.sin(ang);
-      best = { angle: ang, w: x1 - x0, h: z1 - z0, cx: mx * cc - mz * ss, cz: mx * ss + mz * cc };
-    }
-  }
-  return best;
-}
 
 function countTris(doc: Document): number {
   let n = 0;

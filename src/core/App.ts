@@ -28,18 +28,10 @@ import { Collision } from '../player/Collision';
 import { World } from '../world/World';
 import { Environment } from '../render/Environment';
 import { Post } from '../render/Post';
-
-/** Named viewpoints (world x/z; yaw defaults to facing the tower). */
-export const VIEWPOINTS: { key: string; name: string; x: number; z: number; yaw?: number }[] = [
-  { key: 'Digit1', name: 'Trocadéro', x: -480, z: -409 },
-  { key: 'Digit2', name: "Pont d'Iéna", x: -190, z: -200 },
-  { key: 'Digit3', name: 'Under the tower', x: 0, z: 70 },
-  { key: 'Digit4', name: 'Champ de Mars', x: 290, z: 380 },
-  { key: 'Digit5', name: 'École Militaire', x: 600, z: 760 },
-  { key: 'Digit6', name: 'Bir-Hakeim', x: -540, z: 380 },
-  { key: 'Digit7', name: 'Quai Branly', x: 260, z: -80 },
-  { key: 'Digit8', name: 'Tower 2nd floor (view)', x: -42, z: -30 },
-];
+import { Glide } from '../player/Glide';
+import { PlacePanel, CATEGORY_COLOR } from '../ui/PlacePanel';
+import { PlaceList } from '../ui/PlaceList';
+import type { Landmark } from '../../shared/layout';
 
 /** yaw so that the camera at (x,z) faces (tx,tz); yaw 0 = north (-z), clockwise positive. */
 export const yawTo = (x: number, z: number, tx = 0, tz = 0) => Math.atan2(tx - x, -(tz - z));
@@ -77,6 +69,17 @@ export class App {
   private hotspot: Hotspot | null = null;
   flying = false;
   private captureRequested = false;
+  // landmarks: camera flight, the info card, the list, and proximity bookkeeping
+  glide!: Glide;
+  placePanel!: PlacePanel;
+  placeList!: PlaceList;
+  /** the site the player is standing in (or just landed at); drives the share link and the world labels */
+  currentLandmark: Landmark | null = null;
+  private noGlide = false;
+  private placeCheckAt = 0;
+  private placeCandidate: Landmark | null = null;
+  private placeCandidateHits = 0;
+  private readonly placeShownAt = new Map<string, number>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = createRenderer(canvas);
@@ -139,6 +142,12 @@ export class App {
       if (q.get('shoplights') === '0') setShopLights(false);
       if (tower === 'lit') this.towerAlwaysOn = true;
       if (q.get('signsdebug') === '1') setSignageDebug(true);
+      this.world.labelsEnabled = q.get('labels') === '1';   // floating name tags read as grey bars from afar: opt-in
+      // LiDAR surface-model landmark roofs: default on, off on phones (the section is skipped at parse time); ?dsm=0|1 overrides
+      const coarse = q.get('touch') === '1' || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
+      this.world.dsmEnabled = q.get('dsm') === '1' ? true : q.get('dsm') === '0' ? false : !coarse;
+      this.world.heroLodOnly = coarse;
+      this.noGlide = q.get('glide') === '0' || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     }
     void this.env.loadHdri('/textures/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr');
     await this.world.load((f, m) => this.hud.progress(f, m));
@@ -163,12 +172,17 @@ export class App {
     this.collision.flushWalkables();   // bridge decks + tower floors must exist before a URL / viewpoint placement probes them
     // golden projectors at the foot of each pillar (off with the tower after 23:45)
     if (this.tower.pillars.length) localLights.addLights('tower', this.tower.pillars.map(([px, pz]) => ({ x: px, y: this.world.groundY(px, pz) + 1.5, z: pz, radius: 25, r: 1.0, g: 0.62, b: 0.25, intensity: 30, kind: 'tower' as const })));
-    this.goTo(VIEWPOINTS[0]);
+    this.glide = new Glide(this.camera, this.input);
+    const hudEl = document.getElementById('hud') as HTMLElement;
+    const q = new URLSearchParams(location.search);
+    const touchUi = q.get('touch') === '1' || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
+    this.placePanel = new PlacePanel(hudEl, touchUi);
+    this.placeList = new PlaceList(hudEl, lm => { this.togglePlaceList(false); this.goTo(lm); }, () => this.togglePlaceList(false));
+    { const first = this.world.landmarks.byHotkey(1) ?? this.world.landmarks.list[0]; if (first) this.goTo(first, { instant: true, quiet: true }); }
 
     // ---- Phase D: minimap, soundscape, touch / gamepad
-    const q = new URLSearchParams(location.search);
-    const hudEl = document.getElementById('hud') as HTMLElement;
-    this.minimap = new Minimap(hudEl, VIEWPOINTS.filter(v => v.key !== 'Digit8').map(v => ({ x: v.x, z: v.z, name: v.name })));
+    this.minimap = new Minimap(hudEl, this.world.landmarks.visible.filter(l => l.id !== 'eiffel').map(l => ({ x: l.x, z: l.z, name: l.name.fr, short: l.short, category: l.category, hotkey: l.hotkey })));
+    this.minimap.colors = CATEGORY_COLOR;
     if (q.get('minimap') === '1') this.minimap.toggle(true);
     this.audio = new AudioEngine(q.get('audio'));
     const wake = () => this.audio.ensure();
@@ -197,7 +211,8 @@ export class App {
       this.input.update(dt);
       const p = this.camera.position;
       this.collision.update(p.x, p.z);
-      if (this.flying) this.fly.update(dt); else this.player.update(dt);
+      if (this.glide.active) this.glide.update(dt);
+      else if (this.flying) this.fly.update(dt); else this.player.update(dt);
       if (this.xr?.presenting) this.xr.update(dt, this.flying ? this.feetTmp.copy(this.fly.position).setY(this.fly.position.y - 1.6) : this.player.position);
     });
     this.loop.add((dt, t) => {
@@ -222,9 +237,10 @@ export class App {
       this.audio.update(dt, p.x, p.z, this.env.hour, p.y - this.world.groundY(p.x, p.z), this.world.surface, src);
       // lift prompt (walking only)
       const feet = this.player.position;
-      this.hotspot = !this.flying && !this.player.riding && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
+      this.hotspot = !this.flying && !this.player.riding && !this.glide.active && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
       this.hud.prompt(this.hotspot ? `E · ${this.hotspot.label}` : null);
-      void t;
+      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); }
+      this.world.labels?.update(p.x, p.z, this.currentLandmark?.id ?? null);
     });
     const camDir = new THREE.Vector3();
     this.loop.add((dt, t) => { this.camera.getWorldDirection(camDir); this.world.update(this.camera.position.x, this.camera.position.z, t, this.env.night, dt, camDir, this.env.hour); });
@@ -265,11 +281,13 @@ export class App {
       if (code === 'KeyP') void this.share();
       if (code === 'KeyO') this.captureRequested = true;
       if (code === 'KeyM') this.minimap.toggle();
+      if (code === 'KeyL') this.togglePlaceList();
+      if (code === 'KeyI') this.placePanel.toggle();
       if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); }
       if (code === 'KeyV') this.hud.toast(this.audio.toggleMute() ? '소리 끔' : '소리 켬');
       if (code === 'Comma' || code === 'Period') this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25));
-      const vp = VIEWPOINTS.find(v => v.key === code);
-      if (vp) this.goTo(vp);
+      const digit = /^Digit([1-8])$/.exec(code);
+      if (digit) { const lm = this.world.landmarks.byHotkey(Number(digit[1])); if (lm) this.goTo(lm); }
     });
     this.hud.onTimeChange = h => this.env.setHour(h);
     this.applyDayPresets();
@@ -284,7 +302,9 @@ export class App {
     const em = this.world.eiffel.meta;
     if (em.author) this.hud.addCredit(`Eiffel Tower model: "${em.title ?? 'Eiffel Tower'}" by ${em.author.replace(/\s*\(.*\)\s*$/, '')} (${(em.license ?? '').split(' ')[0]})`);
     else this.hud.addCredit(em.title === 'procedural lattice' ? 'Eiffel Tower: procedural lattice generated from published dimensions' : 'Eiffel Tower model: 3DMR #4 (CC0)');
+    for (const m of this.world.heroModels) { const c = m.meta.credits; if (c) this.hud.addCredit(`${c.title}${c.author ? ` by ${c.author}` : ''} (${c.license.split(' ')[0]})`); }
     this.hud.addCredit('Map data © OpenStreetMap contributors · IGN BD TOPO / BD ORTHO / RGE ALTI · Ville de Paris');
+    if (this.world.landmarks.baked) this.hud.addCredit('명소 설명: Wikipedia · Wikidata (CC BY-SA 4.0) · 사진: Wikimedia Commons (저작자·라이선스는 카드에 표시)');
     this.hud.setTimeDisplay(this.env.hour);
     document.addEventListener('pointerlockchange', () => { if (!this.input.touchMode) this.hud.showOverlay(!this.input.locked); });
     this.hud.onStart = () => {
@@ -303,6 +323,39 @@ export class App {
     if (open) this.input.unlock();
     else if (!this.input.locked) this.input.lock();
   }
+  /** L: the landmark list, same pointer-lock contract as the time panel. */
+  togglePlaceList(open = this.input.locked || !this.placeList.open) {
+    if (open) {
+      const p = this.flying ? this.camera.position : this.player.position;
+      this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw);
+      this.hud.setPlacesOpen(true);
+      this.input.unlock();
+    } else {
+      this.placeList.hide();
+      this.hud.setPlacesOpen(false);
+      if (!this.input.locked && !this.input.touchMode) this.input.lock();
+    }
+  }
+
+  /** 4 Hz: which site the feet are in (with hysteresis + a 0.5 s dwell), the chip text, and a card on entering a new one. */
+  private updatePlace(t: number) {
+    const p = this.flying ? this.camera.position : this.player.position;
+    const lms = this.world.landmarks;
+    let cur = lms.at(p.x, p.z);
+    const prev = this.currentLandmark;
+    // stay with the current site while inside it (plus 15 %); a smaller site nested in it takes over only when the player is well inside it
+    if (prev && !prev.hidden && Math.hypot(prev.x - p.x, prev.z - p.z) < prev.radius * 1.15 && (!cur || cur.radius >= prev.radius || Math.hypot(cur.x - p.x, cur.z - p.z) > cur.radius * 0.6)) cur = prev;
+    if (cur !== prev) {
+      if (cur === this.placeCandidate) this.placeCandidateHits++; else { this.placeCandidate = cur; this.placeCandidateHits = 1; }
+      if (this.placeCandidateHits < 2) cur = prev;
+    }
+    if (cur !== prev) {
+      this.currentLandmark = cur;
+      if (cur && t - (this.placeShownAt.get(cur.id) ?? -1e9) > 60) { this.placeShownAt.set(cur.id, t); this.placePanel.show(cur, 'enter'); }
+    }
+    const live = cur ?? lms.nearest(p.x, p.z)?.landmark ?? null;
+    this.placePanel.setLive(live, !!cur, p.x, p.z, this.input.yaw);
+  }
   private readonly gpuPanel = new GpuPanel();
   private forceGpuPanel = false;
   private gpuNoticed = false;
@@ -316,6 +369,8 @@ export class App {
   private gpuNotice() {
     if (this.gpuNoticed) return;
     this.gpuNoticed = true;
+    if (new URLSearchParams(location.search).get('gpu') === '0') return;   // headless screenshots: no panel / toast
+
     const g = gpuInfo();
     void probeHighPerfAdapter().then(hp => {
       const better = !!hp && hp.vendor !== '' && hp.vendor !== 'unknown' && hp.vendor !== g.vendor;
@@ -386,6 +441,9 @@ export class App {
       this.input.pitch = q.has('pitch') ? THREE.MathUtils.degToRad(parseFloat(q.get('pitch')!)) : 0;
       this.fly.apply();
     }
+    // ?at=<landmark id>: land there (unless x/z were given) and open its card
+    const at = q.get('at') ? this.world.landmarks.byId.get(q.get('at')!) : undefined;
+    if (at) { if (!q.has('x')) this.goTo(at, { instant: true, quiet: true }); this.currentLandmark = at.hidden ? null : at; this.placePanel.show(at, 'manual'); }   // a shared link keeps the card open until I
     if (q.has('hour')) this.setHour(parseFloat(q.get('hour')!));
     if (q.has('timepanel')) this.hud.toggleTimePanel(q.get('timepanel') !== '0');
     if (q.get('auto') === '1') { this.hud.showOverlay(false); this.gpuNotice(); }
@@ -416,25 +474,39 @@ export class App {
     const quality = q.get('quality'); if (quality === 'low' || quality === 'medium' || quality === 'high') this.post.setQuality(quality);
   }
 
-  goTo(vp: { x: number; z: number; yaw?: number; key: string }) {
-    const yaw = vp.yaw ?? yawTo(vp.x, vp.z);
-    if (vp.key === 'Digit8') {
-      const deck = this.tower.viewpoint();
-      if (deck) {   // stand on the real 2nd-floor deck
-        this.flying = false;
-        this.player.place(deck.x, deck.z, yawTo(deck.x, deck.z, -480, -409), deck.y + 1);
-        return;
-      }
-      this.flying = true;
-      this.fly.position.set(-42, 121, -30);
-      this.input.yaw = yawTo(-42, -30, -480, -409); this.input.pitch = -0.12;
-      this.fly.apply();
-      return;
+  /** Feet height for a landing at (x,z): a bridge deck over the river when there is one, else the terrain / nearby deck. */
+  private landingY(x: number, z: number): number {
+    const g = this.world.groundY(x, z);
+    if (g < this.world.manifest.waterLevelY + 0.15) {
+      const w = this.collision.walkableY(x, this.world.manifest.waterLevelY + 12, z, 8, 25);
+      if (Number.isFinite(w)) return w;
     }
-    if (this.flying) {
-      this.fly.position.set(vp.x, this.world.groundY(vp.x, vp.z) + 1.7, vp.z);
-      this.input.yaw = yaw; this.input.pitch = 0.03; this.fly.apply();
-    } else this.player.place(vp.x, vp.z, yaw);
+    return this.player.groundAt(x, z, g + 1);
+  }
+
+  /** Go to a landmark: a short camera flight (or an instant hop), then the walking / flying controller takes over and the card opens. */
+  goTo(lm: Landmark, opts: { instant?: boolean; quiet?: boolean } = {}) {
+    const v = lm.view;
+    let tx = v.x, tz = v.z, yaw = THREE.MathUtils.degToRad(v.yaw), pitch = this.flying ? 0.03 : 0.02;
+    let feetY: number | undefined, flyY: number | undefined;
+    if (v.deck != null) {
+      const deck = this.tower.viewpoint();
+      if (deck) { this.flying = false; tx = deck.x; tz = deck.z; feetY = deck.y; yaw = yawTo(deck.x, deck.z, -480, -409); }
+      else { this.flying = true; tx = -42; tz = -30; flyY = 121; yaw = yawTo(-42, -30, -480, -409); pitch = -0.12; }
+    }
+    if (feetY == null && !this.flying) feetY = this.landingY(tx, tz);
+    const camY = this.flying ? (flyY ?? this.world.groundY(tx, tz) + 1.7) : feetY! + 1.7;
+    const land = () => {
+      if (this.flying) { this.fly.position.set(tx, camY, tz); this.input.yaw = yaw; this.input.pitch = pitch; this.fly.apply(); }
+      else { this.player.place(tx, tz, yaw, feetY! + 1); this.input.pitch = pitch; this.player.apply(); }
+      this.hud.prompt(null);
+      this.currentLandmark = lm.hidden ? null : lm;
+      this.placeCandidate = null; this.placeCandidateHits = 0;
+      if (!opts.quiet) { this.placeShownAt.set(lm.id, performance.now() / 1000); this.placePanel.show(lm, 'arrival'); }
+    };
+    const dist = Math.hypot(tx - this.camera.position.x, tz - this.camera.position.z);
+    if (opts.instant || this.noGlide || dist < 3) { this.glide.cancel(); land(); return; }
+    this.glide.start(new THREE.Vector3(tx, camY, tz), yaw, pitch, land);
   }
 
   toggleFly() {

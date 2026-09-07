@@ -9,6 +9,7 @@ import { loadTheme, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
 import { buildSpecs, type BuildingSpec } from './buildings.ts';
 import { extrudeBuilding, triangulateCap, type ChunkBuilders } from './extrude.ts';
+import { DsmProvider, addDsmCap } from './dsmroof.ts';
 import { GeomBuilder, encodeBinMesh } from './binmesh.ts';
 import { buildBridges } from './bridges.ts';
 import { makeFlowField, riverArms } from './river.ts';
@@ -143,26 +144,37 @@ export async function run(_ctx: BakeContext) {
   await ensureDir(chunkDir);
   const detailDir = path.join(OUT_DIR, 'details');
   await ensureDir(detailDir);
+  // LiDAR HD surface-model caps for the landmarks (npm run bake:dsm); null = analytic roofs everywhere
+  const dsm = await DsmProvider.load();
+  const dsmHook = dsm ? ((gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => (dsm.has(b.group ?? b.id) ? addDsmCap(gb, b, dsm, ox, oz, meta, tint) : null)) : undefined;
   let detailRows = 0;
-  let totalBytes = 0, totalTris = 0;
-  const chunkInfo: Record<string, { buildings: number; bytes: number; tris: number }> = {};
+  let totalBytes = 0, totalTris = 0, dsmBuildings = 0, dsmTrisTotal = 0, dsmTrisRaw = 0;
+  const DSM_BUDGET = 1_200_000;
+  const chunkInfo: Record<string, { buildings: number; bytes: number; tris: number; dsmTris?: number }> = {};
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const k = chunkKey(i, j);
     const list = byChunk.get(k) ?? [];
     const o = chunkOrigin(i, j);
-    const cb: ChunkBuilders = { walls: new GeomBuilder(), roofs: new GeomBuilder(), tops: new GeomBuilder(), lod: new GeomBuilder(), details: [] };
+    const cb: ChunkBuilders = { walls: new GeomBuilder(), roofs: new GeomBuilder(), tops: new GeomBuilder(), lod: new GeomBuilder(), details: [], dsm: new GeomBuilder(), roofsAlt: new GeomBuilder(), topsAlt: new GeomBuilder() };
     for (const b of list) {
-      try { extrudeBuilding(b, cb, o.x, o.z); } catch (e) { log.warn(`extrude ${b.id} failed: ${e instanceof Error ? e.message : e}`); }
+      try {
+        const r = extrudeBuilding(b, cb, o.x, o.z, dsmHook);
+        if (r.dsmTris) { dsmBuildings++; dsmTrisRaw += r.dsmTris[0]; dsmTrisTotal += r.dsmTris[1]; if (r.dsmTris[0] > 20000) log.info(`dsm: ${b.id}${b.name ? ` (${b.name})` : ''}: ${r.dsmTris[0]} -> ${r.dsmTris[1]} tris`); }
+      } catch (e) { log.warn(`extrude ${b.id} failed: ${e instanceof Error ? e.message : e}`); }
     }
-    const buf = encodeBinMesh({ x: o.x, z: o.z }, [cb.walls.toSection('walls'), cb.roofs.toSection('roofs'), cb.tops.toSection('tops'), cb.lod.toSection('lod')], { buildings: list.length });
+    const sections = [cb.walls.toSection('walls'), cb.roofs.toSection('roofs'), cb.tops.toSection('tops'), cb.lod.toSection('lod')];
+    if (cb.dsm!.indices.length) sections.push(cb.dsm!.toSection('dsm'), cb.roofsAlt!.toSection('roofs_alt'), cb.topsAlt!.toSection('tops_alt'));
+    const buf = encodeBinMesh({ x: o.x, z: o.z }, sections, { buildings: list.length });
     await fs.writeFile(path.join(chunkDir, `${k}.bin`), buf);
     await fs.writeFile(path.join(detailDir, `${k}.bin`), Buffer.from(new Float32Array(cb.details ?? []).buffer));
     detailRows += (cb.details?.length ?? 0) / 9;
-    const tris = (cb.walls.indices.length + cb.roofs.indices.length + cb.tops.indices.length) / 3;
-    chunkInfo[k] = { buildings: list.length, bytes: buf.length, tris };
+    const tris = (cb.walls.indices.length + cb.roofs.indices.length + cb.tops.indices.length + cb.dsm!.indices.length) / 3;
+    chunkInfo[k] = { buildings: list.length, bytes: buf.length, tris, ...(cb.dsm!.indices.length ? { dsmTris: cb.dsm!.indices.length / 3 } : {}) };
     totalBytes += buf.length; totalTris += tris;
   }
   log.info(`buildings: ${GRID_N * GRID_N} chunks, ${fmtBytes(totalBytes)}, ${(totalTris / 1e6).toFixed(2)} M tris (LOD0), ${detailRows} roof detail rows`);
+  if (dsm) log.info(`dsm: ${dsmBuildings} landmark footprints capped, ${(dsmTrisRaw / 1e6).toFixed(2)} M -> ${(dsmTrisTotal / 1e6).toFixed(2)} M tris`);
+  if (dsmTrisTotal > DSM_BUDGET) throw new Error(`dsm: ${dsmTrisTotal} triangles exceed the ${DSM_BUDGET} budget; raise the grid step or the simplification error in dsmroof.ts`);
 
   const w = await buildWater(water, hm);
   const br = await buildBridges(roads, hm, w.waterLevelY, makeFlowField(riverArms(water)));
@@ -182,8 +194,8 @@ export async function run(_ctx: BakeContext) {
     gridN: GRID_N,
     waterLevelY: w.waterLevelY,
     osmTimestamp: summary.buildings?.timestamp,
-    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines },
-    heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat },
+    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal },
+    heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat, curved: stats.curved, monument: stats.monument, landmark: stats.landmark },
     files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };
   (manifest as Manifest & { chunks: typeof chunkInfo }).chunks = chunkInfo;

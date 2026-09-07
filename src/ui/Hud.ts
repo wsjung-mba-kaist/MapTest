@@ -56,11 +56,19 @@ export class Hud {
   private applyTime(hour: number) { this.setTimeDisplay(hour); this.onTimeChange(hour); }
 
   get timePanelOpen() { return !this.timePanel.hidden; }
+  /** the landmark list (L) is open: the pause overlay peeks like it does for the time panel */
+  placesOpen = false;
+  get panelOpen() { return this.timePanelOpen || this.placesOpen; }
 
   /** Show/hide the time panel. While it is open the pause overlay shrinks to a hint so the slider stays reachable. */
   toggleTimePanel(open = this.timePanel.hidden) {
     this.timePanel.hidden = !open;
-    this.overlay.classList.toggle('peek', open && !this.overlay.classList.contains('hidden'));
+    this.overlay.classList.toggle('peek', this.panelOpen && !this.overlay.classList.contains('hidden'));
+    this.updateOverlayText();
+  }
+  setPlacesOpen(open: boolean) {
+    this.placesOpen = open;
+    this.overlay.classList.toggle('peek', this.panelOpen && !this.overlay.classList.contains('hidden'));
     this.updateOverlayText();
   }
 
@@ -84,14 +92,15 @@ export class Hud {
   }
   showOverlay(show: boolean) {
     this.overlay.classList.toggle('hidden', !show);
-    this.overlay.classList.toggle('peek', show && this.timePanelOpen);
+    this.overlay.classList.toggle('peek', show && this.panelOpen);
     this.crosshair.hidden = show;
     if (!show) this.timeSlider?.blur();
     this.updateOverlayText();
   }
   private updateOverlayText() {
     if (!this.ready) return;
-    this.msg.textContent = this.timePanelOpen ? '시간을 맞춘 뒤 화면을 클릭하면 계속 걷습니다 · T 패널 닫기' : this.readyText;
+    this.msg.textContent = this.placesOpen ? '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기'
+      : this.timePanelOpen ? '시간을 맞춘 뒤 화면을 클릭하면 계속 걷습니다 · T 패널 닫기' : this.readyText;
   }
   setStatus(text: string) { this.status.textContent = text; }
   /** Short confirmation message at the bottom of the screen. */

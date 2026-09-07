@@ -12,6 +12,8 @@ import { PHARMACY, PHARMACY_CELL, SHOP_NAMES, SIGN_PALETTES, plaqueArmsNear, pla
 
 const SLAB_D = 0.85, SLAB_T = 0.2, RAIL_H = 0.95;
 const CORNICE_D = 0.45, CORNICE_T = 0.4;
+// monuments: deeper two-step cornice, 0.9 m piers at the bay boundaries, a stone balustrade along the parapet
+const MON_CORNICE_D = 0.8, MON_BAY = 4.2, PILASTER_W = 0.9, PILASTER_D = 0.3, BALUSTER_H = 1.0;
 const HAUSSMANN_GROUND = 4.3;
 const SIGN_Y = 3.75, SIGN_H = 0.6;           // fascia between the awning (top ~3.4) and the first-floor band (4.3)
 const PLAQUE_Y = 2.7, PLAQUE_W = 0.7, PLAQUE_H = 0.45;
@@ -30,10 +32,31 @@ function railingTexture(): THREE.CanvasTexture {
   return railTex;
 }
 
+let balTex: THREE.CanvasTexture | null = null;
+/** Stone balustrade, 1 m per tile: four vase-shaped balusters under a top rail, on a plinth (alpha map). */
+function balusterTexture(): THREE.CanvasTexture {
+  if (balTex) return balTex;
+  const S = 128, c = document.createElement('canvas'); c.width = S; c.height = S;
+  const ctx = c.getContext('2d')!;
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, S, 16); ctx.fillRect(0, S - 12, S, 12);           // top rail, plinth
+  for (let k = 0; k < 4; k++) {
+    const cx = S / 8 + k * (S / 4);
+    // vase: neck, belly, foot
+    ctx.fillRect(cx - 4, 16, 8, 14);
+    ctx.beginPath(); ctx.ellipse(cx, 66, 11, 30, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(cx - 7, 96, 14, 20);
+  }
+  balTex = new THREE.CanvasTexture(c);
+  balTex.wrapS = balTex.wrapT = THREE.RepeatWrapping; balTex.anisotropy = 8;
+  return balTex;
+}
+
 const AWNING_COLORS = [0x7a2a2a, 0x2a4a3a, 0x2f3d5a, 0x6b4a1f, 0x3a3a3a, 0x8a5a2a];
 
 export interface DetailMeshes {
-  boxes: THREE.InstancedMesh; rails: THREE.InstancedMesh; awnings: THREE.InstancedMesh;
+  boxes: THREE.InstancedMesh; rails: THREE.InstancedMesh; balusters: THREE.InstancedMesh; awnings: THREE.InstancedMesh;
   signs: THREE.InstancedMesh | null; plaques: THREE.InstancedMesh | null;
   /** everything to add to the chunk group */
   meshes: THREE.Object3D[];
@@ -45,24 +68,29 @@ export interface DetailMeshes {
 
 const boxGeom = new THREE.BoxGeometry(1, 1, 1);
 const planeGeom = new THREE.PlaneGeometry(1, 1);
-let boxMat: THREE.MeshStandardMaterial | null = null, railMat: THREE.MeshStandardMaterial | null = null, awningMat: THREE.MeshStandardMaterial | null = null;
+let boxMat: THREE.MeshStandardMaterial | null = null, railMat: THREE.MeshStandardMaterial | null = null, balMat: THREE.MeshStandardMaterial | null = null, awningMat: THREE.MeshStandardMaterial | null = null;
+
+/** Double-sided cut-out sheet stretched along a wall: the alpha map repeats once per metre (instance attribute railLen). */
+function sheetMaterial(color: number, tex: THREE.Texture, key: string, roughness: number, metalness: number): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ color, alphaMap: tex, alphaTest: 0.5, side: THREE.DoubleSide, roughness, metalness });
+  mat.customProgramCacheKey = () => key;
+  mat.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float railLen;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_ALPHAMAP\nvAlphaMapUv = vec2(uv.x * railLen, uv.y);\n#endif');
+    // Bars alias into moiré at distance: fade the cut-off so the sheet turns into a plain dark band.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', 'float railCut = mix(0.5, 0.35, smoothstep(40.0, 160.0, length(vViewPosition))); if (diffuseColor.a < railCut) discard;');
+  };
+  return mat;
+}
 
 function materials() {
   boxMat ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
-  if (!railMat) {
-    railMat = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, alphaMap: railingTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.55, metalness: 0.5 });
-    railMat.customProgramCacheKey = () => 'balcony-rail';
-    railMat.onBeforeCompile = shader => {
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float railLen;')
-        .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_ALPHAMAP\nvAlphaMapUv = vec2(uv.x * railLen, uv.y);\n#endif');
-      // Bars alias into moiré at distance: fade the cut-off so the sheet turns into a plain dark band.
-      shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', 'float railCut = mix(0.5, 0.35, smoothstep(40.0, 160.0, length(vViewPosition))); if (diffuseColor.a < railCut) discard;');
-    };
-  }
+  railMat ??= sheetMaterial(0x1b1b1d, railingTexture(), 'balcony-rail', 0.55, 0.5);
+  balMat ??= sheetMaterial(0xd6cdb8, balusterTexture(), 'balustrade', 0.9, 0.0);
   awningMat ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
-  withLamps(boxMat); withLamps(railMat); withLamps(awningMat);
-  return { boxMat, railMat, awningMat };
+  withLamps(boxMat); withLamps(railMat); withLamps(balMat); withLamps(awningMat);
+  return { boxMat, railMat, balMat, awningMat };
 }
 
 /** Warm terrace bulbs (additive points) in front of cafes, on from 17:00 until 01:00. */
@@ -125,6 +153,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
 
   const boxes: { m: THREE.Matrix4; c: THREE.Color }[] = [];
   const rails: { m: THREE.Matrix4; len: number }[] = [];
+  const balusters: { m: THREE.Matrix4; len: number }[] = [];
   const awnings: { m: THREE.Matrix4; c: THREE.Color }[] = [];
   const signs: SignInst[] = [];
   const terrace: number[] = [];
@@ -187,10 +216,32 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     const cx = (ax + bx) / 2, cz = (az + bz) / 2;
     tint.setRGB(col.getX(i0), col.getY(i0), col.getZ(i0));
 
-    // Cornice just under the eave.
-    P.set(cx + nx * (CORNICE_D / 2 - 0.05), eaveY - 0.5, cz + nz * (CORNICE_D / 2 - 0.05));
-    Q.setFromAxisAngle(up, yaw); S.set(CORNICE_D, CORNICE_T, len);
-    boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.05) });
+    Q.setFromAxisAngle(up, yaw);
+    if (style === 4) {
+      // Monument crown: a deep two-step cornice, a balustrade along the parapet, and piers at every bay boundary.
+      P.set(cx + nx * (MON_CORNICE_D / 2 - 0.05), eaveY - 0.3, cz + nz * (MON_CORNICE_D / 2 - 0.05)); S.set(MON_CORNICE_D, 0.5, len);
+      boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.06) });
+      P.set(cx + nx * (MON_CORNICE_D * 0.3 - 0.05), eaveY - 0.85, cz + nz * (MON_CORNICE_D * 0.3 - 0.05)); S.set(MON_CORNICE_D * 0.6, 0.6, len);
+      boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.03) });
+      if (len >= 6 && wallH >= 8) {
+        P.set(cx + nx * 0.12, eaveY + BALUSTER_H / 2, cz + nz * 0.12); S.set(len, BALUSTER_H, 1);
+        balusters.push({ m: M.compose(P, sheetQ, S).clone(), len });
+        P.set(cx + nx * 0.12, eaveY + BALUSTER_H + 0.06, cz + nz * 0.12); S.set(0.32, 0.12, len);
+        boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.05) });
+        const nBays = Math.max(1, Math.floor(len / MON_BAY + 0.5)), bayW = len / nBays;
+        const pierH = wallH - 0.9;
+        for (let b = 0; b <= nBays; b++) {
+          const t = Math.max(PILASTER_W / 2, Math.min(len - PILASTER_W / 2, b * bayW));
+          P.set(ax + dx * t + nx * (PILASTER_D / 2 - 0.02), groundY + 0.1 + pierH / 2, az + dz * t + nz * (PILASTER_D / 2 - 0.02));
+          S.set(PILASTER_D, pierH, PILASTER_W);
+          boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.04) });
+        }
+      }
+    } else {
+      // Cornice just under the eave.
+      P.set(cx + nx * (CORNICE_D / 2 - 0.05), eaveY - 0.5, cz + nz * (CORNICE_D / 2 - 0.05)); S.set(CORNICE_D, CORNICE_T, len);
+      boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.05) });
+    }
 
     if (style === 0) {
       // Continuous balconies on floors 2 and 5 (Haussmann), when the building is tall enough.
@@ -269,8 +320,8 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     const list = [...best.values()].slice(0, 3).map(b => { const e = b.m.elements; const x = e[12] + chunkOrigin.x, z = e[14] + chunkOrigin.z; return `${b.key} at ${x.toFixed(1)},${e[13].toFixed(1)},${z.toFixed(1)} view fly=1&x=${(x + e[8] * 4).toFixed(1)}&y=${(e[13] - 0.3).toFixed(1)}&z=${(z + e[10] * 4).toFixed(1)}&yaw=${(Math.atan2(-e[8], e[10]) * 180 / Math.PI).toFixed(0)}&pitch=4`; });
     console.info(`[plaques] chunk ${chunkOrigin.x},${chunkOrigin.z}: ${plaqueCands.length} candidates -> ${best.size}; ${list.join(' | ')}`);
   }
-  if (!boxes.length && !rails.length && !signs.length && !best.size) return null;
-  const { boxMat, railMat, awningMat } = materials();
+  if (!boxes.length && !rails.length && !balusters.length && !signs.length && !best.size) return null;
+  const { boxMat, railMat, balMat, awningMat } = materials();
   const mkBoxes = (list: { m: THREE.Matrix4; c: THREE.Color }[], mat: THREE.Material, geom: THREE.BufferGeometry) => {
     const mesh = new THREE.InstancedMesh(geom, mat, Math.max(1, list.length));
     list.forEach((b, i) => { mesh.setMatrixAt(i, b.m); mesh.setColorAt(i, b.c); });
@@ -288,6 +339,13 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
   railsMesh.count = rails.length;
   railsMesh.instanceMatrix.needsUpdate = true;
   railsMesh.castShadow = true; railsMesh.frustumCulled = false;
+  const balGeom = planeGeom.clone();
+  balGeom.setAttribute('railLen', new THREE.InstancedBufferAttribute(new Float32Array(balusters.map(r => r.len)), 1));
+  const balMesh = new THREE.InstancedMesh(balGeom, balMat, Math.max(1, balusters.length));
+  balusters.forEach((r, i) => balMesh.setMatrixAt(i, r.m));
+  balMesh.count = balusters.length;
+  balMesh.instanceMatrix.needsUpdate = true;
+  balMesh.castShadow = true; balMesh.receiveShadow = true; balMesh.frustumCulled = false;
 
   const signsMesh = signs.length ? instancedQuads(signs, shopSignMaterial(), false) : null;
   let plaquesMesh: THREE.InstancedMesh | null = null;
@@ -298,16 +356,16 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     plaqueTex = texture; plaqueMat = plaqueMaterial(texture);
     plaquesMesh = instancedQuads([...best.values()].map(b => ({ m: b.m, rect: rects.get(b.key)!, lit: 0 })), plaqueMat, false);
   }
-  const meshes: THREE.Object3D[] = [boxesMesh, railsMesh, awningsMesh];
+  const meshes: THREE.Object3D[] = [boxesMesh, railsMesh, balMesh, awningsMesh];
   if (signsMesh) meshes.push(signsMesh);
   if (plaquesMesh) meshes.push(plaquesMesh);
   const terraceMesh = terrace.length ? terraceGlare(new Float32Array(terrace)) : null;
   if (terraceMesh) meshes.push(terraceMesh);
   return {
-    boxes: boxesMesh, rails: railsMesh, awnings: awningsMesh, signs: signsMesh, plaques: plaquesMesh, meshes,
-    count: boxes.length + rails.length + awnings.length + signs.length + best.size, signCount: signs.length, plaqueCount: best.size, lights,
+    boxes: boxesMesh, rails: railsMesh, balusters: balMesh, awnings: awningsMesh, signs: signsMesh, plaques: plaquesMesh, meshes,
+    count: boxes.length + rails.length + balusters.length + awnings.length + signs.length + best.size, signCount: signs.length, plaqueCount: best.size, lights,
     dispose() {
-      boxesMesh.dispose(); railsMesh.dispose(); awningsMesh.dispose(); railGeom.dispose();
+      boxesMesh.dispose(); railsMesh.dispose(); balMesh.dispose(); awningsMesh.dispose(); railGeom.dispose(); balGeom.dispose();
       if (signsMesh) { signsMesh.geometry.dispose(); signsMesh.dispose(); }
       if (plaquesMesh) { plaquesMesh.geometry.dispose(); plaquesMesh.dispose(); }
       if (terraceMesh) { terraceMesh.geometry.dispose(); (terraceMesh.material as THREE.Material).dispose(); }

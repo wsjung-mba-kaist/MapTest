@@ -1,7 +1,8 @@
 /**
  * Keyboard + pointer-lock mouse look, a gamepad (polled in update()) and the touch controls, merged into one set of
  * movement axes shared by the walking and flying controllers.
- *   gamepad: left stick move, right stick look, RT sprint, A interact (E), Y fly (F), Back map (M), Start time (T), X night (N)
+ *   gamepad: left stick move, right stick look, RT sprint, A interact (E), Y fly (F), Back map (M), Start time (T), X night (N),
+ *            LB landmark list (L), RB landmark card (I)
  */
 export class Input {
   readonly keys = new Set<string>();
@@ -87,7 +88,7 @@ export class Input {
     this.gpF = -ly; this.gpS = lx;
     if (rx || ry) this.look(rx * 2.6 * dt, ry * 1.8 * dt);
     this.gpSprint = (gp.buttons[7]?.value ?? 0) > 0.4 || !!gp.buttons[10]?.pressed;
-    const map: Record<number, string> = { 0: 'KeyE', 3: 'KeyF', 8: 'KeyM', 9: 'KeyT', 2: 'KeyN', 1: 'KeyH' };
+    const map: Record<number, string> = { 0: 'KeyE', 3: 'KeyF', 8: 'KeyM', 9: 'KeyT', 2: 'KeyN', 1: 'KeyH', 4: 'KeyL', 5: 'KeyI' };
     for (const [idxS, code] of Object.entries(map)) {
       const idx = Number(idxS);
       const now = !!gp.buttons[idx]?.pressed;

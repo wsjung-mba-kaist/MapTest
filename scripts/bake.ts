@@ -30,6 +30,8 @@ const steps: Step[] = [
   { name: 'trees', run: async ctx => (await import('./lib/trees.ts')).run(ctx) },
   { name: 'eiffel', run: async ctx => (await import('./lib/eiffel.ts')).run(ctx) },
   { name: 'towerwalk', run: async ctx => (await import('./lib/eiffel_walk.ts')).run(ctx) },
+  { name: 'models', run: async ctx => (await import('./lib/models.ts')).run(ctx) },
+  { name: 'dsm', run: async ctx => (await import('./lib/dsm.ts')).run(ctx) },
   { name: 'build', run: async ctx => (await import('./lib/build.ts')).run(ctx) },
   { name: 'paths', run: async ctx => (await import('./lib/paths.ts')).run(ctx) },
   { name: 'deshadow', run: async ctx => (await import('./lib/deshadow.ts')).run(ctx) },
@@ -37,6 +39,7 @@ const steps: Step[] = [
   { name: 'streets', run: async ctx => (await import('./lib/streets.ts')).run(ctx) },
   { name: 'masks', run: async ctx => (await import('./lib/masks.ts')).run(ctx) },
   { name: 'far', run: async ctx => (await import('./lib/far.ts')).run(ctx) },
+  { name: 'landmarks', run: async ctx => (await import('./lib/landmarks.ts')).run(ctx) },
 ];
 
 async function main() {

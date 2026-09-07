@@ -219,3 +219,45 @@ export function bufferLine(line: Pt[], width: number): Poly[] {
   }
   return unionAll(quads);
 }
+
+/** Convex hull (monotone chain) of a point set. */
+export function convexHull(pts: Pt[]): Ring {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: Pt[] = []; for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
+  const upper: Pt[] = []; for (const q of p.reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+export interface MinRect { angle: number; w: number; h: number; cx: number; cz: number }
+
+/** Minimum-area bounding rectangle: edge angle (rad, in the x/z plane, measured from +x toward +z), side lengths and centre. */
+export function minAreaRect(ring: Ring): MinRect {
+  const hull = convexHull(openRing(ring));
+  let best: MinRect = { angle: 0, w: Infinity, h: Infinity, cx: 0, cz: 0 };
+  if (hull.length < 2) { const c = centroid(ring); return { angle: 0, w: 1, h: 1, cx: c[0], cz: c[1] }; }
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i], b = hull[(i + 1) % hull.length];
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const c = Math.cos(-ang), s = Math.sin(-ang);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of hull) { const x = p[0] * c - p[1] * s, z = p[0] * s + p[1] * c; x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    if ((x1 - x0) * (z1 - z0) < best.w * best.h) {
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      const cc = Math.cos(ang), ss = Math.sin(ang);
+      best = { angle: ang, w: x1 - x0, h: z1 - z0, cx: mx * cc - mz * ss, cz: mx * ss + mz * cc };
+    }
+  }
+  return best;
+}
+
+/** Intersect polygons with the band lo <= dot(p - centre, perp) <= hi (an oriented strip of half-length L along `axis`). */
+export function clipToBand(polys: Poly[], centre: Pt, axis: Pt, perp: Pt, lo: number, hi: number, L: number): Poly[] {
+  const corner = (s: number, t: number): Pt => [centre[0] + axis[0] * s + perp[0] * t, centre[1] + axis[1] * s + perp[1] * t];
+  const band: Poly = [[corner(-L, lo), corner(L, lo), corner(L, hi), corner(-L, hi), corner(-L, lo)]];
+  const input = polys.map(p => p.map(r => closeRing(r))) as unknown as polygonClipping.Polygon[];
+  try {
+    const res = polygonClipping.intersection(input as polygonClipping.MultiPolygon, [band as unknown as polygonClipping.Polygon]);
+    return res.map(poly => poly.map(r => openRing(r as Ring)));
+  } catch { return []; }
+}

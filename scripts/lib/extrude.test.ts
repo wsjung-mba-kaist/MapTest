@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extrudeBuilding, type ChunkBuilders } from './extrude.ts';
+import { extrudeBuilding, resampleRing, type ChunkBuilders } from './extrude.ts';
 import { GeomBuilder } from './binmesh.ts';
-import { insetRing, orient, signedArea } from './polygons.ts';
+import { distToRing, insetRing, minAreaRect, orient, signedArea } from './polygons.ts';
 import type { BuildingSpec } from './buildings.ts';
 import { SurfaceFlag } from '../../shared/layout.ts';
 
@@ -27,8 +27,9 @@ function square(cx: number, cz: number, half: number, positive: boolean) {
 
 const spec = (over: Partial<BuildingSpec>): BuildingSpec => ({
   id: 'test', rings: [square(0, 0, 10, false)], centroid: [0, 0], area: 400, minH: 0, eave: 18, ridge: 24, groundY: 5,
-  roof: 'mansard', style: 0, tint: [220, 210, 190], roofMat: 'zinc', levels: 6, floorH: 3.1, seed: 1, source: 'default', isPart: false, isPlinth: false, ...over,
-});
+  roof: 'mansard', style: 0, tint: [220, 210, 190], roofMat: 'zinc', roofMatId: 0, roofTint: [128, 134, 140], roofDir: null, roofOrient: null,
+  rect: minAreaRect((over.rings ?? [square(0, 0, 10, false)])[0]), levels: 6, floorH: 3.1, seed: 1, source: 'default', isPart: false, isPlinth: false, landmark: false, ...over,
+} as BuildingSpec);
 
 const builders = (): ChunkBuilders => ({ walls: new GeomBuilder(), roofs: new GeomBuilder(), tops: new GeomBuilder(), lod: new GeomBuilder() });
 
@@ -98,4 +99,84 @@ test('erodeRing shrinks a rectangle and survives short jogs where the bisector i
   assert.equal(insetRing(jog, 1.3, 0.3), null);
   const e2 = erodeRing(jog, 1.3, 0.3);
   assert.ok(e2 && e2.length >= 4, 'jog footprint erodes');
+});
+
+function polygon(cx: number, cz: number, r: number, n: number): [number, number][] {
+  const ring: [number, number][] = [];
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; ring.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]); }
+  return orient(ring, false);
+}
+
+test('dome seals to the footprint, peaks at the ridge, faces outward and up, no flat top', () => {
+  const cb = builders();
+  const ring = polygon(0, 0, 10, 16);
+  extrudeBuilding(spec({ rings: [ring], roof: 'dome', eave: 20, ridge: 28, groundY: 0 }), cb, 0, 0);
+  const p = cb.roofs.positions;
+  let maxY = -Infinity, baseOnRing = 0, baseCount = 0;
+  for (let i = 0; i < p.length; i += 3) {
+    maxY = Math.max(maxY, p[i + 1]);
+    if (Math.abs(p[i + 1] - 20) < 1e-6) { baseCount++; if (distToRing(p[i], p[i + 2], ring) < 1e-3) baseOnRing++; }
+  }
+  assert.ok(Math.abs(maxY - 28) < 1e-6, 'apex at the ridge');
+  assert.ok(baseCount > 0 && baseOnRing === baseCount, 'base parallel is the footprint');
+  const tris = normalsOf(cb.roofs);
+  assert.ok(tris.length >= 16 * 5, 'enough parallels');
+  for (const t of tris) {
+    assert.ok(t.n[1] > 0.05, 'dome triangles face up: ' + t.n);
+    const r = Math.hypot(t.c[0], t.c[2]);
+    if (r > 1) assert.ok((t.n[0] * t.c[0] + t.n[2] * t.c[2]) / r > 0, 'dome faces outward');
+    assert.equal(t.flag, SurfaceFlag.RoofCurved);
+  }
+  assert.equal(cb.tops.indices.length, 0, 'no flat top on a dome');
+  assert.ok(cb.lod.indices.length > 0 && Math.max(...cb.lod.positions.filter((_, i) => i % 3 === 1)) <= 28 + 1e-6, 'LOD dome stays under the ridge');
+});
+
+test('onion bulges wider than its drum', () => {
+  const cb = builders();
+  extrudeBuilding(spec({ rings: [polygon(0, 0, 6, 16)], roof: 'onion', eave: 20, ridge: 31, groundY: 0 }), cb, 0, 0);
+  const p = cb.roofs.positions;
+  let maxR = 0;
+  for (let i = 0; i < p.length; i += 3) maxR = Math.max(maxR, Math.hypot(p[i], p[i + 2]));
+  assert.ok(maxR > 6.8 && maxR < 8.5, 'bulge radius ' + maxR.toFixed(2));
+});
+
+test('cone is a curved fan; a square drum is resampled into many columns', () => {
+  const cb = builders();
+  extrudeBuilding(spec({ rings: [square(0, 0, 6, false)], roof: 'cone', eave: 20, ridge: 30, groundY: 0 }), cb, 0, 0);
+  const tris = normalsOf(cb.roofs);
+  assert.ok(tris.length >= 16, 'resampled columns: ' + tris.length);
+  for (const t of tris) { assert.ok(t.n[1] > 0.2); assert.equal(t.flag, SurfaceFlag.RoofCurved); }
+  assert.equal(resampleRing(square(0, 0, 6, false), 3).length, 16);
+});
+
+test('barrel vault (round) follows a semicircle across the short axis and closes the end walls', () => {
+  const cb = builders();
+  const rect = orient([[-20, -5], [20, -5], [20, 5], [-20, 5]], false);
+  extrudeBuilding(spec({ rings: [rect], roof: 'round', eave: 10, ridge: 15, groundY: 0 }), cb, 0, 0);
+  const p = cb.roofs.positions;
+  for (let i = 0; i < p.length; i += 3) {
+    const expect = 10 + 5 * Math.sqrt(Math.max(0, 1 - (p[i + 2] / 5) ** 2));
+    assert.ok(Math.abs(p[i + 1] - expect) < 1e-6, 'vault height at z=' + p[i + 2] + ': ' + p[i + 1] + ' vs ' + expect);
+  }
+  const w = cb.walls.positions;
+  let maxWall = 0; for (let i = 0; i < w.length; i += 3) maxWall = Math.max(maxWall, w[i + 1]);
+  assert.ok(maxWall > 14.5, 'end walls rise to the vault: ' + maxWall);
+  assert.equal(cb.walls.positions.length / 3 % 4, 0, 'walls stay 4-vertex quads');
+});
+
+test('gabled roof honours roof:direction (ridge perpendicular to the gable facing)', () => {
+  const cb = builders();
+  const rect = orient([[-20, -5], [20, -5], [20, 5], [-20, 5]], false);
+  // gable faces east (90°): the ridge runs north-south, so the roof slopes along x
+  extrudeBuilding(spec({ rings: [rect], roof: 'gabled', roofDir: 90, eave: 10, ridge: 14, groundY: 0 }), cb, 0, 0);
+  const p = cb.roofs.positions;
+  const ridgeXs = new Set<number>();
+  for (let i = 0; i < p.length; i += 3) if (Math.abs(p[i + 1] - 14) < 1e-6) ridgeXs.add(Math.round(p[i] * 1000));
+  assert.deepEqual([...ridgeXs], [0], 'ridge on x = 0');
+  for (let i = 0; i < p.length; i += 3) assert.ok(Math.abs(p[i + 1] - (10 + 4 * (1 - Math.abs(p[i]) / 20))) < 1e-6);
+  // without a direction the plain gable keeps the old hip band (no wall above the eave)
+  const cb2 = builders();
+  extrudeBuilding(spec({ rings: [rect], roof: 'gabled', eave: 10, ridge: 14, groundY: 0 }), cb2, 0, 0);
+  let maxWall = 0; for (let i = 0; i < cb2.walls.positions.length; i += 3) maxWall = Math.max(maxWall, cb2.walls.positions[i + 1]);
+  assert.ok(Math.abs(maxWall - 10) < 1e-6);
 });

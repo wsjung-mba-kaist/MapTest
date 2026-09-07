@@ -143,7 +143,8 @@ export function createRoofSlopeMaterial(): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.5, flatShading: false });
   mat.name = 'roofs';
   patch(mat, /* glsl */`
-    Facade fc = shadeRoofSlope(vUvM, vMetaV, vColor.rgb, uTime);
+    float fFlag = floor(vColor.a * 255.0 + 0.5);
+    Facade fc = shadeRoofSlope(vUvM, vMetaV, vColor.rgb, fFlag, uNight, uTime);
     diffuseColor.rgb = fc.color;
     float fRough = fc.rough; float fMetal = fc.metal; vec3 fEmissive = fc.emissive; float fAo = fc.ao; vec3 fDetailN = fc.n;
   `);
@@ -155,7 +156,7 @@ export function createRoofSlopeMaterial(): THREE.MeshStandardMaterial {
  * Roof tops: project the chunk's own ortho tile (or the overview) straight down.
  * uv attribute holds absolute world (x, z); flag 4 selects the overview texture.
  */
-export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, tile: THREE.Texture | null, overview: THREE.Texture | null): THREE.MeshStandardMaterial & { setTile: (t: THREE.Texture | null) => void; setOverview: (t: THREE.Texture | null) => void } {
+export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, tile: THREE.Texture | null, overview: THREE.Texture | null): THREE.MeshStandardMaterial & { setTile: (t: THREE.Texture | null) => void; setOverview: (t: THREE.Texture | null) => void; dsm: THREE.MeshStandardMaterial } {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, flatShading: false });
   mat.name = 'tops';
   const uniforms = {
@@ -165,6 +166,33 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
     uHasTile: { value: tile ? 1 : 0 },
     uHasOverview: { value: overview ? 1 : 0 },
   };
+  const orthoDecl = '#include <common>\nuniform sampler2D uTile; uniform sampler2D uOverview; uniform vec2 uChunkOrigin; uniform float uHasTile; uniform float uHasOverview;';
+  // Landmark roofs from the LiDAR surface model: the aerial photo where the surface is flat-ish, the procedural
+  // roof material (slates, zinc, gilded lead...) on the steep parts, blended by the world normal.
+  const dsm = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, flatShading: false });
+  dsm.name = 'dsm';
+  patch(dsm, /* glsl */`
+    float fFlag = floor(vColor.a * 255.0 + 0.5);
+    vec2 uvT = (vUvM - uChunkOrigin + 32.0) / 320.0; uvT.y = 1.0 - uvT.y;
+    vec2 uvO = (vUvM + 1536.0) / 3072.0; uvO.y = 1.0 - uvO.y;
+    bool inTile = all(greaterThan(uvT, vec2(0.002))) && all(lessThan(uvT, vec2(0.998)));
+    vec3 photo = vColor.rgb;
+    if (inTile && uHasTile > 0.5) photo = texture2D(uTile, uvT).rgb;
+    else if (uHasOverview > 0.5) photo = texture2D(uOverview, uvO).rgb;
+    photo = mix(photo, vec3(dot(photo, vec3(0.3, 0.59, 0.11))), 0.15) * 0.92;
+    photo *= 1.0 - 0.45 * uNight;
+    // a degenerate triangle leaves a zero vertex normal; normalize(0) is NaN and the bloom would smear it over the frame
+    vec3 Nw = length(vNormal) > 1e-6 ? normalize(transpose(mat3(viewMatrix)) * normalize(vNormal)) : vec3(0.0, 1.0, 0.0);
+    float flatness = smoothstep(0.55, 0.85, Nw.y);
+    // steep faces: metres along the surface (a rough tangent-plane projection) and metres of height
+    vec2 uvS = vec2(vWorldPosV.x * 0.7 + vWorldPosV.z * 0.7, vWorldPosV.y);
+    Facade fc = shadeRoofSlope(uvS, vMetaV, vColor.rgb, 5.0, uNight, uTime);
+    diffuseColor.rgb = mix(fc.color, photo, flatness);
+    float fRough = mix(fc.rough, 0.85, flatness); float fMetal = mix(fc.metal, 0.0, flatness); vec3 fEmissive = fc.emissive * (1.0 - flatness); float fAo = 1.0; vec3 fDetailN = vec3(0.0, 0.0, 1.0);
+  `, shader => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', orthoDecl);
+  });
   patch(mat, /* glsl */`
     float fFlag = floor(vColor.a * 255.0 + 0.5);
     vec2 uvT = (vUvM - uChunkOrigin + 32.0) / 320.0; uvT.y = 1.0 - uvT.y;
@@ -180,11 +208,11 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
     float fRough = 0.85; float fMetal = 0.0; vec3 fEmissive = vec3(0.0); float fAo = 1.0; vec3 fDetailN = vec3(0.0, 0.0, 1.0);
   `, shader => {
     Object.assign(shader.uniforms, uniforms);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <common>',
-      '#include <common>\nuniform sampler2D uTile; uniform sampler2D uOverview; uniform vec2 uChunkOrigin; uniform float uHasTile; uniform float uHasOverview;');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', orthoDecl);
   });
   const m = mat as ReturnType<typeof createRoofTopMaterial>;
   m.setTile = t => { uniforms.uTile.value = t; uniforms.uHasTile.value = t ? 1 : 0; };
   m.setOverview = t => { uniforms.uOverview.value = t; uniforms.uHasOverview.value = t ? 1 : 0; };
+  m.dsm = dsm;
   return m;
 }

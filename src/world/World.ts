@@ -17,6 +17,9 @@ import { setPlaques } from './Signage';
 import { Streets } from './Streets';
 import { SurfaceGrid } from '../../shared/surfacegrid';
 import type { PlaquesData } from '../../shared/layout';
+import { Landmarks } from './Landmarks';
+import { LandmarkLabels } from './LandmarkLabels';
+import { LandmarkModel } from './LandmarkModel';
 
 const DEFAULT_DIR = new THREE.Vector3(0, 0, -1);
 
@@ -44,6 +47,16 @@ export class World {
   streetsDebug = false;
   /** 2 m surface class grid (sidewalk slabs, road, grass...); null when the streets bake has not run */
   surface: SurfaceGrid | null = null;
+  /** curated sites (landmarks.json) and their floating name tags */
+  readonly landmarks = new Landmarks();
+  labels?: LandmarkLabels;
+  labelsEnabled = true;
+  /** landmark roofs from the LiDAR surface model (off on the mobile preset and with ?dsm=0) */
+  dsmEnabled = true;
+  /** hero models other than the tower (public/models/landmarks.json); `?hide=models` */
+  readonly models = { group: new THREE.Group() };
+  heroModels: LandmarkModel[] = [];
+  heroLodOnly = false;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
   lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
 
@@ -59,6 +72,7 @@ export class World {
     this.group.add(this.terrain.group);
     onProgress(0.4, 'Loading buildings...');
     this.buildings = new Buildings();
+    this.buildings.dsmEnabled = this.dsmEnabled;
     this.buildings.textureProvider = (i, j) => this.terrain.textureOf(i, j);
     this.buildings.setOverview(this.terrain.overview);
     this.terrain.onTileChanged = (i, j, tex) => { this.buildings.setTile(i, j, tex); this.bridges?.setTile(i, j, tex); };
@@ -74,6 +88,10 @@ export class World {
     this.eiffel.kind = this.towerKind;
     await this.eiffel.load();
     this.group.add(this.eiffel.group);
+    this.models.group.name = 'models';
+    this.heroModels = await LandmarkModel.loadAll('/models/landmarks.json', (x, z) => this.heightmap.sample(x, z), this.heroLodOnly);
+    for (const m of this.heroModels) this.models.group.add(m.group);
+    this.group.add(this.models.group);
     onProgress(0.75, 'Planting trees...');
     try { const t = new Trees(); await t.load(this.surface, (x, z) => this.heightmap.meshY(x, z)); this.trees = t; this.group.add(t.group); } catch (e) { console.warn('trees missing', e); }
     try { const fu = new Furniture(); await fu.load(this.surface); this.furniture = fu; this.group.add(fu.group); } catch (e) { console.warn('furniture missing', e); }
@@ -81,6 +99,11 @@ export class World {
     if (this.marksEnabled) { const mk = new Markings(this.marksDebug); this.marks = mk; this.group.add(mk.group); }
     if (this.streetsEnabled) { const st = new Streets(this.terrain, this.streetsDebug); this.streets = st; this.group.add(st.group); }
     try { setPlaques(await fetchJson<PlaquesData>(`${DATA_URL}/plaques.json`)); } catch (e) { console.warn('plaques.json missing: no street-name plaques', e); }
+    await this.landmarks.load();
+    if (this.labelsEnabled && this.landmarks.baked) {
+      this.labels = new LandmarkLabels(this.landmarks.visible.filter(l => l.id !== 'eiffel'), (x, z) => this.heightmap.sample(x, z));
+      this.group.add(this.labels.group);
+    }
     if (this.lifeOptions) {
       onProgress(0.78, 'Waking up the city...');
       try { const l = new Life(); await l.load(this.lifeOptions, this.surface); this.life = l; this.group.add(l.group); } catch (e) { console.warn('paths.bin missing: the city stays still', e); }
@@ -95,6 +118,7 @@ export class World {
     this.streets?.update(x, z);
     this.furniture?.update(night, time);
     this.eiffel?.update(night, time);
+    for (const m of this.heroModels) m.update(night, x, z);
     this.buildings.update(x, z, time);
     this.trees?.update(x, z, time);
     this.water?.update(time);

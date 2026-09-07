@@ -35,6 +35,19 @@ export const ORTHO_OVERVIEW_ZOOM = 17;
 export const WMS_ELEVATION = (b: LonLatBox, w: number, h: number) =>
   `https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES&STYLES=&FORMAT=image/x-bil;bits=32&CRS=EPSG:4326&BBOX=${b.south},${b.west},${b.north},${b.east}&WIDTH=${w}&HEIGHT=${h}`;
 
+/**
+ * IGN LiDAR HD surface model (MNS, 50 cm): the true roof surface of every building, from the same keyless WMS-R
+ * endpoint as the DTM. First layer that the capabilities list wins; the second is the older RGE ALTI surface model.
+ */
+export const WMS_DSM_LAYERS = ['IGNF_LIDAR-HD_MNS_ELEVATION.ELEVATIONGRIDCOVERAGE.WGS84G', 'ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES.MNS'];
+export const WMS_DSM = (layer: string, b: LonLatBox, w: number, h: number) =>
+  `https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer}&STYLES=&FORMAT=image/x-bil;bits=32&CRS=EPSG:4326&BBOX=${b.south},${b.west},${b.north},${b.east}&WIDTH=${w}&HEIGHT=${h}`;
+export const WMS_CAPABILITIES = 'https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0';
+export const DSM_STEP_M = 0.5;
+export const DSM_MAX_PX = 2048;
+/** margin around a landmark footprint (m) so edge samples and the wall-top probes have data */
+export const DSM_PAD_M = 6;
+
 export const WFS_BDTOPO = (typename: string, b: LonLatBox, count: number, start: number, cql?: string) =>
   `https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=${typename}&OUTPUTFORMAT=application/json&COUNT=${count}&STARTINDEX=${start}&${cql ? `CQL_FILTER=${encodeURIComponent(`${cql} AND BBOX(geometrie,${b.south},${b.west},${b.north},${b.east},'urn:ogc:def:crs:EPSG::4326')`)}` : `BBOX=${b.south},${b.west},${b.north},${b.east},urn:ogc:def:crs:EPSG::4326`}`;
 /** Outer skyline ring: only buildings this tall are fetched between FAR_HALF_M and FAR_TALL_HALF_M (La Défense, Sacré-Cœur, Montparnasse). */
@@ -51,6 +64,16 @@ export const EIFFEL_3DMR_URL = 'https://3dmr.eu/api/model/4';
 export const EIFFEL_OSM_WAY_ID = 5013364;
 /** Preferred tower model in public/models (user's choice; Sketchfab CC-BY, credited in the HUD). Override with EIFFEL_SOURCE=. */
 export const EIFFEL_SOURCE_GLB = 'eiffel_tower_model_3d_with_best_quality.glb';
+
+/**
+ * Roof fixes for buildings whose OSM tags miss what everyone can see (keyed by OSM id): the gilded dome of the
+ * Invalides, for example. `shape` / `material` / `colour` replace the roof:* tags.
+ */
+export const ROOF_OVERRIDES: Record<string, { shape?: string; material?: string; colour?: string }> = {
+  'way/227662013': { material: 'gold' },      // Dôme des Invalides: gilded lead dome
+  'way/227662030': { material: 'gold' },      // its lantern / spire
+  'way/1462542858': { material: 'gold' },     // the cone above the drum
+};
 
 /** Paris building defaults (metres). */
 export const HAUSSMANN = {

@@ -9,6 +9,8 @@ import { fetchBuffer } from './DataLoader';
 import { localLights } from '../render/LocalLights';
 
 type RoofTopMaterial = ReturnType<typeof createRoofTopMaterial>;
+const SKIP_ALT: ReadonlySet<string> = new Set(['roofs_alt', 'tops_alt']);
+const SKIP_DSM: ReadonlySet<string> = new Set(['dsm']);
 
 export interface BuildingChunk {
   i: number; j: number;
@@ -16,6 +18,8 @@ export interface BuildingChunk {
   lod0: THREE.Group;
   lod1: THREE.Group;
   walls?: THREE.Mesh; roofs?: THREE.Mesh; tops?: THREE.Mesh; lod?: THREE.Mesh;
+  /** landmark roofs from the LiDAR surface model, and the analytic roofs shown instead when dsmEnabled is off */
+  dsm?: THREE.Mesh; roofsAlt?: THREE.Mesh; topsAlt?: THREE.Mesh;
   topMat?: RoofTopMaterial;
   details?: DetailMeshes | null;
   roof?: RoofDetailMeshes | null;
@@ -39,6 +43,9 @@ export class Buildings {
 
   readonly wallMaterial = createWallMaterial();
   readonly roofMaterial = createRoofSlopeMaterial();
+  /** LiDAR surface-model landmark roofs (?dsm=0 / mobile: the analytic roofs are shown and the section is never uploaded) */
+  dsmEnabled = true;
+  private dsmTris = 0;
 
   constructor() { this.group.name = 'buildings'; }
 
@@ -55,7 +62,7 @@ export class Buildings {
       const c: BuildingChunk = { i, j, group, lod0, lod1, loaded: false };
       this.chunks.set(chunkKey(i, j), c);
       this.loader.add(chunkKey(i, j), () => this.dist2(c), async () => {
-        const bm = await loadBinMesh(`${DATA_URL}/chunks/${chunkKey(i, j)}.bin`);
+        const bm = await loadBinMesh(`${DATA_URL}/chunks/${chunkKey(i, j)}.bin`, this.dsmEnabled ? SKIP_ALT : SKIP_DSM);
         this.populate(c, bm);
       });
     }
@@ -83,6 +90,13 @@ export class Buildings {
     c.roofs = mk('roofs', this.roofMaterial, c.lod0);
     c.tops = mk('tops', c.topMat, c.lod0);
     c.lod = mk('lod', this.wallMaterial, c.lod1);
+    if (bm.sections.has('dsm')) {
+      c.dsm = mk('dsm', c.topMat.dsm, c.lod0);
+      this.dsmTris += (bm.sections.get('dsm')!.geometry.index?.count ?? 0) / 3;
+    } else {
+      c.roofsAlt = mk('roofs_alt', this.roofMaterial, c.lod0);
+      c.topsAlt = mk('tops_alt', c.topMat, c.lod0);
+    }
     c.loaded = true;
     this.onChunkLoaded(c);
   }
@@ -101,7 +115,7 @@ export class Buildings {
       const near = d2 < lod2;
       if (c.lod0.visible !== near) { c.lod0.visible = near; c.lod1.visible = !near; }
       const shadows = d2 < sh2;
-      for (const m of [c.walls, c.roofs, c.tops]) if (m && m.castShadow !== shadows) m.castShadow = shadows;
+      for (const m of [c.walls, c.roofs, c.tops, c.dsm, c.roofsAlt, c.topsAlt]) if (m && m.castShadow !== shadows) m.castShadow = shadows;
       // Facade details: build lazily near the viewer (one chunk per frame, nearest first), drop them again far away.
       if (c.details === undefined && d2 < this.detailDistance ** 2 && c.walls) {
         if (d2 < nextD2) { next = c; nextD2 = d2; }
@@ -137,6 +151,6 @@ export class Buildings {
   get detailStats() {
     let chunks = 0, signs = 0, plaques = 0;
     for (const c of this.chunks.values()) if (c.details) { chunks++; signs += c.details.signCount; plaques += c.details.plaqueCount; }
-    return `details ${chunks} signs ${signs} plaques ${plaques}`;
+    return `details ${chunks} signs ${signs} plaques ${plaques}${this.dsmTris ? ` dsm ${(this.dsmTris / 1000).toFixed(0)}k` : ''}`;
   }
 }

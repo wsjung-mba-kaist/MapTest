@@ -11,6 +11,9 @@ Google 3D Tiles나 유료 API 키 없이, 공개 데이터만으로 빌드합니
 | 20 cm 항공사진 (지면·평지붕에 투영) | IGN BD ORTHO (WMTS) | Licence Ouverte / Etalab 2.0 |
 | 1 m LiDAR 지형 | IGN RGE ALTI (WMS) | Licence Ouverte / Etalab 2.0 |
 | 가로수 21,000여 그루 (위치·높이·수종) | Ville de Paris open data `les-arbres` | ODbL |
+| 명소 33곳의 이름(한·불·영)·건축가·연도·높이·요약·사진 (`landmarks.json`, `landmarks/*.jpg`) | OSM 태그 → Wikidata → Wikipedia 요약(ko > fr > en) → Wikimedia Commons (CC0/PD/CC BY(-SA)만, 저작자·라이선스는 카드에 표시), `npm run bake:landmarks` | CC BY-SA 4.0 (텍스트) / 사진별 |
+| 랜드마크 실제 지붕 형상 (앵발리드 돔·그랑팔레 유리 볼트·샤요 궁·에콜 밀리테르 등, 50 cm LiDAR 표면모델을 발자국 안에서 격자화) | IGN LiDAR HD MNS (WMS-R `IGNF_LIDAR-HD_MNS_…`), `npm run bake:dsm` → 청크 `dsm` 섹션 | Licence Ouverte / Etalab 2.0 |
+| 돔·양파돔·원뿔·배럴 볼트·방향 있는 박공 지붕, 구리·납·유리·도금 지붕 재질 | OSM `roof:shape`, `roof:height`, `roof:direction`, `roof:material`, `roof:colour` (+ `scripts/config.ts`의 `ROOF_OVERRIDES`: 앵발리드 돔 도금) | ODbL |
 | 에펠탑 (기본) | Sketchfab "Eiffel Tower model 3D with best quality" (shatlykxfree). `public/models/eiffel_tower_model_3d_with_best_quality.glb`를 베이크가 실측 크기(다리 간격 기준)·OSM 발자국 방향으로 맞추고 메시를 합쳐 `eiffel.glb`(4 MB, 51만 삼각형)로 만듭니다. 도료는 런타임에서 높이별 3단 "에펠 브라운", 야간 호박색 발광 | CC-BY 4.0 (화면 도움말에 자동 표기) |
 | 에펠탑 (대체 1) | 절차 생성 투과 격자 철골(약 2만 인스턴스). URL에 `?tower=lattice` | 자체 제작 |
 | 에펠탑 (대체 2) | 다른 glb를 쓰려면 `scripts/config.ts`의 `EIFFEL_SOURCE_GLB` 또는 환경변수 `EIFFEL_SOURCE`로 파일명을 지정하고 `npm run bake:eiffel -- --force`. 사진 텍스처가 있는 스캔은 자동으로 주변 지물을 잘라내고, 텍스처 없는 CAD 모델은 그대로 씁니다 (Brian Trepanier 포토그래메트리 스캔, 3DMR #4 CC0 모델 모두 지원) | 각 모델의 라이선스 |
@@ -33,7 +36,10 @@ npm run dev       # http://localhost:5173
 ```
 
 베이크 단계는 개별 실행할 수 있습니다: `npm run bake:osm`, `bake:bdtopo`, `bake:terrain`, `bake:ortho`,
-`bake:trees`, `bake:assets`, `bake:eiffel`, `bake:towerwalk`, `bake:build`, `bake:paths`, `bake:deshadow`, `bake:markings`, `bake:streets`, `bake:masks`, `bake:far`.
+`bake:trees`, `bake:assets`, `bake:eiffel`, `bake:towerwalk`, `bake:build`, `bake:paths`, `bake:deshadow`, `bake:markings`, `bake:streets`, `bake:masks`, `bake:far`, `bake:landmarks`.
+`bake:landmarks`는 `scripts/lib/landmarks_registry.ts`의 명소 목록을 OSM(위치·태그) → Wikidata(이름·건축가·연도·높이) → Wikipedia 요약 → Commons 사진(480 px)으로 채워 `landmarks.json`을 만듭니다(키 없음, 약 1분, `cache/landmarks/`에 캐시되어 재실행은 요청 없음).
+`bake:dsm`은 기념물(`landmark`로 분류된 건물군)마다 IGN LiDAR HD 표면모델 창(50 cm float32)을 받아 `cache/dsm/`에 두고, `bake:build`가 그 창으로 발자국 안의 실제 지붕면(돔·큐폴라·망사르 꺾임·유리 볼트)을 격자화·단순화(경계 고정)해 청크의 `dsm` 섹션에 씁니다(해석적 지붕은 `roofs_alt`/`tops_alt`로 함께 저장되어 `?dsm=0`·모바일에서 대신 쓰임). `DSM=0`으로 건너뛰고 `DSM_IDS=way/…`로 창을 추가합니다.
+`bake:models`는 `scripts/landmarks_models.ts`의 히어로 모델 레지스트리(기본은 에펠탑뿐)를 OSM 발자국에 맞춰 `public/models/{id}.glb`·`_lod.glb`·`.json`과 인덱스 `landmarks.json`을 만듭니다. CC0/CC BY 모델만 자동으로 받아들이고 NC·ND·불명확 라이선스는 `ALLOW_NONFREE=1`을 줘야 처리합니다. 레지스트리에 있는 발자국은 압출에서 빠지고 항공사진에서 지워지며 그림자를 드리웁니다.
 `bake:markings`는 횡단보도·차선·정지선 데칼과 거리명판 앵커(`plaques.json`)를, `bake:streets`는 인도 슬래브(`streets/`)와 2 m 표면 격자(`surface.bin`)를 만듭니다.
 `bake:towerwalk`는 `eiffel.glb`에서 상향면 면적 히스토그램으로 세 층의 높이·크기와 네 기둥 위치를 찾아 `eiffel_walk.json`에 씁니다(탑 모델을 바꾸면 다시 실행).
 `bake:deshadow`는 항공사진에 구워진 촬영 당시 그림자를 에펠탑 그림자로 태양을 추정해 걷어냅니다(원본은 `cache/ortho_raw/`, `DESHADOW=0`으로 건너뜀).
@@ -62,18 +68,20 @@ npm run dev:lan   # LAN에 공개 (vite --host); 터미널에 뜨는 Network 주
 | 클릭 | 마우스 잠금 시작 |
 | `W A S D` / 마우스 | 이동 / 시점 |
 | `Shift` | 달리기 |
-| `1`–`8` | 명소 이동 (트로카데로, 이에나 다리, 탑 아래, 샹드마르스, 에콜 밀리테르, 비르아켐, 케 브랑리, 탑 2층) |
+| `1`–`8` | 명소 이동 (트로카데로, 이에나 다리, 탑 아래, 샹드마르스, 에콜 밀리테르, 비르아켐, 케 브랑리, 탑 2층) — 1.2~2.6초 비행으로 이동하고 착지하면 명소 카드(사진·한/불 이름·건축가·연도·설명·거리와 방향·위키백과 링크)가 8초간 열렸다가 `현재 위치 · …` 칩으로 접힘 (`?glide=0` 즉시 이동) |
+| `L` | 명소 목록 (33곳, 가까운 순, 방향 화살표) — 클릭하면 그곳으로 비행. 걷는 중이면 마우스 잠금이 풀리고 닫으면 복귀 |
+| `I` | 명소 카드 펼치기/접기. 걷다가 명소 반경에 들어가면 카드가 5초간 뜨고(같은 곳은 1분에 한 번) 칩은 늘 `현재 위치 · X` 또는 `가까운 명소 · X 320 m · 오른쪽 앞`을 보여줌. `Esc` 뒤에는 카드의 `W 위키백과` 링크를 클릭할 수 있음 |
 | `F` | 비행 모드 토글 (`Q`/`E` 상승·하강) |
 | `T` | 시간 패널: 걷는 중 누르면 마우스 잠금이 풀려 슬라이더·프리셋 버튼을 조작할 수 있고, 다시 `T`(패널 숨김) 또는 화면 클릭으로 복귀 |
 | `N` | 시간대 순환 (새벽 → 낮 → 오후 → 노을 → 야경 → 심야) |
 | `,` / `.` | 15분 뒤로/앞으로 (`Shift`와 함께 1시간) — 태양 위치·창문 조명·가로등·탑 조명 연동 |
 | `P` | 현재 위치·시점·시각을 담은 링크 복사 (`walk=1` 또는 `fly=1`) |
 | `O` | 스크린샷 PNG 저장 |
-| `M` | 미니맵 (항공사진 320 m, 북쪽 위, 명소·탑·진행 방향) |
+| `M` | 미니맵 순환: 숨김 → 320 m → 1.5 km → 숨김 (항공사진, 북쪽 위, 명소 점·이름·단축키 번호, 탑, 진행 방향) |
 | `V` | 소리 끄기/켜기 — 도로 소음·공원 새소리·강물·바람·발소리는 전부 합성음 (`?audio=0` 끔, `?audio=debug` 상태 표시) |
 | `E` | 승강기: 탑 기둥 발치 또는 각 층 승강장 3 m 안에서 안내 문구가 뜨면 탑승 (1층 ↔ 2층 ↔ 꼭대기; `8`은 실제 2층 데크에 내려 줌) |
-| 게임패드 | 왼스틱 이동 · 오른스틱 시점 · RT 달리기 · A 승강기 · Y 비행 · X 야경 · Back 미니맵 · Start 시간 패널 |
-| 터치 | 왼쪽 40 % 가상 조이스틱 · 오른쪽 드래그 시점 · 버튼 열(달리기·비행·E·지도·시간·야경); `pointer: coarse` 기기에서 자동, `?touch=1`로 강제. 모바일 프리셋(해상도 1x, AO·반사 끔) |
+| 게임패드 | 왼스틱 이동 · 오른스틱 시점 · RT 달리기 · A 승강기 · Y 비행 · X 야경 · Back 미니맵 · Start 시간 패널 · LB 명소 목록 · RB 명소 카드 |
+| 터치 | 왼쪽 40 % 가상 조이스틱 · 오른쪽 드래그 시점 · 버튼 열(달리기·비행·E·명소·ⓘ·지도·시간·야경); `pointer: coarse` 기기에서 자동, `?touch=1`로 강제. 모바일 프리셋(해상도 1x, AO·반사 끔). 명소 카드는 칩으로 시작하고 탭하면 펼쳐짐 |
 | `R` | 날씨 순환 (맑음 → 흐림 → 비 → 안개) |
 | `H` | 도움말 토글 |
 
@@ -86,6 +94,7 @@ URL 파라미터로 디버그 시점을 지정할 수 있습니다:
 날씨·계절: `weather=overcast|rain|fog`(기본 맑음, `R`로 순환) / `date=2026-10-25`처럼 날짜를 주면 가로수가 그 계절(4월 중순 발아 → 10월 단풍 → 11월 낙엽 → 겨울 나목)을 따릅니다.
 거리·간판: `marks=0`(노면 표시 끄기) / `marksdebug=1`(마젠타) / `streets=0`(인도 슬래브 끄기) / `streetsdebug=1`(법선 색) / `signs=0`(간판·거리명판 끄기) / `signsdebug=1`(간판 마젠타 + 콘솔에 명판 위치·카메라 URL).
 날짜·시각: 기본은 파리 기준 오늘 날짜이며 태양 경로·낮 길이·시간 프리셋(새벽·노을·야경은 그날의 일출·일몰 기준)이 따라갑니다. `date=2026-12-21&hour=16.5`처럼 다른 날을 볼 수 있고, `P`로 복사한 링크에도 오늘이 아니면 `date`가 들어갑니다.
+명소: `at=invalides`(그 명소에 착지하고 카드를 엶, id는 `landmarks.json`; `P`로 복사한 링크에도 현재 명소가 들어감) / `glide=0`(비행 이동 대신 즉시 이동, OS의 "동작 줄이기" 설정도 같음) / `labels=1`(공중에 떠 있는 명소 이름표 켜기, 기본 꺼짐; 260 m부터 보이고 150 m 안에서 선명) / `dsm=0|1`(LiDAR 표면모델 지붕 끄기/켜기; 기본은 데스크톱 켬·터치 기기 끔) / `hide=models`(에펠탑 외 히어로 모델 숨김) / `gpu=0`(GPU 안내 패널·토스트 생략, 헤드리스 스크린샷용).
 UX: `minimap=1`(미니맵 켠 채 시작) / `audio=0|debug` / `touch=1`(터치 UI 강제) / `xr=1`(실험적 WebXR: VR 버튼 표시, 왼스틱 이동·오른스틱 45° 스냅 회전, 헤드셋에서 미검증) / `walk=1&x=&z=&y=`(y를 주면 그 높이 근처의 데크(다리·탑 층)에 올려 놓음, 예 `walk=1&x=-12.6&z=-0.7&y=120.5&yaw=-49` = 탑 2층).
 
 ## 야경
@@ -119,6 +128,14 @@ UX: `minimap=1`(미니맵 켠 채 시작) / `audio=0|debug` / `touch=1`(터치 U
 - **버스**: 간선(trunk~tertiary) 도로의 연석 차로에서 차량의 12 %는 RATP 도색(흰 차체·옥색 띠·검은 창 띠)의 12 m 표준 버스입니다. 승용차와 같은 브레이크등·방향지시등·바퀴 회전 상태를 쓰고 속도는 15 % 느립니다.
 - **자전거**: 공원 산책로(폭 2.5 m 이상)와 보행자 전용·자전거 도로(폭 3.5 m 이상)에서 사람 메시를 안장에 올린 자전거가 4.2~6.5 m/s로 달립니다(횡단보도·계단 제외, 플레이어와 충돌). `?cyclists=0`.
 - **진단**: `?status=1`에 마우스 최대 Δ·워프 폐기 수, 컴파일된 프로그램 수, 롱태스크 수가 표시됩니다. 지면 셰이더는 프래그먼트 샘플러 16개 한도 안에 있어야 합니다(현재 15개: 타일·오버뷰·마스크·디테일 5세트 중 색상 3장+노멀 5장·그림자·환경맵). 넘으면 일반 GPU에서 지면이 통째로 사라집니다. 포인터 락은 `unadjustedMovement`로 요청하고 300 px 넘는 이동은 커서 워프로 보고 버립니다.
+
+## 명소 사실감 (5차)
+
+- **실제 지붕 형상**: 기념물로 분류된 건물(`landmark`: 교회·궁전·박물관·`wikidata`가 있는 대형 건물과 그 `building:part`)은 IGN LiDAR HD 표면모델(50 cm)을 발자국 안에서 격자화한 지붕 캡을 씁니다. 앵발리드의 황금 돔과 첨탑, 그랑팔레의 유리 볼트, 샤요 궁의 곡선 날개, 에콜 밀리테르의 사각 돔이 실제 실루엣으로 서고, 평평한 부분에는 항공사진이, 가파른 부분에는 절차적 지붕 재질이 법선에 따라 섞입니다. 벽 상단은 표면모델 가장자리를 따라가고(중앙값 필터), 캡의 경계 정점은 벽 상단에 맞춰 틈 없이 봉합됩니다. 단순화(경계 고정)로 평지붕은 수백 삼각형으로 줄고 돔은 살아남습니다(총 상한 120만 삼각형). `?dsm=0`이면 해석적 지붕(`roofs_alt`/`tops_alt`)이 대신 그려지고, 모바일 프리셋은 `dsm` 섹션을 GPU에 올리지 않습니다.
+- **OSM 지붕 형상**: `roof:shape`의 dome·onion·cone은 발자국을 위도 0으로 삼아 타원으로 둥글어지는 회전면(LOD1은 거친 돔), round는 배럴 볼트, `roof:direction`/`roof:orientation`이 있는 gabled와 skillion은 실제 용마루 방향의 프로파일 지붕이 되고 박공 끝 벽은 지붕선까지 올라갑니다. 순수 돔 파트(`roof:height` = `height` − `min_height`)가 땅에서 벽을 세우던 버그를 고쳤습니다. 지붕 재질은 정점 `meta.z`(0 아연, 1 슬레이트, 2 기와, 3 구리 녹청, 4 납, 5 유리(야간 내부 발광), 6 도금(야간 투광 반사), 7 도색)로 셰이더가 분기하며, 돔(`RoofCurved` 플래그)은 도머 대신 자오선 리브를 갖습니다.
+- **기념물 분류**: `building=church|palace|museum|…`, `tourism=attraction|museum`, `amenity=place_of_worship|townhall|theatre`, `historic`, `wikidata`/`heritage`(주거 제외), 이름 정규식(palais·musée·hôtel des·école militaire·unesco…)으로 Monument 스타일이 되고, 기념물 외곽선 안의 파트는 스타일·이름·석재색을 상속합니다(앵발리드 돔이 오스만 파사드로 그려지던 문제 해결).
+- **기념물 파사드**: 0.9 m 코스의 큰 애슐러, 1층 채널 러스티케이션과 플린스, 베이 경계마다 0.9 m 필라스터(사이 벽은 0.25 m 시차 후퇴, 플루팅·주두), 1층 아치창(키스톤), 덴틸이 있는 프리즈, 2단 코니스, 처마 위 석재 발러스트레이드와 코핑(`BuildingDetails`의 인스턴스 박스·알파 시트).
+- **히어로 모델 레지스트리**: `scripts/landmarks_models.ts`에 GLB와 OSM 발자국을 등록하면 `bake:models`가 발자국 사각형·높이·배율로 맞추고 크롭·압축해 `public/models/{id}.glb`(+LOD)로 만들며 런타임(`LandmarkModel`)이 거리별로 교체합니다. 에펠탑은 기존 전용 파이프라인을 유지합니다.
 
 ## 계절·날씨
 
@@ -164,7 +181,7 @@ npm run build     # 프로덕션 번들
 
 ## 배포 용량
 
-정적 데이터가 약 190 MB(청크 92·지면 83·원경 20·인도 19 MB, 탑 모델 28 MB)입니다. 대부분 float32라 Brotli로 72 % 줄어듭니다.
+정적 데이터가 약 220 MB(청크 123 — LiDAR 지붕 캡·대체 지붕 포함 —, 지면 83, 원경 20, 인도 19 MB, 탑 모델 28 MB, 명소 사진 2 MB)입니다. 대부분 float32라 Brotli로 72 % 줄어듭니다.
 
 ```bash
 npm run build:compressed   # vite build 뒤 dist/**/*.bin|json|glb|hdr 옆에 .br 생성 (192 MB → 54 MB, 약 10 s)

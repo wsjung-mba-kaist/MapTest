@@ -3,7 +3,8 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, OUT_DIR } from '../config.ts';
+import { CACHE_DIR, MODELS_DIR, OUT_DIR } from '../config.ts';
+import { heroFootprints } from './landmarks_footprints.ts';
 import { ensureDir, exists, readJson, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
@@ -132,8 +133,15 @@ async function deshadowImage(src: string, mask: Buffer, size: number, outFile: s
 /** Shadow casters: buildings (eave height), the tower as stacked boxes, tree crowns. */
 export async function collectCasters(): Promise<{ casters: Caster[]; crowns: Crown[] }> {
   const hm = await loadHeightmap(false);
-  const { specs } = buildSpecs(await loadTheme('buildings'), await loadBuildings(), hm);
+  const osmBuildings = await loadTheme('buildings');
+  const { specs } = buildSpecs(osmBuildings, await loadBuildings(), hm);
   const casters: Caster[] = specs.filter(s => !s.isPlinth && s.eave > 2.5).map(s => ({ poly: s.rings, h: s.eave }));
+  // hero models other than the tower: their footprint at ~70 % of the model height
+  for (const f of heroFootprints(osmBuildings)) {
+    if (f.id === 'eiffel') continue;
+    const meta = await readJson<{ height?: number }>(path.join(MODELS_DIR, `${f.id}.json`)).catch(() => null);
+    for (const r of f.rings) casters.push({ poly: [r], h: (meta?.height ?? 30) * 0.7 });
+  }
   const half = 62.5;
   casters.push({ poly: [[[TOWER[0] - half, TOWER[1] - half], [TOWER[0] + half, TOWER[1] - half], [TOWER[0] + half, TOWER[1] + half], [TOWER[0] - half, TOWER[1] + half]]], h: 60 });
   casters.push({ poly: [[[TOWER[0] - 20, TOWER[1] - 20], [TOWER[0] + 20, TOWER[1] - 20], [TOWER[0] + 20, TOWER[1] + 20], [TOWER[0] - 20, TOWER[1] + 20]]], h: 130 });

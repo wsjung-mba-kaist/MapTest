@@ -60,6 +60,46 @@
     html.touch #overlay p { padding: 0 24px; text-align: center; }
     html.touch #crosshair { display: none; }
     #touch .touch-row button.on { background: rgba(232,194,122,.55); }
+    /* landmark card (arrival / proximity) and the landmark list */
+    #place { position: absolute; left: 16px; top: 96px; z-index: 20; width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box; font-size: 12px; line-height: 1.5; pointer-events: auto; }
+    #place[hidden] { display: none; }
+    #place .chip, #place .card { background: rgba(8,10,16,.72); backdrop-filter: blur(6px); border-radius: 8px; border-left: 2px solid #e8c27a; }
+    #place .chip { display: inline-block; padding: 6px 12px; white-space: nowrap; font-size: 12px; cursor: pointer; }
+    #place .card { padding: 10px 12px 8px; }
+    #place[data-mode="card"] .chip { display: none; }
+    #place[data-mode="chip"] .card { display: none; }
+    #place img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: 6px; margin-bottom: 2px; background: rgba(255,255,255,.06); }
+    #place img[hidden], #place .cap[hidden], #place .facts[hidden], #place .desc[hidden], #place .wiki[hidden] { display: none; }
+    #place .cap { font-size: 10px; opacity: .55; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #place .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+    #place .cat { font-size: 10px; padding: 0 6px; border: 1px solid #e8c27a; border-radius: 4px; color: #e8c27a; line-height: 16px; }
+    #place .ko { font-size: 16px; font-weight: 600; }
+    #place .fr { opacity: .7; font-size: 12px; }
+    #place .facts { opacity: .75; font-size: 11px; }
+    #place .desc { margin: 6px 0 4px; }
+    #place .pos { color: #e8c27a; font-size: 11px; }
+    #place .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; }
+    #place .foot .hint { opacity: .5; }
+    #place a.wiki { color: #8fd3ff; text-decoration: none; padding: 2px 8px; border: 1px solid rgba(143,211,255,.4); border-radius: 5px; }
+    #place a.wiki:hover { background: rgba(143,211,255,.2); }
+    #places { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 22; width: min(380px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; box-sizing: border-box; background: rgba(8,10,16,.9); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 10px 12px; font-size: 13px; pointer-events: auto; backdrop-filter: blur(8px); }
+    #places[hidden] { display: none; }
+    #places .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    #places .head b { font-size: 15px; }
+    #places .head .hint { flex: 1; opacity: .55; font-size: 11px; }
+    #places .close { border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; padding: 1px 8px; cursor: pointer; }
+    #places .rows { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+    #places .row { display: grid; grid-template-columns: 22px 10px 1fr auto 18px; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+    #places .row:hover { background: rgba(232,194,122,.2); }
+    #places .row .key { font: 11px/16px ui-monospace, monospace; color: #e8c27a; text-align: center; border: 1px solid rgba(232,194,122,.4); border-radius: 4px; }
+    #places .row .key:empty { border-color: transparent; }
+    #places .row i { display: block; width: 8px; height: 8px; border-radius: 50%; }
+    #places .row .name { display: flex; flex-direction: column; line-height: 1.25; }
+    #places .row .name small { opacity: .6; font-size: 11px; }
+    #places .row .dist { font: 12px ui-monospace, monospace; opacity: .8; }
+    #places .row .arrow { display: inline-block; font-size: 12px; opacity: .7; transform-origin: 50% 50%; }
+    html.touch #place { left: 10px; top: calc(10px + env(safe-area-inset-top)); width: min(300px, 62vw); font-size: 11px; }
+    html.touch #place img { height: 90px; }
     #gpupanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 40; width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; background: rgba(8,10,16,.93); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 16px 18px; font-size: 13px; line-height: 1.6; pointer-events: auto; backdrop-filter: blur(8px); -webkit-user-select: text; user-select: text; }
     #gpupanel[hidden] { display: none; }
     #gpupanel h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
@@ -93,8 +133,8 @@
     <div id="help">
       <b>Paris · Champ de Mars</b><br/>
       <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · <kbd>Shift</kbd> 달리기 · 마우스 시점<br/>
-      <kbd>1</kbd>–<kbd>8</kbd> 명소 이동 · <kbd>F</kbd> 비행 · <kbd>T</kbd> 시간 패널 · <kbd>N</kbd> 야경 · <kbd>H</kbd> 도움말 · <kbd>Esc</kbd> 마우스 해제<br/>
-      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 · <kbd>V</kbd> 소리 끄기/켜기 · <kbd>G</kbd> GPU 선택 · 게임패드 지원
+      <kbd>1</kbd>–<kbd>8</kbd> 명소 이동 · <kbd>L</kbd> 명소 목록 · <kbd>I</kbd> 명소 정보 · <kbd>F</kbd> 비행 · <kbd>T</kbd> 시간 패널 · <kbd>N</kbd> 야경 · <kbd>H</kbd> 도움말 · <kbd>Esc</kbd> 마우스 해제<br/>
+      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 (320 m → 1.5 km) · <kbd>V</kbd> 소리 끄기/켜기 · <kbd>G</kbd> GPU 선택 · 게임패드 지원
     </div>
     <div id="overlay">
       <h1>Tour Eiffel</h1>

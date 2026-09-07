@@ -66,4 +66,35 @@ export interface PlaquesData { names: string[]; arms: number[][] }
 export enum MarkKind { Zebra = 0, LaneDash = 1, CentreDash = 2, StopLine = 3 }
 
 /** COLOR_0 alpha flags packed into building vertices (stored as alpha*255). */
-export enum SurfaceFlag { Wall = 0, RoofSlope = 1, RoofTop = 2, Plinth = 3, RoofTopOverview = 4 }
+export enum SurfaceFlag { Wall = 0, RoofSlope = 1, RoofTop = 2, Plinth = 3, RoofTopOverview = 4, RoofCurved = 5, RoofDsm = 6 }
+
+/** Landmarks (landmarks.json from `npm run bake:landmarks`): curated sites with names, a short description and a photo. */
+export type LandmarkCategory = 'monument' | 'museum' | 'palace' | 'bridge' | 'church' | 'park' | 'square' | 'military' | 'theatre' | 'institution';
+export interface LandmarkImage { file: string; w: number; h: number; artist?: string; license?: string; licenseUrl?: string; source: string }
+export interface Landmark {
+  id: string;
+  osm?: string;
+  wikidata?: string;
+  category: LandmarkCategory;
+  /** 1..8 = keyboard shortcut */
+  hotkey?: number;
+  /** not shown on the minimap / world labels / proximity (e.g. the tower deck viewpoint) */
+  hidden?: boolean;
+  x: number; z: number;
+  lon: number; lat: number;
+  /** arrival / proximity radius (m) */
+  radius: number;
+  /** camera landing spot; yaw in degrees (0 = north, clockwise); deck = tower floor to stand on */
+  view: { x: number; z: number; yaw: number; deck?: number };
+  name: { ko: string; fr: string; en: string };
+  /** short Korean label (minimap, chip, world label) */
+  short: string;
+  /** hand-written Korean one-liner */
+  blurb?: string;
+  /** Wikipedia extract, 1-2 sentences */
+  desc?: { lang: 'ko' | 'fr' | 'en'; text: string };
+  facts?: { architect?: string[]; year?: number; height?: number };
+  links: { wiki?: { lang: string; url: string }; wikidata?: string; osm?: string };
+  image?: LandmarkImage;
+}
+export interface LandmarksData { version: 1; generated: string; landmarks: Landmark[]; credits: string[] }
