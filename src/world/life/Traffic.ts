@@ -4,6 +4,7 @@ import type { SimClock } from './SimClock';
 import { EdgeFlag, NodeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shared/signals';
+import type { CrossingTable } from '../../../shared/crossings';
 import { carColor, loadCarKit, makeCarMaterial, type CarModel } from './CarKit';
 import type { LocalLight } from '../../render/LocalLights';
 
@@ -25,7 +26,10 @@ export class Traffic {
   count = 0;
   private models: CarModel[] = [];
   private meshes: THREE.InstancedMesh[] = [];
-  private readonly uniforms = { uLights: { value: 0 } };
+  private readonly uniforms = { uLights: { value: 0 }, uTime: { value: 0 } };
+  private readonly stateAttrs: THREE.InstancedBufferAttribute[] = [];
+  /** ?carlights=0 */
+  lightFx = true;
   // agent state
   private readonly edge = new Int32Array(CAP);
   private readonly dir = new Int8Array(CAP);
@@ -39,6 +43,9 @@ export class Traffic {
   private readonly hop = new Uint16Array(CAP);
   private readonly nextE = new Int32Array(CAP);
   private readonly nextDir = new Int8Array(CAP);
+  private readonly turn = new Int8Array(CAP);        // -1 left, +1 right at the next junction
+  private readonly brake = new Uint8Array(CAP);
+  private readonly odo = new Float32Array(CAP);
   private readonly px = new Float32Array(CAP);
   private readonly py = new Float32Array(CAP);
   private readonly pz = new Float32Array(CAP);
@@ -59,6 +66,10 @@ export class Traffic {
   private laneLists = new Map<number, number[]>();
   /** signal phase per (edge, end): index e*2 + (arriving at b ? 1 : 0); -1 = no signal */
   private readonly sigPhase: Float32Array;
+  private crossAtEnd: Int32Array | null = null;
+  private crossOcc: Uint8Array | null = null;
+  /** Crossing table (shared/crossings) and the crowd's live occupancy per road node. */
+  setCrossings(t: CrossingTable | null, occ: Uint8Array | null) { this.crossAtEnd = t ? t.atEnd : null; this.crossOcc = occ; }
   /** time-of-day volume factor (shared/nightlife activity) */
   activity = 1;
   /** Returns true when the change is big enough that the caller should re-seed the active edges. */
@@ -85,6 +96,8 @@ export class Traffic {
       mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = false;
       // instanceColor buffer exists once setColorAt is called; do it now so the shader path is stable
       mesh.setColorAt(0, this.color.setHex(0xffffff));
+      const st = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3); st.setUsage(THREE.DynamicDrawUsage);
+      mesh.geometry.setAttribute('aState', st); this.stateAttrs.push(st);
       this.meshes.push(mesh);
       this.group.add(mesh);
     });
@@ -162,7 +175,8 @@ export class Traffic {
     this.alive.delete(this.ident[i]);
     if (i !== last) {
       for (const a of [this.edge, this.seg, this.nextE] as Int32Array[]) a[i] = a[last];
-      for (const a of [this.dir, this.nextDir] as Int8Array[]) a[i] = a[last];
+      for (const a of [this.dir, this.nextDir, this.turn] as Int8Array[]) a[i] = a[last];
+      this.brake[i] = this.brake[last]; this.odo[i] = this.odo[last];
       for (const a of [this.lane, this.variant] as Uint8Array[]) a[i] = a[last];
       for (const a of [this.s, this.v, this.vCruise, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen] as Float32Array[]) a[i] = a[last];
       for (const a of [this.j0, this.jc, this.j1]) { a[i * 3] = a[last * 3]; a[i * 3 + 1] = a[last * 3 + 1]; a[i * 3 + 2] = a[last * 3 + 2]; }
@@ -183,6 +197,15 @@ export class Traffic {
     const rnd = hash32(this.seed[i], this.hop[i], 26);
     const next = g.nodeFlag(node, NodeFlag.CAR_SINK) ? null : g.pickNext(node, e, dx / l, dz / l, g.driveAllowed, rnd, 0.7);
     this.nextE[i] = next ? next.e : -1; this.nextDir[i] = next ? next.dir : 0;
+    // turn direction for the indicators: heading of the next edge's first segment vs. this edge's last
+    this.turn[i] = 0;
+    if (next) {
+      const nv0 = g.eV0[next.e], nnv = g.eNv[next.e];
+      const p = next.dir > 0 ? nv0 : nv0 + nnv - 1, q = next.dir > 0 ? nv0 + 1 : nv0 + nnv - 2;
+      const ndx = g.vPos[q * 3] - g.vPos[p * 3], ndz = g.vPos[q * 3 + 2] - g.vPos[p * 3 + 2], nl = Math.hypot(ndx, ndz) || 1;
+      const cross = (ndx / nl) * (-dz / l) + (ndz / nl) * (dx / l);   // dot with the right-hand normal of the current heading
+      if (Math.abs(cross) > 0.35) this.turn[i] = cross > 0 ? 1 : -1;
+    }
   }
 
   private rebuildLanes() {
@@ -196,6 +219,7 @@ export class Traffic {
   update(dt: number, camX: number, camZ: number, camDir: THREE.Vector3, night: number) {
     this.camDir.copy(camDir);
     this.uniforms.uLights.value = night > 0.3 ? 1 : 0;
+    this.uniforms.uTime.value = this.clock.time;
     const g = this.graph;
     if (dt > 0) {
       this.rebuildLanes();
@@ -229,11 +253,18 @@ export class Traffic {
           const rem = L - prog - STOP_BACK;
           if (st !== SIGNAL_GREEN && rem > -1.5 && !(st === SIGNAL_AMBER && rem < 8)) vT = Math.min(vT, Math.max(0, 0.7 * (rem - 0.5)));
         }
+        // ---- pedestrians on the crossing at the end of this edge: stop 3 m short of it
+        if (this.crossAtEnd && this.crossOcc && this.jt[i] < 0) {
+          const cn = this.crossAtEnd[this.edge[i] * 2 + (this.dir[i] > 0 ? 1 : 0)];
+          if (cn >= 0 && this.crossOcc[cn] > 0) { const rem = L - prog - 3; if (rem > -1) vT = Math.min(vT, Math.max(0, 0.7 * (rem - 0.5))); }
+        }
         const dv = vT - this.v[i];
+        this.brake[i] = dv < -0.4 || (this.v[i] < 0.5 && vT < 0.5) ? 1 : 0;   // slowing, or held on the brake at a light
         this.v[i] += Math.max(-6 * dt, Math.min(2.5 * dt, dv));
         if (this.v[i] < 0.02 && vT < 0.02) this.v[i] = 0;
         // ---- advance
         const step = this.v[i] * dt;
+        this.odo[i] += step;
         if (this.jt[i] >= 0) {
           this.jt[i] += step;
           if (this.jt[i] >= this.jLen[i]) { this.jt[i] = -1; }
@@ -269,8 +300,35 @@ export class Traffic {
       a[o] = c; a[o + 1] = 0; a[o + 2] = -sn; a[o + 3] = 0; a[o + 4] = 0; a[o + 5] = 1; a[o + 6] = 0; a[o + 7] = 0;
       a[o + 8] = sn; a[o + 9] = 0; a[o + 10] = c; a[o + 11] = 0; a[o + 12] = x; a[o + 13] = y; a[o + 14] = z; a[o + 15] = 1;
       mesh.setColorAt(slot, this.color.setHex(carColor(hash32(this.seed[i], 27), vi)));
+      const st = this.stateAttrs[vi].array as Float32Array, remain = g.eLen[this.edge[i]] - this.progress(i);
+      const indicating = this.lightFx && this.turn[i] !== 0 && (remain < 25 || this.jt[i] >= 0);
+      st[slot * 3] = this.lightFx ? this.brake[i] : 0; st[slot * 3 + 1] = indicating ? this.turn[i] : 0; st[slot * 3 + 2] = this.odo[i];
     }
-    this.meshes.forEach((m, k) => { m.count = counts[k]; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; });
+    this.meshes.forEach((m, k) => { m.count = counts[k]; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; this.stateAttrs[k].needsUpdate = true; });
+  }
+
+  /** Push a walker's circle (x, z, r) out of the cars (two circles per car along its heading); accumulates into out. */
+  pushOut(x: number, z: number, r: number, out: { dx: number; dz: number }) {
+    for (let i = 0; i < this.count; i++) {
+      const m = this.models[this.variant[i]]; if (!m) continue;
+      const cr = m.width * 0.5 + 0.15 + r, off = m.length * 0.25;
+      for (const k of [-1, 1]) {
+        const cx = this.px[i] + this.hx[i] * off * k, cz = this.pz[i] + this.hz[i] * off * k;
+        const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz);
+        if (d < cr && d > 1e-4) { const push = cr - d; out.dx += dx / d * push; out.dz += dz / d * push; }
+      }
+    }
+  }
+
+  /** The n nearest moving cars (position, speed) for positional audio. */
+  nearest(x: number, z: number, n: number): { x: number; y: number; z: number; v: number }[] {
+    const best: { d2: number; i: number }[] = [];
+    for (let i = 0; i < this.count; i++) {
+      const d2 = (this.px[i] - x) ** 2 + (this.pz[i] - z) ** 2;
+      if (best.length < n) { best.push({ d2, i }); best.sort((a, b) => a.d2 - b.d2); }
+      else if (d2 < best[n - 1].d2) { best[n - 1] = { d2, i }; best.sort((a, b) => a.d2 - b.d2); }
+    }
+    return best.map(b => ({ x: this.px[b.i], y: this.py[b.i] + 0.5, z: this.pz[b.i], v: this.v[b.i] }));
   }
 
   /**

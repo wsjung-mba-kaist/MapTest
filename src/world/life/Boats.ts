@@ -54,6 +54,12 @@ export class Boats {
     return out;
   }
 
+  /** The n nearest boats (engine at the stern). */
+  nearest(x: number, z: number, n: number): { x: number; y: number; z: number }[] {
+    return this.boats.map(b => ({ b, d2: (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2 })).sort((p, q) => p.d2 - q.d2).slice(0, n)
+      .map(({ b }) => ({ x: b.mesh.position.x - (b.hx ?? 0) * 12, y: b.mesh.position.y + 1, z: b.mesh.position.z - (b.hz ?? -1) * 12 }));
+  }
+
   /** Debug readout: position of the first boat. */
   get stats(): string { const b = this.boats[0]; return b ? `@${b.mesh.position.x.toFixed(0)},${b.mesh.position.z.toFixed(0)}` : ''; }
 

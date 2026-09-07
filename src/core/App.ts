@@ -3,7 +3,8 @@ import Stats from 'stats-gl';
 import { Loop } from './Loop';
 import { setSignageDebug, setSignageEnabled } from '../world/Signage';
 import { setShopLights } from '../world/BuildingDetails';
-import { towerLit, towerSparkle } from '../../shared/nightlife';
+import { shopOpen, towerLit, towerSparkle } from '../../shared/nightlife';
+import type { SpatialSource } from '../audio/Spatial';
 import { setWet } from '../materials/GroundMaterial';
 import { seasonState } from '../../shared/season';
 import { Rain } from '../render/Rain';
@@ -62,10 +63,14 @@ export class App {
   readonly tower = new TowerAccess();
   private headlights = true;
   private weather: Weather = 'clear';
+  private carLights = true;
   private wetFlag = false;
   private rain?: Rain;
   private xr?: XRMode;
+  private longTasks = 0;
+  private longTaskMax = 0;
   private readonly feetTmp = new THREE.Vector3();
+  private readonly fwdTmp = new THREE.Vector3();
   towerAlwaysOn = false;
   private hotspot: Hotspot | null = null;
   flying = false;
@@ -108,7 +113,7 @@ export class App {
       const dateS = q.get('date');
       if (dateS && /^\d{4}-\d{2}-\d{2}$/.test(dateS)) { const [y, m, d] = dateS.split('-').map(Number); this.env.setDate([y, m, d]); }
       if (life === '0') this.world.lifeOptions = null;
-      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), debug: q.get('lifedebug') === '1' }; }
+      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), debug: q.get('lifedebug') === '1' }; }
       else if (this.world.lifeOptions) this.world.lifeOptions.debug = q.get('lifedebug') === '1';
       // ?marks=0 road markings, ?streets=0 sidewalk slabs, ?signs=0 shop signs + plaques; *debug=1 variants paint them magenta / log placements
       if (q.get('marks') === '0') this.world.marksEnabled = false;
@@ -122,6 +127,8 @@ export class App {
       const wq = q.get('weather'); if (wq === 'overcast' || wq === 'rain' || wq === 'fog') this.weather = wq;
       if (q.get('signals') === '0' && this.world.lifeOptions) this.world.lifeOptions.signals = false;
       if (q.get('fartraffic') === '0' && this.world.lifeOptions) this.world.lifeOptions.farTraffic = false;
+      if (q.get('crossings') === '0' && this.world.lifeOptions) this.world.lifeOptions.crossings = false;
+      this.carLights = q.get('carlights') !== '0';
       if (q.get('shoplights') === '0') setShopLights(false);
       if (tower === 'lit') this.towerAlwaysOn = true;
       if (q.get('signsdebug') === '1') setSignageDebug(true);
@@ -138,7 +145,7 @@ export class App {
     this.world.buildings.onChunkLoaded = c => { if (c.walls) this.collision.registerChunk(c.i, c.j, c.walls.geometry); };
     for (const c of this.world.buildings.chunks.values()) if (c.loaded && c.walls) this.collision.registerChunk(c.i, c.j, c.walls.geometry);
 
-    if (this.world.bridges?.deck) this.collision.registerWalkable("bridges", this.world.bridges.deck.geometry);
+    if (this.world.bridges) for (const [key, d] of this.world.bridges.decks) this.collision.registerWalkable(`bridges:${key}`, d.mesh.geometry);
     if (this.world.streets) this.world.streets.walkables = { register: (k, g, o) => this.collision.registerWalkable(k, g, o), unregister: k => this.collision.unregisterWalkable(k) };
     if (this.world.bridges?.parapet) this.collision.registerStatic("parapets", this.world.bridges.parapet.geometry);
     if (this.world.bridges?.stone) this.collision.registerStatic("bridge-stone", this.world.bridges.stone.geometry);
@@ -189,7 +196,21 @@ export class App {
     this.loop.add((dt, t) => {
       const p = this.camera.position;
       this.minimap.update(p.x, p.z, this.input.yaw, performance.now());
-      this.audio.update(dt, p.x, p.z, this.env.hour, p.y - this.world.groundY(p.x, p.z), this.world.surface);
+      // positional sources: nearest cars / boats, open café terraces (17-01h)
+      const src: SpatialSource[] = [];
+      const life = this.world.life;
+      if (life?.traffic) for (const c of life.traffic.nearest(p.x, p.z, 4)) src.push({ kind: 'car', x: c.x, y: c.y, z: c.z, level: 0.6, speed: c.v });
+      if (life?.boats) for (const b of life.boats.nearest(p.x, p.z, 2)) src.push({ kind: 'boat', x: b.x, y: b.y, z: b.z, level: 0.5 });
+      if (shopOpen(this.env.hour, true) > 0.3) for (const l of localLights.nearestOfKind('restaurant', p.x, p.z, 3)) src.push({ kind: 'terrace', x: l.x, y: l.y, z: l.z, level: 0.35 });
+      const fp = this.world.furniture?.fountainPositions;
+      if (fp && fp.length) {
+        let b0 = -1, b1 = -1, d0 = 1e9, d1 = 1e9;
+        for (let i = 0; i < fp.length / 3; i++) { const d = (fp[i * 3] - p.x) ** 2 + (fp[i * 3 + 2] - p.z) ** 2; if (d < d0) { d1 = d0; b1 = b0; d0 = d; b0 = i; } else if (d < d1) { d1 = d; b1 = i; } }
+        for (const i of [b0, b1]) if (i >= 0 && Math.sqrt(i === b0 ? d0 : d1) < 45) src.push({ kind: 'fountain', x: fp[i * 3], y: fp[i * 3 + 1], z: fp[i * 3 + 2], level: 0.4 });
+      }
+      this.camera.getWorldDirection(this.fwdTmp);
+      this.audio.setListener(p.x, p.y, p.z, this.fwdTmp.x, this.fwdTmp.y, this.fwdTmp.z);
+      this.audio.update(dt, p.x, p.z, this.env.hour, p.y - this.world.groundY(p.x, p.z), this.world.surface, src);
       // lift prompt (walking only)
       const feet = this.player.position;
       this.hotspot = !this.flying && !this.player.riding && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
@@ -200,7 +221,7 @@ export class App {
     this.loop.add((dt, t) => { this.camera.getWorldDirection(camDir); this.world.update(this.camera.position.x, this.camera.position.z, t, this.env.night, dt, camDir, this.env.hour); });
     this.rain = new Rain(); this.scene.add(this.rain.points);
     this.loop.add((dt, t) => { this.rain?.update(t, this.camera.position, this.env.night, dt); this.world.trees?.setSeason(seasonState(this.env.dayOfYear())); });
-    this.loop.add((_dt, t) => { this.env.follow(this.camera.position); this.env.tick(t); this.post.setNight(this.env.night); buildingUniforms.uHour.value = this.env.hour; });
+    this.loop.add((_dt, t) => { this.env.follow(this.camera.position); this.env.tick(t, this.camera.position); this.post.setNight(this.env.night, this.env.sunElev); buildingUniforms.uHour.value = this.env.hour; });
     this.loop.add(() => {
       const p = this.camera.position, n = this.env.night;
       const st = this.env.sunTimes();
@@ -234,7 +255,7 @@ export class App {
       if (code === 'KeyP') void this.share();
       if (code === 'KeyO') this.captureRequested = true;
       if (code === 'KeyM') this.minimap.toggle();
-      if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.hud.prompt(null); }
+      if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); }
       if (code === 'KeyV') this.hud.toast(this.audio.toggleMute() ? '소리 끔' : '소리 켬');
       if (code === 'Comma' || code === 'Period') this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25));
       const vp = VIEWPOINTS.find(v => v.key === code);
@@ -243,6 +264,13 @@ export class App {
     this.hud.onTimeChange = h => this.env.setHour(h);
     this.applyDayPresets();
     this.applyWeather(false);
+    if (this.world.life?.traffic) this.world.life.traffic.lightFx = this.carLights;
+    this.player.obstacles = (x, z, r, out) => this.world.life?.pushOut(x, z, r, out);
+    // compile the programs of everything already in the scene off the first frames (KHR_parallel_shader_compile)
+    void this.renderer.compileAsync(this.scene, this.camera).catch(() => {});
+    try {
+      new PerformanceObserver(list => { for (const e of list.getEntries()) { this.longTasks++; this.longTaskMax = Math.max(this.longTaskMax, e.duration); } }).observe({ entryTypes: ['longtask'] });
+    } catch { /* not supported */ }
     const em = this.world.eiffel.meta;
     if (em.author) this.hud.addCredit(`Eiffel Tower model: "${em.title ?? 'Eiffel Tower'}" by ${em.author.replace(/\s*\(.*\)\s*$/, '')} (${(em.license ?? '').split(' ')[0]})`);
     else this.hud.addCredit(em.title === 'procedural lattice' ? 'Eiffel Tower: procedural lattice generated from published dimensions' : 'Eiffel Tower model: 3DMR #4 (CC0)');
@@ -291,6 +319,7 @@ export class App {
     setWet(w === 'rain' || this.wetFlag ? 1 : 0);
     this.world.trees?.setWind(w === 'rain' ? 1.6 : w === 'overcast' ? 1.1 : 0.7);
     if (this.rain) this.rain.on = w === 'rain';
+    this.audio.setRain(w === 'rain' ? 1 : 0);
     if (toast) this.hud.toast({ clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' }[w]);
   }
   cycleWeather() {
@@ -330,6 +359,7 @@ export class App {
     if (q.get('xr') === '1' && 'xr' in navigator) this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input);   // experimental WebXR
     if (q.get('post') === '0') this.post.enabled = false;
     if (q.get('ao') === '0') this.post.n8ao.enabled = false;                 // no ambient occlusion (A/B)
+    if (q.get('clouds') === '0') this.env.setClouds(false);
     if (q.get('noshadow') === '1') this.renderer.shadowMap.enabled = false;
     if (q.get('noenv') === '1') { this.scene.environment = null; this.env.disableHdri = true; }
     if (q.get('details') === '0') this.world.buildings.detailDistance = 0;
@@ -384,6 +414,6 @@ export class App {
     const yawDeg = ((THREE.MathUtils.radToDeg(this.input.yaw) % 360) + 360) % 360;
     const w = this.world;
     const floor = !this.flying ? this.tower.floorAt(this.player.position.x, this.player.position.y, this.player.position.z) : null;
-    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}`);
+    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)`);
   }
 }

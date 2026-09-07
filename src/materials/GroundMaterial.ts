@@ -17,6 +17,7 @@ const shared = {
   uPavingC: { value: null as THREE.Texture | null }, uPavingN: { value: null as THREE.Texture | null },
   uGrassC: { value: null as THREE.Texture | null }, uGrassN: { value: null as THREE.Texture | null },
   uGravelC: { value: null as THREE.Texture | null }, uGravelN: { value: null as THREE.Texture | null },
+  uCobbleC: { value: null as THREE.Texture | null }, uCobbleN: { value: null as THREE.Texture | null },
   uStoneC: { value: null as THREE.Texture | null }, uStoneN: { value: null as THREE.Texture | null },
   uWaterY: { value: -7.5 },
   uWet: { value: 0 },      // 1 = rain-wet streets (?wet=1): glossy asphalt, puddles; at night roads are always a little damp
@@ -36,10 +37,11 @@ export function loadGroundDetail(): Promise<void> {
     tex('Grass004_color', true), tex('Grass004_normal', false),
     tex('Gravel043_color', true), tex('Gravel043_normal', false),
     tex('plastered_stone_wall_color', true), tex('plastered_stone_wall_normal', false),
-  ]).then(([ac, an, pc, pn, gc, gn, vc, vn, sc, sn]) => {
+    tex('cobblestone_floor_08_color', true), tex('cobblestone_floor_08_normal', false),
+  ]).then(([ac, an, pc, pn, gc, gn, vc, vn, sc, sn, cc, cn]) => {
     shared.uAsphaltC.value = ac; shared.uAsphaltN.value = an; shared.uPavingC.value = pc; shared.uPavingN.value = pn;
     shared.uGrassC.value = gc; shared.uGrassN.value = gn; shared.uGravelC.value = vc; shared.uGravelN.value = vn;
-    shared.uStoneC.value = sc; shared.uStoneN.value = sn; shared.uHasDetail.value = 1;
+    shared.uStoneC.value = sc; shared.uStoneN.value = sn; shared.uCobbleC.value = cc; shared.uCobbleN.value = cn; shared.uHasDetail.value = 1;
   }).catch(e => console.warn('ground detail textures missing', e));
   return detailPromise;
 }
@@ -86,10 +88,11 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
         #endif
         uniform sampler2D uMask; uniform float uHasMask; uniform sampler2D uOverview; uniform float uHasOverview; uniform float uHasTile; uniform float uHasDetail;
         uniform sampler2D uAsphaltC, uAsphaltN, uPavingC, uPavingN, uGrassC, uGrassN, uGravelC, uGravelN, uStoneC, uStoneN;
-        uniform float uWaterY; uniform float uNight; uniform float uWet;
+        uniform float uWaterY; uniform float uNight; uniform float uWet; uniform sampler2D uCobbleC; uniform sampler2D uCobbleN;
         float ghash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float gnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(ghash(i), ghash(i + vec2(1.0, 0.0)), f.x), mix(ghash(i + vec2(0.0, 1.0)), ghash(i + vec2(1.0, 1.0)), f.x), f.y); }
         vec4 gWeights;    // road, gravel, paving, grass
+        float gPave;      // sett / cobbles (part of the carriageway)
         float gStone;     // steep slope blend
         float gFade;      // detail fade with distance
         vec3 gDetailN;    // tangent-space detail normal (xy in ground plane)
@@ -103,9 +106,14 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
           if (uHasOverview > 0.5) albedo = texture2D(uOverview, vUvOv).rgb;
         #endif
         vec4 m = uHasMask > 0.5 ? texture2D(uMask, vUvG) : vec4(0.0);
-        float r = m.r; float a = m.a * (1.0 - r); float g = m.g * (1.0 - r - a); float b = m.b * (1.0 - r - a - g);
+        // A carries two classes: ~0.38 = gravel path (never on a carriageway), 1.0 = pavé (sett / cobbles, which also carry R)
+        float pave = smoothstep(0.55, 0.75, m.a) * m.r;
+        float gravel = clamp(m.a * 2.6, 0.0, 1.0) * (1.0 - smoothstep(0.45, 0.6, m.a)) * (1.0 - m.r);
+        float r = m.r - pave; float a = gravel; float g = m.g * (1.0 - m.r - a); float b = m.b * (1.0 - m.r - a - g);
+        gPave = pave;
         #ifdef STREET_SLAB
           // slab tops are paving whatever the painted mask says; kerb faces are plain granite
+          gPave = 0.0;
           if (vSFlag > 0.5) { albedo = mix(albedo, vec3(0.36, 0.36, 0.35), 0.85); r = 0.0; a = 0.0; g = 1.0; b = 0.0; }
           else {
             // the photo under a sidewalk is mostly tree crowns and building shadow: pull it toward pavement grey
@@ -115,7 +123,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
         #endif
         gWeights = vec4(r, a, g, b);
         float dist = length(vViewPosition);
-        gFade = 1.0 - smoothstep(35.0, 140.0, dist);
+        gFade = 1.0 - smoothstep(80.0, 300.0, dist);
         // Near the viewer the photo's own zebra stripes, lane paint and parked cars would double up with the marking
         // decals and the moving traffic: blur the carriageway (mip bias) within ~80 m.
         #ifdef USE_MAP
@@ -126,18 +134,25 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
         gDetailN = vec3(0.0, 0.0, 1.0);
         gRough = 0.9;
         if (uHasDetail > 0.5 && gFade > 0.001) {
-          vec3 nA = texture2D(uAsphaltN, wxz / 2.5).xyz * 2.0 - 1.0;
-          vec3 nP = texture2D(uPavingN, wxz / 1.6).xyz * 2.0 - 1.0;
+          // two samples per set at unrelated scales, picked by an 11 m noise: no visible 2 m repeat on the big squares
+          float macro = smoothstep(0.35, 0.65, gnoise(wxz / 11.0));
+          vec2 uvA1 = wxz / 2.5, uvA2 = wxz * 0.29 + 7.3, uvP1 = wxz / 1.6, uvP2 = wxz * 0.47 + 3.1, uvC = wxz / 1.9;
+          vec3 nA = mix(texture2D(uAsphaltN, uvA1).xyz, texture2D(uAsphaltN, uvA2).xyz, macro) * 2.0 - 1.0;
+          vec3 nP = mix(texture2D(uPavingN, uvP1).xyz, texture2D(uPavingN, uvP2).xyz, macro) * 2.0 - 1.0;
           vec3 nG = texture2D(uGrassN, wxz / 1.4).xyz * 2.0 - 1.0;
           vec3 nV = texture2D(uGravelN, wxz / 1.1).xyz * 2.0 - 1.0;
-          float rest = max(0.0, 1.0 - r - a - g - b);
-          vec3 n = nA * r + nV * a + nP * g + nG * b + nP * rest * 0.5;
+          vec3 nC = texture2D(uCobbleN, uvC).xyz * 2.0 - 1.0;
+          float rest = max(0.0, 1.0 - r - a - g - b - gPave);
+          vec3 n = nA * r + nV * a + nP * g + nG * b + nC * gPave * 1.3 + nP * rest * 0.5;
           gDetailN = normalize(vec3(n.xy * 0.9, max(0.3, n.z)));
-          float cA = texture2D(uAsphaltC, wxz / 2.5).g, cP = texture2D(uPavingC, wxz / 1.6).g, cG = texture2D(uGrassC, wxz / 1.4).g, cV = texture2D(uGravelC, wxz / 1.1).g;
-          float luma = cA * r + cV * a + cP * g + cG * b + 0.5 * rest;
-          // Micro-contrast from the detail colour, fading with distance.
+          float cA = mix(texture2D(uAsphaltC, uvA1).g, texture2D(uAsphaltC, uvA2).g, macro), cP = mix(texture2D(uPavingC, uvP1).g, texture2D(uPavingC, uvP2).g, macro);
+          float cG = texture2D(uGrassC, wxz / 1.4).g, cV = texture2D(uGravelC, wxz / 1.1).g;
+          vec3 cobble = texture2D(uCobbleC, uvC).rgb;
+          float luma = cA * r + cV * a + cP * g + cG * b + dot(cobble, vec3(0.333)) * gPave + 0.5 * rest;
+          // Micro-contrast from the detail colour, fading with distance; pavé shows its own stones (the photo is plain grey there)
           albedo *= 1.0 + (luma - 0.5) * 0.35 * gFade;
-          gRough = 0.86 * r + 0.92 * a + 0.72 * g + 0.95 * b + 0.85 * rest;
+          albedo = mix(albedo, cobble * vec3(0.92, 0.90, 0.87), gPave * 0.65 * gFade);
+          gRough = 0.86 * r + 0.92 * a + 0.72 * g + 0.95 * b + 0.80 * gPave + 0.85 * rest;
           // Steep faces (quay walls, embankments): the ortho is smeared there, use stone instead.
           if (gStone > 0.001) {
             vec2 suv = vec2(vWorldPosG.x + vWorldPosG.z, vWorldPosG.y) / 2.2;
@@ -182,7 +197,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
         }`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, gRough, uHasDetail);')
       // kerb faces sit in the slab's own shadow most of the day: a little ambient lift keeps them readable stone grey
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef STREET_SLAB\nif (vSFlag > 0.5) totalEmissiveRadiance += diffuseColor.rgb * 0.2;\n#endif');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef STREET_SLAB\nif (vSFlag > 0.5) totalEmissiveRadiance += diffuseColor.rgb * 0.08;\n#endif');
   };
   withLamps(mat);
   mat.setTile = t => { mat.map = t; own.uHasTile.value = t ? 1 : 0; mat.needsUpdate = true; };

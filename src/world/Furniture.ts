@@ -19,6 +19,8 @@ export class Furniture {
   private readonly uniforms = { uNight: { value: 0 } };
   private lanternMat!: THREE.MeshStandardMaterial;
   private poolMat!: THREE.ShaderMaterial;
+  /** Wallace / drinking fountains (x, y, z) for the soundscape */
+  fountainPositions = new Float32Array(0);
   /** xyz per street lamp at lantern height (for LocalLights). */
   lampPositions = new Float32Array(0);
   private glare: THREE.Points | null = null;
@@ -88,6 +90,24 @@ export class Furniture {
     if (bollards.length) place(new THREE.CylinderGeometry(0.09, 0.11, 1.0, 8).translate(0, 0.5, 0), metal, bollards);
     const columns = byKind.get(FurnitureKind.MorrisColumn) ?? [];
     if (columns.length) place(morris(), withLamps(new THREE.MeshStandardMaterial({ color: 0x22402e, roughness: 0.7 })), columns);
+    // ---- OSM street objects (points theme): Wallace fountains, métro entrances, bus shelters, bike racks, bins, flagpoles
+    const parisGreen = withLamps(new THREE.MeshStandardMaterial({ color: 0x1f4a2a, roughness: 0.6, metalness: 0.3 }));
+    const fountains = byKind.get(FurnitureKind.Fountain) ?? [];
+    if (fountains.length) {
+      place(wallace(), parisGreen, fountains);
+      this.fountainPositions = new Float32Array(fountains.length * 3);
+      fountains.forEach((k, n) => { const b = k * FURNITURE_STRIDE; this.fountainPositions.set([data[b], data[b + 1] + 1.2, data[b + 2]], n * 3); });
+    }
+    const entrances = byKind.get(FurnitureKind.SubwayEntrance) ?? [];
+    if (entrances.length) place(metroEntrance(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.25 })), entrances);
+    const stops = byKind.get(FurnitureKind.BusStop) ?? [];
+    if (stops.length) place(busShelter(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.5 })), stops);
+    const racks = byKind.get(FurnitureKind.BikeRack) ?? [];
+    if (racks.length) place(bikeRack(), metal, racks);
+    const bins = byKind.get(FurnitureKind.WasteBasket) ?? [];
+    if (bins.length) place(wasteBasket(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 })), bins);
+    const poles = byKind.get(FurnitureKind.Flagpole) ?? [];
+    if (poles.length) place(flagpole(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide })), poles, { shadow: false });
 
     // ---- people: one instanced mesh with the same limb-tagged geometry/material as the walking crowd (idle sway only)
     const peopleIdx: number[] = [];
@@ -103,7 +123,7 @@ export class Furniture {
 
     // ---- parked cars: Kenney CC0 kit merged per variant (body tinted per instance, wheels untouched, lights off)
     const kit = await loadCarKit(CAR_VARIANTS);
-    const carMat = makeCarMaterial({ uLights: { value: 0 } });
+    const carMat = makeCarMaterial({ uLights: { value: 0 }, uTime: { value: 0 } });
     CAR_VARIANTS.forEach((name, v) => {
       const idx = byKind.get(FurnitureKind.Car + v) ?? [];
       if (!idx.length) return;
@@ -158,6 +178,81 @@ function fallbackCar(): THREE.BufferGeometry {
   const n = g.attributes.position.count; const col = new Float32Array(n * 3).fill(1);
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
+}
+
+/** Paint a whole geometry one colour (vertex colours, so several parts can share a material). */
+function tint(g: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
+  const c = new THREE.Color(hex), n = g.attributes.position.count, arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+
+/** Wallace fountain, 2.7 m: octagonal base, pedestal, four caryatid columns, dome and finial (dark green cast iron). */
+function wallace(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [
+    new THREE.CylinderGeometry(0.62, 0.7, 0.18, 8).translate(0, 0.09, 0),
+    new THREE.CylinderGeometry(0.34, 0.42, 0.85, 8).translate(0, 0.6, 0),
+    new THREE.CylinderGeometry(0.5, 0.36, 0.14, 8).translate(0, 1.1, 0),
+  ];
+  for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + Math.PI / 4; parts.push(new THREE.CapsuleGeometry(0.075, 0.75, 3, 8).translate(Math.cos(a) * 0.24, 1.6, Math.sin(a) * 0.24)); }
+  parts.push(new THREE.SphereGeometry(0.4, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 2.05, 0));
+  parts.push(new THREE.ConeGeometry(0.1, 0.3, 8).translate(0, 2.55, 0));
+  return mergeGeometries(parts, false)!;
+}
+
+/** Métro entrance in the Guimard spirit: two flared green posts, a red "MÉTROPOLITAIN" plate, railings round the stair. */
+function metroEntrance(): THREE.BufferGeometry {
+  const green = 0x2f5a3a, red = 0x8a1a1a, cream = 0xe8dcb0;
+  const parts: THREE.BufferGeometry[] = [];
+  for (const sx of [-1, 1]) {
+    parts.push(tint(new THREE.CylinderGeometry(0.05, 0.09, 2.9, 8).translate(sx * 1.05, 1.45, 0), green));
+    parts.push(tint(new THREE.SphereGeometry(0.16, 8, 6).translate(sx * 1.05, 2.95, 0), cream));   // the lamps
+    parts.push(tint(new THREE.BoxGeometry(0.06, 0.9, 5.5).translate(sx * 1.1, 0.45, 2.9), green));   // stair railings
+  }
+  parts.push(tint(new THREE.BoxGeometry(2.4, 0.5, 0.06).translate(0, 2.45, 0), red));
+  parts.push(tint(new THREE.BoxGeometry(2.2, 0.3, 0.02).translate(0, 2.45, 0.04), cream));
+  return mergeGeometries(parts, false)!;
+}
+
+/** Bus shelter: four posts, a shallow roof, a glass back panel with an advertising board. */
+function busShelter(): THREE.BufferGeometry {
+  const grey = 0x555a5e, glass = 0x9fb4c4, ad = 0xd9d0c0;
+  const parts: THREE.BufferGeometry[] = [];
+  for (const sx of [-1.8, 1.8]) for (const sz of [-0.7, 0.7]) parts.push(tint(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 8).translate(sx, 1.3, sz), grey));
+  parts.push(tint(new THREE.BoxGeometry(4.0, 0.12, 1.7).translate(0, 2.62, 0), grey));
+  parts.push(tint(new THREE.BoxGeometry(3.6, 2.2, 0.03).translate(0, 1.35, 0.7), glass));
+  parts.push(tint(new THREE.BoxGeometry(1.2, 1.7, 0.06).translate(1.15, 1.3, 0.72), ad));
+  parts.push(tint(new THREE.BoxGeometry(1.4, 0.05, 0.4).translate(-0.9, 0.5, 0.45), grey));   // bench
+  return mergeGeometries(parts, false)!;
+}
+
+/** Three Sheffield hoops (arceaux) in a row. */
+function bikeRack(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let k = -1; k <= 1; k++) {
+    const x = k * 1.0;
+    parts.push(new THREE.CylinderGeometry(0.025, 0.025, 0.8, 6).translate(x, 0.4, -0.35), new THREE.CylinderGeometry(0.025, 0.025, 0.8, 6).translate(x, 0.4, 0.35));
+    parts.push(new THREE.CylinderGeometry(0.025, 0.025, 0.7, 6).rotateX(Math.PI / 2).translate(x, 0.8, 0));
+  }
+  return mergeGeometries(parts, false)!;
+}
+
+/** Paris litter bin: a post with a green hoop holding a translucent bag (drawn as a grey cylinder). */
+function wasteBasket(): THREE.BufferGeometry {
+  return mergeGeometries([
+    tint(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6).translate(0.25, 0.55, 0), 0x2f5a3a),
+    tint(new THREE.TorusGeometry(0.22, 0.02, 6, 16).rotateX(Math.PI / 2).translate(0, 1.0, 0), 0x2f5a3a),
+    tint(new THREE.CylinderGeometry(0.2, 0.14, 0.75, 10).translate(0, 0.62, 0), 0x8f9296),
+  ], false)!;
+}
+
+/** 9 m flagpole with a tricolore (blue at the hoist). */
+function flagpole(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [tint(new THREE.CylinderGeometry(0.04, 0.07, 9, 8).translate(0, 4.5, 0), 0xe8e8e8), tint(new THREE.SphereGeometry(0.08, 8, 6).translate(0, 9.05, 0), 0xd4b25a)];
+  const cols = [0x1f3a8a, 0xf2f2f2, 0xc8102e];
+  for (let k = 0; k < 3; k++) parts.push(tint(new THREE.PlaneGeometry(0.6, 1.2).translate(0.3 + k * 0.6, 8.2, 0), cols[k]));
+  return mergeGeometries(parts, false)!;
 }
 
 /** One additive point per lantern: the soft glare a bright lamp leaves on the eye / camera at night. */

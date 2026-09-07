@@ -19,6 +19,7 @@ export const lampUniforms = {
   uLampCol: { value: new Float32Array(LAMP_N * 4) },   // rgb linear radiance scale, w unused
   uLampDir: { value: new Float32Array(LAMP_N * 4).fill(-2) },   // spot direction (world) + cos half-angle; w = -2 for point lights
   uLampNight: { value: 0 },
+  uLampCount: { value: LAMP_N },   // dynamic bound: keeps ANGLE/HLSL from unrolling the loop 48x at compile time
 };
 
 export type LightKind = 'lamp' | 'shop' | 'restaurant' | 'tower' | 'dynamic';
@@ -42,12 +43,13 @@ uniform vec4 uLampPos[LAMP_N];
 uniform vec4 uLampCol[LAMP_N];
 uniform vec4 uLampDir[LAMP_N];
 uniform float uLampNight;
+uniform int uLampCount;
 varying vec3 vWorldPosL;
 `;
 const FRAG_LOOP = /* glsl */`
 #if defined( RE_Direct )
 if (uLampNight > 0.001) {
-  for (int i = 0; i < LAMP_N; i++) {
+  for (int i = 0; i < uLampCount; i++) {
     vec4 lp = uLampPos[i];
     if (lp.w <= 0.0) continue;
     vec3 Lw = lp.xyz - vWorldPosL;
@@ -108,7 +110,7 @@ export function withLamps<T extends THREE.Material>(mat: T): T {
   };
   const prevKey = mat.customProgramCacheKey;
   const isDefault = prevKey === THREE.Material.prototype.customProgramCacheKey;
-  mat.customProgramCacheKey = () => `${isDefault ? mat.type : prevKey.call(mat)}:lamps2`;
+  mat.customProgramCacheKey = () => `${isDefault ? mat.type : prevKey.call(mat)}:lamps3`;
   return mat;
 }
 
@@ -141,6 +143,13 @@ export class LocalLights {
     const list: LocalLight[] = [];
     for (let i = 0; i < xyz.length / 3; i++) list.push(lampLight(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]));
     this.addLights('lamps', list);
+  }
+  /** The n nearest registered lights of a kind (café terraces for the soundscape). */
+  nearestOfKind(kind: LightKind, x: number, z: number, n: number): LocalLight[] {
+    const ci = Math.floor(x / this.cell), cj = Math.floor(z / this.cell);
+    const cand: { d2: number; l: LocalLight }[] = [];
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const i of this.grid.get(this.key(ci + di, cj + dj)) ?? []) { const l = this.all[i]; if (l.kind === kind) cand.push({ d2: (l.x - x) ** 2 + (l.z - z) ** 2, l }); }
+    return cand.sort((a, b) => a.d2 - b.d2).slice(0, n).map(c => c.l);
   }
   /** Lights rewritten every frame (headlights, boats); at most DYN_N are used. */
   setDynamic(list: LocalLight[]) { this.dynamic = list; }

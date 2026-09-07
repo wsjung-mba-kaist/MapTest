@@ -31,7 +31,7 @@ export function carColor(seed: number, variant: number): number {
   return PAINT[0].hex;
 }
 
-function tagged(g: THREE.BufferGeometry, body: Float32Array | number, emit: number): THREE.BufferGeometry {
+function tagged(g: THREE.BufferGeometry, body: Float32Array | number, emit: number, axle: [number, number, number] | null = null): THREE.BufferGeometry {
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', g.attributes.position);
   out.setAttribute('normal', g.attributes.normal ?? g.attributes.position);
@@ -39,6 +39,9 @@ function tagged(g: THREE.BufferGeometry, body: Float32Array | number, emit: numb
   const n = g.attributes.position.count;
   out.setAttribute('aBody', new THREE.BufferAttribute(typeof body === 'number' ? new Float32Array(n).fill(body) : body, 1));
   out.setAttribute('aEmit', new THREE.BufferAttribute(new Float32Array(n).fill(emit), 1));
+  // wheels: axle centre (y, z) and radius so the vertex shader can spin them about x
+  const ax = new Float32Array(n * 3); if (axle) for (let i = 0; i < n; i++) { ax[i * 3] = axle[0]; ax[i * 3 + 1] = axle[1]; ax[i * 3 + 2] = axle[2]; }
+  out.setAttribute('aAxle', new THREE.BufferAttribute(ax, 3));
   if (g.index) out.setIndex(g.index);
   if (!g.attributes.normal) out.computeVertexNormals();
   return out;
@@ -133,7 +136,9 @@ export async function loadCarModel(name: string, targetLength: number): Promise<
     const g = mesh.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(fix, mesh.matrixWorld));
     const nm = (mesh.name || '').toLowerCase();
     const isWheel = /wheel|tire/.test(nm);
-    parts.push(tagged(g, isWheel || !texture ? 0 : paintMask(g, texture), 0));
+    let axle: [number, number, number] | null = null;
+    if (isWheel) { g.computeBoundingBox(); const bb = g.boundingBox!; axle = [(bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2, Math.max(0.15, (bb.max.y - bb.min.y) / 2)]; }
+    parts.push(tagged(g, isWheel || !texture ? 0 : paintMask(g, texture), 0, axle));
   });
   const merged0 = mergeGeometries(parts, false)!;
   merged0.computeBoundingBox();
@@ -166,28 +171,40 @@ export function carTexture() { return texture; }
  * slightly metallic), head / tail lights emissive at night. three's own instance-colour multiply (`vColor`) is
  * bypassed: `color_fragment` is replaced, not appended, so the texture keeps its colours outside the paint.
  */
-export function makeCarMaterial(uniforms: { uLights: { value: number } }): THREE.MeshStandardMaterial {
+export function makeCarMaterial(uniforms: { uLights: { value: number }; uTime: { value: number } }): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.55, metalness: 0.12 });
-  mat.customProgramCacheKey = () => 'carkit-v3';
+  mat.customProgramCacheKey = () => 'carkit-v4';
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aBody; attribute float aEmit; varying float vEmit; varying float vBody; varying vec3 vPaint;')
+      .replace('#include <common>', '#include <common>\nattribute float aBody; attribute float aEmit; attribute vec3 aAxle; attribute vec3 aState; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;')
+      // wheels spin about their axle by odometer / radius (aState.z); the car faces -z, so forward is a negative angle
+      .replace('#include <beginnormal_vertex>', /* glsl */`#include <beginnormal_vertex>
+        if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); objectNormal.yz = vec2(c * objectNormal.y - s * objectNormal.z, s * objectNormal.y + c * objectNormal.z); }`)
+      .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
+        if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); vec2 d = transformed.yz - aAxle.xy; transformed.yz = aAxle.xy + vec2(c * d.x - s * d.y, s * d.x + c * d.y); }`)
       .replace('#include <color_vertex>', /* glsl */`#include <color_vertex>
-        vEmit = aEmit; vBody = aBody;
+        vEmit = aEmit; vBody = aBody; vState = aState; vSide = position.x;
         vPaint = vec3(0.85);
         #ifdef USE_INSTANCING_COLOR
           vPaint = instanceColor.xyz;
         #endif`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uLights; varying float vEmit; varying float vBody; varying vec3 vPaint;')
+      .replace('#include <common>', '#include <common>\nuniform float uLights; uniform float uTime; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;')
       .replace('#include <color_fragment>', /* glsl */`
         // paint swatch -> instance colour times the swatch's gradient shade; everything else keeps the palette texture
         if (vBody > 0.01) diffuseColor.rgb = vPaint * vBody;
         if (vEmit > 0.5) diffuseColor.rgb = vEmit > 1.5 ? vec3(0.5, 0.05, 0.03) : vec3(0.9, 0.9, 0.85);`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vBody > 0.01 ? 0.3 : roughness;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vBody > 0.01 ? 0.5 : metalness;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uLights * (vEmit > 1.5 ? vec3(1.0, 0.08, 0.04) * 3.5 : vEmit > 0.5 ? vec3(1.0, 0.95, 0.8) * 9.0 : vec3(0.0));');
+      // tail discs: night glow + brake (day too); indicator: the disc on the turning side blinks amber at 1.25 Hz
+      .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
+        if (vEmit > 0.5) {
+          float blink = step(0.5, fract(uTime * 1.25));
+          float ind = (abs(vState.y) > 0.5 && vSide * vState.y > 0.0) ? blink : 0.0;
+          vec3 amber = vec3(1.0, 0.45, 0.05);
+          totalEmissiveRadiance += vEmit > 1.5 ? vec3(1.0, 0.08, 0.04) * (uLights * 3.5 + vState.x * 5.0) + amber * ind * 6.0 : vec3(1.0, 0.95, 0.8) * uLights * 9.0 + amber * ind * 4.0;
+        }`);
   };
   withLamps(mat);
   return mat;

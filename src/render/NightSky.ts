@@ -11,6 +11,52 @@ import { ORIGIN } from '../../shared/geo';
 export const NIGHT_SKY_DECL = /* glsl */`
 uniform sampler2D uStars; uniform mat3 uStarMat; uniform float uLST; uniform vec3 uMoonDir; uniform float uMoonOn; uniform float uMoonLit; uniform float uStarsOn; uniform float uTimeSky; uniform vec3 uGlow;`;
 
+/** Cloud layer: value-noise fbm on a plane 1.5 km up, drifting with `uTimeSky`; `uCloud` is the coverage (0..1).
+ *  (three's Sky has its own `cloudDensity` uniform and helpers since r185, hence the `city`/`c` prefixes; the built-in layer is switched off.) */
+export const CLOUD_DECL = /* glsl */`
+uniform float uCloud;
+float cHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float cNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(cHash(i), cHash(i + vec2(1.0, 0.0)), f.x), mix(cHash(i + vec2(0.0, 1.0)), cHash(i + vec2(1.0, 1.0)), f.x), f.y); }
+float cFbm(vec2 p) { float a = 0.5, s = 0.0; for (int k = 0; k < 4; k++) { s += a * cNoise(p); p = p * 2.03 + vec2(17.3, 9.1); a *= 0.5; } return s; }
+float cityCloud(vec2 metres, float cover, float t) {
+  vec2 uv = metres / 6000.0 + vec2(t * 0.004, t * 0.0015);
+  float n = cFbm(uv * 2.0) * 0.7 + cFbm(uv * 7.0) * 0.3;
+  float lo = 0.78 - 0.6 * cover;          // fbm sits in ~0.2..0.8: cover 0.3 leaves a third of the sky in cloud
+  return smoothstep(lo, lo + 0.25, n);
+}`;
+
+/** GLSL computing `vec3 cloudCol` (daylight radiance, pre-uDim) and `float cloudA`; inserted before NIGHT_SKY_BODY. */
+export const CLOUD_BODY = /* glsl */`
+vec3 cloudCol = vec3(0.0); float cloudA = 0.0;
+if (uCloud > 0.001 && direction.y > 0.0) {
+  float t = 1500.0 / max(direction.y, 0.03);
+  float d = cityCloud(direction.xz * t, uCloud, uTimeSky);
+  cloudA = d * smoothstep(0.02, 0.18, direction.y) * 0.96;
+  float forward = pow(max(dot(direction, vSunDirection), 0.0), 6.0);
+  // tops and thin edges white (silver lining toward the sun), thick undersides grey-blue; scaled by the sky's own brightness
+  float skyL = clamp(dot(texColor, vec3(0.3, 0.59, 0.11)), 0.05, 2.0);
+  vec3 lit = vec3(1.0, 0.98, 0.95) * (1.1 + 0.8 * forward);
+  vec3 shade = vec3(0.52, 0.56, 0.64);
+  cloudCol = mix(lit, shade, smoothstep(0.15, 0.85, d)) * skyL * 1.4;
+}`;
+
+/** JS twin of `cloudDensity` for the sun's cloud shadow (same constants, same noise). */
+export function cloudDensityJs(mx: number, mz: number, cover: number, t: number): number {
+  const fract = (v: number) => v - Math.floor(v);
+  const hash = (x: number, y: number) => fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453);
+  const noise = (x: number, y: number) => {
+    const ix = Math.floor(x), iy = Math.floor(y); let fx = x - ix, fy = y - iy; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    const a = hash(ix, iy), b = hash(ix + 1, iy), c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+    return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy;
+  };
+  const fbm = (x: number, y: number) => { let a = 0.5, s = 0, px = x, py = y; for (let k = 0; k < 4; k++) { s += a * noise(px, py); px = px * 2.03 + 17.3; py = py * 2.03 + 9.1; a *= 0.5; } return s; };
+  const ux = mx / 6000 + t * 0.004, uy = mz / 6000 + t * 0.0015;
+  const n = fbm(ux * 2, uy * 2) * 0.7 + fbm(ux * 7, uy * 7) * 0.3;
+  const lo = 0.78 - 0.6 * cover;
+  const s = Math.min(1, Math.max(0, (n - lo) / 0.25));
+  return s * s * (3 - 2 * s);
+}
+
 /** GLSL computing `vec3 nightExtra` from `direction`, `vSunDirection`, `uDim`; inserted before the final colour. */
 export const NIGHT_SKY_BODY = /* glsl */`
 vec3 nightExtra = vec3(0.0);
@@ -29,11 +75,13 @@ vec3 nightExtra = vec3(0.0);
     float yy = max(direction.y, 0.0);
     float sg = (0.22 * exp(-3.0 * yy) + 0.55 * exp(-12.0 * yy)) * mix(0.5, 1.0, smoothstep(-0.25, 0.0, direction.y));
     nightExtra += uGlow * sg * toward * nightAmt;
+    // low cloud throws the city's light back down
+    nightExtra += uGlow * 2.5 * cloudA * nightAmt;
     // stars: only the bright ones survive the glow, and none near the horizon
     float horizonFade = smoothstep(0.10, 0.35, direction.y) * (1.0 - clamp(sg * 0.9, 0.0, 1.0));
     vec3 stars = texture2D(uStars, suv).rgb;
     float twinkle = 0.85 + 0.15 * sin(uTimeSky * 3.0 + suv.x * 400.0 + suv.y * 230.0);
-    nightExtra += stars * (0.4 * nightAmt * horizonFade * uStarsOn * twinkle);
+    nightExtra += stars * (0.4 * nightAmt * horizonFade * uStarsOn * twinkle) * (1.0 - cloudA);
   }
   // moon disc with phase (lit side toward the sun) and a soft halo
   float cosM = dot(direction, uMoonDir);
@@ -46,9 +94,9 @@ vec3 nightExtra = vec3(0.0);
     float lit = smoothstep(-0.08, 0.12, dot(sphereN, vSunDirection));
     float disc = 1.0 - smoothstep(R * 0.92, R * 1.05, ang);
     vec3 moonCol = vec3(1.0, 0.98, 0.9) * (0.75 * lit + 0.02);
-    nightExtra += moonCol * disc * mix(0.15, 1.0, 1.0 - uDim);
+    nightExtra += moonCol * disc * mix(0.15, 1.0, 1.0 - uDim) * (1.0 - cloudA);
     float halo = 0.02 * exp(-ang / 0.02) * (1.0 - uDim) * (0.3 + 0.7 * uMoonLit);
-    nightExtra += vec3(0.9, 0.92, 1.0) * halo * (1.0 - disc);
+    nightExtra += vec3(0.9, 0.92, 1.0) * halo * (1.0 - disc) * (1.0 - 0.6 * cloudA);
   }
 }`;
 

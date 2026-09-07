@@ -48,7 +48,7 @@ export const TREE_STRIDE = 7;
 export const FURNITURE_STRIDE = 6;
 
 export enum TreeSpecies { Platanus = 0, Tilia = 1, Aesculus = 2, Sophora = 3, Acer = 4, Celtis = 5, Other = 6 }
-export enum FurnitureKind { StreetLamp = 0, Bench = 1, Bollard = 2, MorrisColumn = 3, Fountain = 4, Car = 10, Person = 20 }
+export enum FurnitureKind { StreetLamp = 0, Bench = 1, Bollard = 2, MorrisColumn = 3, Fountain = 4, SubwayEntrance = 5, BusStop = 6, BikeRack = 7, WasteBasket = 8, Flagpole = 9, Car = 10, Person = 20 }
 
 /** Roof furniture rows in details/{i}_{j}.bin (Float32): x, y, z (world), yaw, kind, sx, sy, sz, seed */
 export const DETAIL_STRIDE = 9;

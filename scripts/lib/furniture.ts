@@ -66,6 +66,13 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
       else if (t.amenity === 'bench') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.Bench)) fromOsm++; }
       else if (t.barrier === 'bollard') { if (place(w.x, w.z, 0, FurnitureKind.Bollard, 0.9)) fromOsm++; }
       else if (t.advertising === 'column') { if (place(w.x, w.z, 0, FurnitureKind.MorrisColumn)) fromOsm++; }
+      // Wallace fountains and the small drinking fountains share one mesh (the big basins are water polygons)
+      else if (t.amenity === 'drinking_water' || (t.amenity === 'fountain' && t.fountain !== 'roundabout')) { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.Fountain, t.amenity === 'fountain' ? 1.15 : 1)) fromOsm++; }
+      else if (t.railway === 'subway_entrance') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.SubwayEntrance)) fromOsm++; }
+      else if (t.highway === 'bus_stop' || t.amenity === 'shelter') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.BusStop)) fromOsm++; }
+      else if (t.amenity === 'bicycle_parking' || t.amenity === 'bicycle_rental') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.BikeRack, t.amenity === 'bicycle_rental' ? 1.6 : 1)) fromOsm++; }
+      else if (t.amenity === 'waste_basket') { if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.WasteBasket)) fromOsm++; }
+      else if (t.man_made === 'flagpole') { if (place(w.x, w.z, 0, FurnitureKind.Flagpole)) fromOsm++; }
     }
   }
 

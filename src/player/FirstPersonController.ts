@@ -28,6 +28,9 @@ export class FirstPersonController {
   grounded = true;
   /** called once per footstep with the speed fraction (0..1) */
   onStep: ((strength: number) => void) | null = null;
+  /** moving obstacles (people, cars): accumulates a horizontal push-out for the capsule's footprint */
+  obstacles: ((x: number, z: number, r: number, out: { dx: number; dz: number }) => void) | null = null;
+  private readonly push = { dx: 0, dz: 0 };
 
   constructor(private readonly camera: THREE.PerspectiveCamera, private readonly input: Input, private readonly heightmap: Heightmap, private readonly collision: Collision) {}
 
@@ -107,6 +110,12 @@ export class FirstPersonController {
       if (correction.lengthSq() < 1e-10) break;
       p.x += correction.x; p.z += correction.z;
       if (correction.y > 0.02) p.y += correction.y * 0.5;
+    }
+    if (this.obstacles) {
+      this.push.dx = 0; this.push.dz = 0;
+      this.obstacles(p.x, p.z, RADIUS, this.push);
+      const pl = Math.hypot(this.push.dx, this.push.dz);
+      if (pl > 1e-4) { const k = Math.min(pl, 0.35) / pl; p.x += this.push.dx * k; p.z += this.push.dz * k; const into = (this.vel.x * this.push.dx + this.vel.z * this.push.dz) / pl; if (into < 0) { this.vel.x -= this.push.dx / pl * into; this.vel.z -= this.push.dz / pl * into; } }
     }
     // Remove velocity into walls so we slide.
     if (correction.lengthSq() > 1e-10) {

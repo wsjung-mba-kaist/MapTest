@@ -10,6 +10,7 @@ import type { Signals } from './Signals';
 import type { FarTraffic } from './FarTraffic';
 import type { LocalLight } from '../../render/LocalLights';
 import { activity } from '../../../shared/nightlife';
+import { buildCrossings } from '../../../shared/crossings';
 
 /**
  * The moving city: owns the path graph, the simulation clock and the crowd / traffic / boat layers, and keeps
@@ -37,7 +38,8 @@ export class Life {
 
   constructor() { this.group.name = 'life'; }
 
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
+  crossingStats = '';
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
     await this.graph.load();
     this.debugOn = !!opts.debug;
     if (opts.crowd) { const { Crowd } = await import('./Crowd'); this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
@@ -45,7 +47,16 @@ export class Life {
     if (opts.boats) { const { Boats } = await import('./Boats'); this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
     if (opts.signals !== false) { const { Signals } = await import('./Signals'); this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
     if (opts.traffic && opts.farTraffic !== false) { const { FarTraffic } = await import('./FarTraffic'); this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
+    if (opts.crossings !== false && this.crowd) {
+      const table = buildCrossings(this.graph);
+      this.crowd.setCrossings(table);
+      this.traffic?.setCrossings(table, this.crowd.crossOcc);
+      this.crossingStats = `crossings ${table.count} (${table.signalled} signalled)`;
+    }
   }
+
+  /** Player collision with people and cars: total push-out for a circle (x, z, r). */
+  pushOut(x: number, z: number, r: number, out: { dx: number; dz: number }) { this.crowd?.pushOut(x, z, r, out); this.traffic?.pushOut(x, z, r, out); }
 
   /** Dynamic local lights (boat floodlights first, then the nearest cars' headlights); `cars` = 0 disables headlights. */
   dynamicLights(x: number, z: number, cars = 5): LocalLight[] {
@@ -83,7 +94,7 @@ export class Life {
     if (this.crowd) parts.push(`walk ${this.crowd.count}`);
     if (this.traffic) parts.push(`cars ${this.traffic.count}`);
     if (this.boats) parts.push(`boats ${this.boats.count} ${this.boats.stats}`);
-    return `life ${parts.join(' ')} ${this.lastMs.toFixed(2)}ms`;
+    return `life ${parts.join(' ')} ${this.crossingStats} ${this.lastMs.toFixed(2)}ms`;
   }
 
   private rebuildDebug() {

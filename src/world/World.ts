@@ -43,7 +43,7 @@ export class World {
   /** 2 m surface class grid (sidewalk slabs, road, grass...); null when the streets bake has not run */
   surface: SurfaceGrid | null = null;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
-  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, debug: false };
+  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, debug: false };
 
   async load(onProgress: (frac: number, msg: string) => void) {
     onProgress(0.05, 'Loading manifest...');
@@ -59,20 +59,20 @@ export class World {
     this.buildings = new Buildings();
     this.buildings.textureProvider = (i, j) => this.terrain.textureOf(i, j);
     this.buildings.setOverview(this.terrain.overview);
-    this.terrain.onTileChanged = (i, j, tex) => this.buildings.setTile(i, j, tex);
+    this.terrain.onTileChanged = (i, j, tex) => { this.buildings.setTile(i, j, tex); this.bridges?.setTile(i, j, tex); };
     this.terrain.onOverview = tex => { this.buildings.setOverview(tex); this.bridges?.setOverview(tex); };
     this.buildings.start();
     this.group.add(this.buildings.group);
     onProgress(0.6, 'Loading water...');
     try { const w = new Water(); await w.load(); this.water = w; this.group.add(w.group); } catch (e) { console.warn('water layer missing', e); }
-    try { const b = new Bridges(); await b.load(); this.bridges = b; b.setOverview(this.terrain.overview); this.group.add(b.group); } catch (e) { console.warn('bridges missing', e); }
+    try { const b = new Bridges(); await b.load(); this.bridges = b; b.setOverview(this.terrain.overview); b.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(b.group); } catch (e) { console.warn('bridges missing', e); }
     onProgress(0.7, 'Loading the tower...');
     this.eiffel = new Eiffel();
     this.eiffel.kind = this.towerKind;
     await this.eiffel.load();
     this.group.add(this.eiffel.group);
     onProgress(0.75, 'Planting trees...');
-    try { const t = new Trees(); await t.load(this.surface); this.trees = t; this.group.add(t.group); } catch (e) { console.warn('trees missing', e); }
+    try { const t = new Trees(); await t.load(this.surface, (x, z) => this.heightmap.meshY(x, z)); this.trees = t; this.group.add(t.group); } catch (e) { console.warn('trees missing', e); }
     try { const fu = new Furniture(); await fu.load(this.surface); this.furniture = fu; this.group.add(fu.group); } catch (e) { console.warn('furniture missing', e); }
     try { const far = new FarRing(); await far.load(); this.far = far; this.group.add(far.group); } catch (e) { console.warn('far ring missing', e); }
     if (this.marksEnabled) { const mk = new Markings(this.marksDebug); this.marks = mk; this.group.add(mk.group); }

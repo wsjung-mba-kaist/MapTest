@@ -16,6 +16,10 @@ export class Input {
   private gpF = 0; private gpS = 0; private gpSprint = false;
   touchF = 0; touchS = 0; touchV = 0; touchSprint = false;
   private readonly gpPrev = new Map<number, boolean>();
+  /** diagnostics (?status=1): largest single mouse delta since lock, and how many events were discarded as warps */
+  maxDelta = 0;
+  spikes = 0;
+  private lockedAt = 0;
   private readonly onKeyHandlers: ((code: string, e: KeyboardEvent) => void)[] = [];
 
   constructor(private readonly el: HTMLElement) {
@@ -30,11 +34,18 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.el;
+      if (this.locked) { this.lockedAt = performance.now(); this.maxDelta = 0; this.spikes = 0; }
       if (!this.locked) this.keys.clear();
     });
     document.addEventListener('mousemove', e => {
       if (!this.locked) return;
-      this.look(e.movementX * this.sensitivity, e.movementY * this.sensitivity);
+      // Windows Chrome occasionally reports the cursor re-centring warp (hundreds to thousands of px) as movement,
+      // especially with display scaling or several monitors: skip the first events after locking, drop warps, clamp the rest.
+      if (performance.now() - this.lockedAt < 120) return;
+      const dx = e.movementX, dy = e.movementY, m = Math.max(Math.abs(dx), Math.abs(dy));
+      if (m > this.maxDelta) this.maxDelta = m;
+      if (m > 300) { this.spikes++; return; }
+      this.look(Math.max(-120, Math.min(120, dx)) * this.sensitivity, Math.max(-120, Math.min(120, dy)) * this.sensitivity);
     });
   }
 
@@ -52,9 +63,16 @@ export class Input {
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
   }
   lock() {
-    // Newer browsers return a promise that rejects when the gesture is refused (e.g. right after Esc);
-    // the pause overlay then stays up and the next click retries.
-    try { (this.el.requestPointerLock?.() as unknown as Promise<void> | undefined)?.catch?.(() => {}); } catch { /* ignore */ }
+    // Raw (unadjusted) movement bypasses OS pointer acceleration and the warp artefacts that come with it; browsers
+    // without the option reject with NotSupportedError, so fall back to the plain request. Newer browsers return a
+    // promise that rejects when the gesture is refused (e.g. right after Esc); the pause overlay then stays up and
+    // the next click retries.
+    const el = this.el as HTMLElement & { requestPointerLock?: (o?: { unadjustedMovement?: boolean }) => Promise<void> | void };
+    const plain = () => { try { (el.requestPointerLock?.() as Promise<void> | undefined)?.catch?.(() => {}); } catch { /* ignore */ } };
+    try {
+      const p = el.requestPointerLock?.({ unadjustedMovement: true }) as Promise<void> | undefined;
+      if (p && typeof p.catch === 'function') p.catch(() => plain()); 
+    } catch { plain(); }
   }
   unlock() { document.exitPointerLock?.(); }
 

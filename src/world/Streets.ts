@@ -46,7 +46,7 @@ export class Streets {
             const mat = createGroundMaterial({ street: true });
             const mesh = new THREE.Mesh(s.geometry, this.debug ? new THREE.MeshNormalMaterial() : mat);
             mesh.position.set(o.x, 0, o.z); mesh.matrixAutoUpdate = false; mesh.updateMatrix();
-            mesh.receiveShadow = true; mesh.castShadow = false; mesh.renderOrder = 1;
+            mesh.receiveShadow = true; mesh.castShadow = true; mesh.renderOrder = 1;   // kerbs throw their own 14 cm shadow
             mesh.layers.enable(REFLECT_LAYER);
             mesh.name = `streets_${k}`;
             this.group.add(mesh);

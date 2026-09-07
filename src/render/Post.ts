@@ -46,13 +46,15 @@ export class Post {
    * (kept under ~0.9) stay crisp; a touch more vignette; and a higher exposure for the eye's dark adaptation
    * (three feeds `toneMappingExposure` to the composer's AgX pass as well).
    */
-  setNight(n: number) {
+  /** Night grading, plus a daytime exposure that opens up as the sun gets low (a photographer's -1/3 EV at noon, +0 at golden hour). */
+  setNight(n: number, sunElevDeg = 45) {
     const L = THREE.MathUtils.lerp;
     this.bloom.luminanceMaterial.threshold = L(0.92, 0.80, n);
     this.bloom.luminanceMaterial.smoothing = L(0.20, 0.35, n);
     this.bloom.intensity = L(0.32, 0.45, n);
-    this.vignette.darkness = L(0.32, 0.40, n);
-    this.renderer.toneMappingExposure = L(0.8, 1.25, n);
+    this.vignette.darkness = L(0.12, 0.22, n);
+    const dayExposure = L(0.8, 0.95, THREE.MathUtils.smoothstep(30 - sunElevDeg, 0, 25));
+    this.renderer.toneMappingExposure = L(dayExposure, 1.25, n);
   }
 
   setQuality(q: Quality) {

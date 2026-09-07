@@ -4,6 +4,7 @@ import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
 import { EdgeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
+import { pedestriansMayCross, type CrossingTable } from '../../../shared/crossings';
 import { CLOTH_PALETTE, makePeopleMaterial, walkerGeometry } from './PersonMesh';
 
 const CAP = 768;
@@ -43,6 +44,15 @@ export class Crowd {
   private readonly ident = new Array<string>(CAP);
   private readonly alive = new Set<string>();
   private readonly seeded = new Set<number>();
+  // waiting at a kerb for the crossing light: the edge to enter once it turns
+  private readonly waiting = new Uint8Array(CAP);
+  private readonly dodge = new Float32Array(CAP);   // temporary lateral step away from the player
+  private readonly waitE = new Int32Array(CAP);
+  private readonly waitDir = new Int8Array(CAP);
+  private crossings: CrossingTable | null = null;
+  /** pedestrians currently on a crossing, per road node (read by Traffic) */
+  crossOcc = new Uint8Array(0);
+  setCrossings(t: CrossingTable | null) { this.crossings = t; this.crossOcc = new Uint8Array(t ? t.phase.length : 0); }
   /** time-of-day volume factor (shared/nightlife activity) */
   activity = 1;
   setActivity(a: number): boolean {
@@ -71,6 +81,15 @@ export class Crowd {
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true; this.mesh.receiveShadow = false;
     this.group.add(this.mesh);
+  }
+
+  /** Push a circle (x, z, r) out of the walkers; accumulates into out. */
+  pushOut(x: number, z: number, r: number, out: { dx: number; dz: number }) {
+    const cr = r + 0.28;
+    for (let i = 0; i < this.count; i++) {
+      const dx = x - this.px[i], dz = z - this.pz[i], d = Math.hypot(dx, dz);
+      if (d < cr && d > 1e-4) { const push = cr - d; out.dx += dx / d * push; out.dz += dz / d * push; }
+    }
   }
 
   /** Called when the viewer moved: despawn far agents, seed newly active edges. */
@@ -153,6 +172,7 @@ export class Crowd {
       for (const a of [this.dir, this.pref] as Int8Array[]) a[i] = a[last];
       for (const a of [this.s, this.speed, this.lat, this.latTarget, this.phase, this.walk, this.hx, this.hz, this.px, this.pz] as Float32Array[]) a[i] = a[last];
       this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last];
+      this.waiting[i] = this.waiting[last]; this.waitE[i] = this.waitE[last]; this.waitDir[i] = this.waitDir[last]; this.dodge[i] = this.dodge[last];
       this.mesh.getMatrixAt(last, this.mat4); this.mesh.setMatrixAt(i, this.mat4);
       if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
       this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
@@ -179,18 +199,34 @@ export class Crowd {
     this.uniforms.uTime.value = this.clock.time;
     const g = this.graph;
     const k = 1 - Math.exp(-dt / 0.25);
+    if (this.crossings) this.crossOcc.fill(0);
     for (let i = 0; i < this.count; i++) {
-      if (this.walk[i] > 0) {
+      if (this.waiting[i]) {
+        const t = this.crossings!;
+        if (pedestriansMayCross(this.clock.time, t.phase[t.byEdge[this.waitE[i]]])) {
+          const e2 = this.waitE[i], d2 = this.waitDir[i] as 1 | -1;
+          this.waiting[i] = 0; this.anim.setY(i, this.walk[i]);
+          this.edge[i] = e2; this.dir[i] = d2; this.s[i] = d2 > 0 ? 0.01 : g.eLen[e2] - 0.01; this.seg[i] = d2 > 0 ? 0 : Math.max(0, g.eNv[e2] - 2);
+          this.latTarget[i] = this.trackFor(e2, d2, i);
+        }
+      } else if (this.walk[i] > 0) {
         this.s[i] += this.dir[i] * this.speed[i] * dt;
         const L = g.eLen[this.edge[i]];
         if (this.s[i] < 0 || this.s[i] > L) this.arrive(i);
         this.phase[i] += (Math.PI * 2 * this.speed[i] / STEP_LEN) * dt;
-        this.lat[i] += (this.latTarget[i] - this.lat[i]) * Math.min(1, dt * this.speed[i] / 4);
+        // step aside for the viewer (within 3 m, ahead of the walker), then drift back to the track
+        const rx = this.px[i] - camX, rz = this.pz[i] - camZ, rd = Math.hypot(rx, rz);
+        if (rd < 3 && rd > 0.01 && (this.hx[i] * -rx + this.hz[i] * -rz) > 0) {
+          const side = this.hx[i] * rz - this.hz[i] * rx;   // player on the walker's right -> negative -> step left
+          this.dodge[i] = Math.max(-0.9, Math.min(0.9, this.dodge[i] + (side > 0 ? 1 : -1) * dt * 1.5));
+        } else this.dodge[i] -= this.dodge[i] * Math.min(1, dt * 0.8);
+        this.lat[i] += (this.latTarget[i] + this.dodge[i] - this.lat[i]) * Math.min(1, dt * this.speed[i] / 4);
       }
       const e = this.edge[i];
       const p = g.edgePoint(e, this.s[i], this.lat[i], this.seg[i], this.tmp);
       this.seg[i] = p.seg;
-      if (this.walk[i] > 0) {
+      if (this.crossings && !this.waiting[i]) { const rn = this.crossings.byEdge[e]; if (rn >= 0 && this.crossOcc[rn] < 255) this.crossOcc[rn]++; }
+      if (this.walk[i] > 0 && !this.waiting[i]) {
         const tx = this.dir[i] * p.ux, tz = this.dir[i] * p.uz;
         this.hx[i] += (tx - this.hx[i]) * k; this.hz[i] += (tz - this.hz[i]) * k;
       }
@@ -217,6 +253,17 @@ export class Crowd {
       this.s[i] = dir > 0 ? g.eLen[e] - overshoot : overshoot;
       this.latTarget[i] = this.trackFor(e, this.dir[i] as 1 | -1, i);
       return;
+    }
+    if (this.crossings) {
+      // stepping off the kerb onto a signalled crossing: wait while the cars have the green
+      const rn = this.crossings.byEdge[next.e];
+      if (rn >= 0 && node !== rn && !pedestriansMayCross(this.clock.time, this.crossings.phase[rn])) {
+        const back = 0.1 + hash32(this.seed[i], 15) * 1.4;   // a loose queue, not a single point
+        this.s[i] = dir > 0 ? Math.max(0, g.eLen[e] - back) : Math.min(g.eLen[e], back);
+        this.waiting[i] = 1; this.waitE[i] = next.e; this.waitDir[i] = next.dir;
+        this.anim.setY(i, 0);
+        return;
+      }
     }
     this.edge[i] = next.e; this.dir[i] = next.dir;
     const L = g.eLen[next.e];

@@ -1,11 +1,14 @@
 import { SurfaceClass } from '../../shared/layout';
 import type { SurfaceGrid } from '../../shared/surfacegrid';
 import { NoiseVoice, birdPhrase, footstep, type StepKind } from './Synth';
+import { Spatial, type SpatialSource } from './Spatial';
 
 /**
  * Soundscape: traffic hum near roads, birds in the parks (dawn to dusk), river noise by the water, wind up high,
  * and footsteps that follow the surface under the player. Everything is synthesised (see Synth.ts), so it works
- * offline and needs no licensed assets; the context starts on the first user gesture, `V` mutes.
+ * offline and needs no licensed assets; the context starts on the first user gesture, `V` mutes. Nearby cars, boats,
+ * café terraces and fountains are positional (HRTF panners, see Spatial.ts); horns, sirens and the hour bell are
+ * one-shots scheduled by a Poisson clock weighted by the traffic level and the hour; rain has its own loop.
  *   ?audio=0      off entirely
  *   ?audio=debug  status line in the HUD (context state, bus levels, surface)
  */
@@ -16,7 +19,12 @@ export class AudioEngine {
   private master!: GainNode;
   private busAmb!: GainNode;
   private busSteps!: GainNode;
-  private traffic!: NoiseVoice; private trafficHigh!: NoiseVoice; private wind!: NoiseVoice; private water!: NoiseVoice;
+  private traffic!: NoiseVoice; private trafficHigh!: NoiseVoice; private wind!: NoiseVoice; private water!: NoiseVoice; private rain!: NoiseVoice;
+  private spatial: Spatial | null = null;
+  private rainOn = 0;
+  private hornClock = 20; private sirenClock = 90; private dropClock = 0;
+  private lastHour = NaN;
+  private lastCars: SpatialSource[] = [];
   private birdLevel = 0; private birdClock = 0;
   private t = 0;
   private levels = { traffic: 0, birds: 0, water: 0, wind: 0 };
@@ -51,6 +59,8 @@ export class AudioEngine {
       this.trafficHigh = new NoiseVoice(ctx, 'pink', 'bandpass', 520, 0.9, this.busAmb);
       this.wind = new NoiseVoice(ctx, 'brown', 'lowpass', 420, 0.5, this.busAmb);
       this.water = new NoiseVoice(ctx, 'pink', 'bandpass', 1300, 0.6, this.busAmb);
+      this.rain = new NoiseVoice(ctx, 'pink', 'highpass', 1800, 0.5, this.busAmb);
+      this.spatial = new Spatial(ctx, this.busAmb);
     }
     if (this.ctx.state === 'suspended' && !this.muted) void this.ctx.resume();
   }
@@ -63,6 +73,13 @@ export class AudioEngine {
     if (this.ctx) { this.master.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.05); if (!m) void this.ctx.resume(); }
   }
   toggleMute() { this.setMuted(!this.muted); return this.muted; }
+
+  /** 0..1 rain amount (weather). */
+  setRain(v: number) { this.rainOn = v; }
+  /** Camera pose for the HRTF listener. */
+  setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number) { if (this.running) this.spatial?.setListener(x, y, z, fx, fy, fz); }
+  /** Lift ride: motor hum for the ride's duration and a bell on arrival. */
+  lift(seconds: number) { if (this.running && !this.muted) this.spatial?.lift(seconds); }
 
   /** Surface under the feet -> footstep kind (decks and floors above the terrain sound like wood). */
   static kindAt(surface: SurfaceGrid | null, x: number, z: number, aboveTerrain: number): StepKind {
@@ -87,9 +104,11 @@ export class AudioEngine {
    * Ambience targets from the surroundings; call every frame.
    * hour: local hour; aboveGround: metres between the ear and the terrain (wind on the tower decks).
    */
-  update(dt: number, x: number, z: number, hour: number, aboveGround: number, surface: SurfaceGrid | null) {
+  update(dt: number, x: number, z: number, hour: number, aboveGround: number, surface: SurfaceGrid | null, sources: SpatialSource[] = []) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     this.t += dt;
+    this.spatial?.update(sources, dt);
+    this.lastCars = sources.filter(s => s.kind === 'car');
     const day = smooth(5.5, 8, hour) * (1 - smooth(19, 22.5, hour));          // 0 at night, 1 by day
     const road = surface ? surface.fractionNear(x, z, 40, SurfaceClass.Road) : 0.3;
     const park = surface ? surface.fractionNear(x, z, 30, [SurfaceClass.Grass, SurfaceClass.Gravel]) : 0;
@@ -108,6 +127,22 @@ export class AudioEngine {
     this.wind.level(wind * 0.28);
     this.wind.filter.frequency.setTargetAtTime(280 + 260 * high + 120 * Math.sin(this.t * 0.37), this.ctx.currentTime, 0.5);
     this.water.level(water * 0.22);
+    // rain: steady hiss plus random close drops on the pavement / umbrella
+    this.rain.level(this.rainOn * 0.22 * (1 - 0.5 * high));
+    if (this.rainOn > 0.1) { this.dropClock -= dt; if (this.dropClock <= 0) { this.dropClock = 0.04 + Math.random() * 0.12 / this.rainOn; footstep(this.ctx, this.busAmb, 'concrete', 0.02 + Math.random() * 0.08); } }
+    // one-shots: horns near traffic (day), sirens now and then, the hour from a distant church (07-22h)
+    this.hornClock -= dt * (0.3 + 1.2 * traffic) * (0.4 + 0.6 * day);
+    if (this.hornClock <= 0 && this.spatial && !this.muted) {
+      this.hornClock = 25 + Math.random() * 50;
+      const c = this.lastCars[Math.floor(Math.random() * this.lastCars.length)];
+      if (c) this.spatial.horn(c.x, c.y, c.z, 0.18 + 0.15 * Math.random());
+    }
+    this.sirenClock -= dt * (0.5 + road) * (0.5 + 0.5 * day);
+    if (this.sirenClock <= 0 && this.spatial && !this.muted) { this.sirenClock = 180 + Math.random() * 360; this.spatial.siren(x, 0, z); }
+    if (Number.isFinite(this.lastHour) && Math.abs(hour - this.lastHour) < 0.05 && Math.floor(hour) !== Math.floor(this.lastHour) && hour >= 7 && hour < 22.5 && this.spatial && !this.muted) {
+      const h = Math.floor(hour) % 12 || 12; this.spatial.bell(h, x, 0, z);
+    }
+    this.lastHour = hour;
     // birds: random phrases whose rate follows the level
     this.birdLevel += (birds - this.birdLevel) * Math.min(1, dt * 0.8);
     this.birdClock -= dt;
@@ -121,7 +156,7 @@ export class AudioEngine {
     if (!this.enabled) return 'audio off';
     if (!this.ctx) return 'audio: waiting for a click';
     const l = this.levels;
-    return `audio ${this.ctx.state}${this.muted ? ' muted' : ''} traffic ${l.traffic.toFixed(2)} birds ${l.birds.toFixed(2)} water ${l.water.toFixed(2)} wind ${l.wind.toFixed(2)} step ${this.lastKind}`;
+    return `audio ${this.ctx.state}${this.muted ? ' muted' : ''} traffic ${l.traffic.toFixed(2)} birds ${l.birds.toFixed(2)} water ${l.water.toFixed(2)} wind ${l.wind.toFixed(2)} rain ${this.rainOn.toFixed(1)} spatial ${this.spatial?.activeCount ?? 0} step ${this.lastKind}`;
   }
 }
 
