@@ -512,7 +512,9 @@ export class App {
   toggleFly() {
     this.flying = !this.flying;
     if (this.flying) { this.fly.position.copy(this.camera.position); this.fly.speed = 15; }
-    else { const p = this.camera.position; this.player.position.set(p.x, Math.max(this.world.groundY(p.x, p.z), p.y - 1.7), p.z); }
+    // Landing from flight has to find bridge decks and tower floors too: over the river the raw terrain is the
+    // sunken river bed, so groundY alone drops the player through the deck into the water.
+    else { const p = this.camera.position; this.player.position.set(p.x, Math.max(this.landingY(p.x, p.z), p.y - 1.7), p.z); }
   }
 
   private updateStatus() {

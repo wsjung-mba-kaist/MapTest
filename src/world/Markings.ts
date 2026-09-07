@@ -66,6 +66,7 @@ export class Markings {
         this.loader.add(k, () => (o.x + CHUNK_SIZE / 2 - this.playerX) ** 2 + (o.z + CHUNK_SIZE / 2 - this.playerZ) ** 2, async () => {
           try {
             const bm = await loadBinMesh(`${DATA_URL}/marks/${k}.bin`);
+            if (!this.requested.has(k)) return;   // unloaded while the fetch was in flight: drop it
             const s = bm.sections.get('marks');
             if (!s) { this.meshes.set(k, null); return; }
             const m = new THREE.Mesh(s.geometry, this.material);
@@ -80,9 +81,10 @@ export class Markings {
             console.warn('marks load failed', k, e);
           }
         });
-      } else if (d2 > ud2 && this.meshes.has(k)) {
+      } else if (d2 > ud2 && this.requested.has(k)) {
         const m = this.meshes.get(k);
         if (m) { this.group.remove(m); m.geometry.dispose(); this.count--; }
+        else this.loader.cancel(k);   // still queued: take the request back so it can be re-issued later
         this.meshes.delete(k); this.requested.delete(k);
       }
     }

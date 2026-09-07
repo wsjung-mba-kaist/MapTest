@@ -41,6 +41,7 @@ export class Streets {
         this.loader.add(k, () => (o.x + CHUNK_SIZE / 2 - this.playerX) ** 2 + (o.z + CHUNK_SIZE / 2 - this.playerZ) ** 2, async () => {
           try {
             const bm = await loadBinMesh(`${DATA_URL}/streets/${k}.bin`);
+            if (!this.requested.has(k)) return;   // unloaded while the fetch was in flight: drop it
             const s = bm.sections.get('slab');
             if (!s) { this.chunks.set(k, null); return; }
             const mat = createGroundMaterial({ street: true });
@@ -56,7 +57,11 @@ export class Streets {
         });
       }
       const c = this.chunks.get(k);
-      if (!c) continue;
+      if (!c) {
+        // Nothing built yet: if it went out of range while still queued, take the request back.
+        if (d2 > ud2 && this.requested.has(k)) { this.loader.cancel(k); this.requested.delete(k); }
+        continue;
+      }
       if (d2 > ud2) {
         this.group.remove(c.mesh);
         if (c.walkReg) this.walkables?.unregister(`street:${k}`);

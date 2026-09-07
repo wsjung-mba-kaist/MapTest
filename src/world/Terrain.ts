@@ -129,6 +129,9 @@ export class Terrain {
     const key = `f_${t.i}_${t.j}`;
     this.loader.add(key, () => this.dist2(t) - 1e9, async () => {
       const tex = await loadTexture(`${DATA_URL}/ground/tiles/${chunkKey(t.i, t.j)}.jpg`);
+      // The player may have walked out of range while this loaded; keeping it would strand a 1536² texture that
+      // the unload branch no longer looks at.
+      if (!t.fullRequested) { tex.dispose(); return; }
       tex.anisotropy = 16;
       t.full = tex;
       this.apply(t, tex);
@@ -150,9 +153,12 @@ export class Terrain {
     for (const t of this.tiles.values()) {
       const near = Math.abs(t.i - ci) <= this.fullRadius && Math.abs(t.j - cj) <= this.fullRadius;
       if (near) this.queueFull(t);
-      else if (t.full && (Math.abs(t.i - ci) > this.fullRadius + 1 || Math.abs(t.j - cj) > this.fullRadius + 1)) {
-        t.full.dispose(); t.full = undefined; t.fullRequested = false;
-        if (t.small) this.apply(t, t.small);
+      else if (t.fullRequested && (Math.abs(t.i - ci) > this.fullRadius + 1 || Math.abs(t.j - cj) > this.fullRadius + 1)) {
+        // Clear the flag whether or not the texture ever landed: a request that was still queued when the player
+        // walked away used to leave fullRequested stuck true, and the chunk kept its 512² tile for good.
+        if (t.full) { t.full.dispose(); t.full = undefined; if (t.small) this.apply(t, t.small); }
+        else this.loader.cancel(`f_${t.i}_${t.j}`);
+        t.fullRequested = false;
       }
     }
   }

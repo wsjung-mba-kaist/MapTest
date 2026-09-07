@@ -170,7 +170,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     const i0 = q * 4, i1 = i0 + 1, i3 = i0 + 3;
     const flag = Math.round(col.getW(i0) * 255);
     if (flag !== 0) continue;                                   // walls only (no plinths)
-    const style = Math.floor(meta.getW(i0) / 256 + 0.5);
+    const style = Math.floor(meta.getW(i0) / 256);   // seed occupies the low 256; rounding would misread seed >= 128
     const seed = meta.getW(i0) % 256;
     const ax = pos.getX(i0), az = pos.getZ(i0), bx = pos.getX(i1), bz = pos.getZ(i1);
     const len = Math.hypot(bx - ax, bz - az);

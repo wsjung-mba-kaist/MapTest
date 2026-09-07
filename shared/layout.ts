@@ -98,3 +98,16 @@ export interface Landmark {
   image?: LandmarkImage;
 }
 export interface LandmarksData { version: 1; generated: string; landmarks: Landmark[]; credits: string[] }
+
+/**
+ * Facade style + per-building seed packed into the building vertices' `meta.w`.
+ *
+ * `meta.w = style * 256 + seed` with `seed` in 0..255, so the style is the plain quotient and the seed the
+ * remainder. `src/materials/shaders/facade.glsl` mirrors this as `floor(meta.w / 256.0)` / `mod(meta.w, 256.0)`
+ * — keep the three in step. Rounding the quotient (a `+ 0.5` lived here once) silently promotes every building
+ * whose seed is >= 128 to the next style, which swaps monument facades for plain ones and vice versa.
+ */
+export const STYLE_SCALE = 256;
+export function packStyleSeed(style: number, seed: number): number { return style * STYLE_SCALE + (seed % STYLE_SCALE); }
+export function unpackStyle(w: number): number { return Math.floor(w / STYLE_SCALE); }
+export function unpackSeed(w: number): number { return w % STYLE_SCALE; }

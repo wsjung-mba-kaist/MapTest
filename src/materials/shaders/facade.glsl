@@ -57,7 +57,9 @@ Facade shadeWall(vec2 uv, vec4 meta, vec3 tint, float flag, float night, float s
   float levels = max(1.0, meta.y);
   float wallLen = max(0.5, meta.z);
   float seed = mod(meta.w, 256.0);
-  float style = floor(meta.w / 256.0 + 0.5);
+  // meta.w = seed + style * 256 with seed in 0..255, so the style is the plain quotient.
+  // Rounding here (the old `+ 0.5`) pushed every building with seed >= 128 into the next style.
+  float style = floor(meta.w / 256.0);
   float eave = 4.3 + (levels - 1.0) * floorH;
   if (levels < 1.5) eave = max(floorH, 3.0);
   float aa = max(fwidth(uv.x), fwidth(uv.y)) * 0.75 + 0.002;

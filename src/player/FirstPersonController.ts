@@ -81,8 +81,14 @@ export class FirstPersonController {
 
     const p = this.position;
     const nx = p.x + this.vel.x * dt, nz = p.z + this.vel.z * dt;
-    // Keep out of the river: refuse steps whose ground is under water (slide along the bank).
-    const tryMove = (x: number, z: number) => this.heightmap.sample(x, z) > this.waterLevelY + 0.15;
+    // Keep out of the river: refuse steps whose ground is under water (slide along the bank). The bake sinks the
+    // river bed 1.5 m below the water line, so the terrain under every bridge deck fails this test — check for a
+    // walkable deck at the current feet height before refusing, or the player freezes mid-span. The raycast only
+    // runs where the terrain test already failed, so walking on land costs nothing, and stepping off the deck edge
+    // is still refused because walkableY returns NaN out there.
+    const tryMove = (x: number, z: number) =>
+      this.heightmap.sample(x, z) > this.waterLevelY + 0.15
+      || Number.isFinite(this.collision.walkableY(x, p.y, z, 1.2, 2.5));
     if (tryMove(nx, nz)) { p.x = nx; p.z = nz; }
     else if (tryMove(nx, p.z)) { p.x = nx; this.vel.z = 0; }
     else if (tryMove(p.x, nz)) { p.z = nz; this.vel.x = 0; }

@@ -82,25 +82,36 @@ export function loadTexture(url: string, srgb = true): Promise<THREE.Texture> {
   });
 }
 
-/** Simple priority queue that runs async jobs nearest-first with limited concurrency. */
+/**
+ * Simple priority queue that runs async jobs nearest-first with limited concurrency.
+ *
+ * A key is only rejected while a request for it is outstanding (queued or in flight). Finished keys are forgotten,
+ * so a layer that drops a chunk when the player walks away can load it again on the way back — remembering them
+ * instead made sidewalks, road markings and full-resolution ground tiles disappear for the rest of the session.
+ */
 export class PriorityLoader {
   private queue: { key: string; prio: () => number; job: () => Promise<void> }[] = [];
-  private active = 0;
-  private done = new Set<string>();
+  private readonly inflight = new Set<string>();
   constructor(private readonly concurrency = 4) {}
   add(key: string, prio: () => number, job: () => Promise<void>) {
-    if (this.done.has(key) || this.queue.some(q => q.key === key)) return;
+    if (this.has(key)) return;
     this.queue.push({ key, prio, job });
     this.pump();
   }
-  has(key: string) { return this.done.has(key) || this.queue.some(q => q.key === key); }
+  /** True while a request for this key is queued or running. */
+  has(key: string) { return this.inflight.has(key) || this.queue.some(q => q.key === key); }
+  /** Drop a queued request that has not started yet (the chunk went out of range before its turn came up). */
+  cancel(key: string) {
+    const i = this.queue.findIndex(q => q.key === key);
+    if (i >= 0) this.queue.splice(i, 1);
+  }
   private pump() {
-    while (this.active < this.concurrency && this.queue.length) {
+    while (this.inflight.size < this.concurrency && this.queue.length) {
       this.queue.sort((a, b) => a.prio() - b.prio());
       const next = this.queue.shift()!;
-      this.active++;
-      next.job().catch(e => console.warn(`load ${next.key} failed`, e)).finally(() => { this.active--; this.done.add(next.key); this.pump(); });
+      this.inflight.add(next.key);
+      next.job().catch(e => console.warn(`load ${next.key} failed`, e)).finally(() => { this.inflight.delete(next.key); this.pump(); });
     }
   }
-  get pending() { return this.queue.length + this.active; }
+  get pending() { return this.queue.length + this.inflight.size; }
 }

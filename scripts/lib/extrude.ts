@@ -1,5 +1,5 @@
 import earcut from 'earcut';
-import { SurfaceFlag, ORTHO_MARGIN, CHUNK_SIZE } from '../../shared/layout.ts';
+import { SurfaceFlag, ORTHO_MARGIN, CHUNK_SIZE, packStyleSeed } from '../../shared/layout.ts';
 import { bearingToDir } from '../../shared/geo.ts';
 import { GeomBuilder } from './binmesh.ts';
 import { CURVED_ROOFS, type BuildingSpec, type RoofKind } from './buildings.ts';
@@ -310,13 +310,13 @@ function addProfileRoof(cb: ChunkBuilders, b: BuildingSpec, kind: RoofKind, yEav
 
 export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number, dsm?: DsmHook): { dsmTris?: [number, number] } {
   if (dsm && b.landmark && cb.dsm && cb.roofsAlt && cb.topsAlt) {
-    const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, b.seed + b.style * 256];
+    const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, packStyleSeed(b.style, b.seed)];
     const res = dsm(cb.dsm, b, ox, oz, rmeta, b.roofTint);
     if (res) {
       // walls follow the surface model's edge, LOD1 stays the analytic box, the analytic roof goes to the alt sections
       const yBase = b.groundY - 1.0;
       const y0 = b.minH > 0 ? b.groundY + b.minH : yBase;
-      const meta: Meta = [b.floorH, b.levels, 0, b.seed + b.style * 256];
+      const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
       const wallFlag = b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall;
       for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, res.wallTop, () => [], ox, oz, meta, b.tint, wallFlag);
       const scratch: ChunkBuilders = { walls: new GeomBuilder(), roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod };
@@ -335,8 +335,8 @@ function extrudeAnalytic(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: num
   const yEave = b.groundY + b.eave;
   const yRidge = b.groundY + b.ridge;
   const rise = yRidge - yEave;
-  const meta: Meta = [b.floorH, b.levels, 0, b.seed + b.style * 256];
-  const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, b.seed + b.style * 256];
+  const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
+  const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, packStyleSeed(b.style, b.seed)];
   const wallFlag = b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall;
   const roofTint = b.roofTint;
   const [bx0, bz0, bx1, bz1] = [Math.min(...outer.map(p => p[0])), Math.min(...outer.map(p => p[1])), Math.max(...outer.map(p => p[0])), Math.max(...outer.map(p => p[1]))];
