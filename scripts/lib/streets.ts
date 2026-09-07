@@ -35,7 +35,10 @@ const MIN_AREA = 4;                 // m² - smaller slivers are dropped
 const STEINER = 4;                  // m grid of interior points so wide slabs follow the terrain
 const SKIRT = 0.12;                 // kerb face extends this far below the terrain
 
-export interface StreetInput { carriage: Poly[]; paved: Poly[]; blocked: Poly[]; grass: Poly[] }
+export interface StreetInput { carriage: Poly[]; paved: Poly[]; blocked: Poly[]; grass: Poly[]; steps: StepsWay[] }
+export interface StepsWay { pts: Pt[]; width: number }
+const RISER = 0.165;               // m, Paris outdoor stairs
+const TREAD_MIN = 0.26;
 
 const toPts = (coords: number[][]): Pt[] => coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z] as Pt; });
 const polysOf = (g: Polygon | MultiPolygon): Poly[] => g.type === 'Polygon' ? [g.coordinates.map(toPts)] : g.coordinates.map(p => p.map(toPts));
@@ -44,7 +47,7 @@ const roundPoly = (p: Poly): Poly => p.map(r => r.map(r2));
 
 /** Collect the world polygons the slabs are computed from. */
 export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>, land: FeatureCollection<Geometry, OsmProps>, water: FeatureCollection<Geometry, OsmProps>, decks: Poly[]): StreetInput {
-  const carriage: Poly[] = [], paved: Poly[] = [], blocked: Poly[] = [], grass: Poly[] = [];
+  const carriage: Poly[] = [], paved: Poly[] = [], blocked: Poly[] = [], grass: Poly[] = [], steps: StepsWay[] = [];
   for (const f of land.features) {
     const t = f.properties.tags ?? {};
     if (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon') continue;
@@ -72,7 +75,11 @@ export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>,
         if (!inGrass(pts[Math.floor(pts.length / 2)])) paved.push(...offsetLine(pts, w + 2 * SIDEWALK_W));
       } else if (t.highway === 'pedestrian') paved.push(...offsetLine(pts, 6));
       else if (t.footway === 'sidewalk') paved.push(...offsetLine(pts, MAPPED_SIDEWALK_W));
-      else if (t.highway === 'steps') carriage.push(...offsetLine(pts, 3));
+      else if (t.highway === 'steps') {
+        const w = Math.max(1.5, Math.min(12, parseFloat(t.width ?? '') || 3));
+        carriage.push(...offsetLine(pts, w));   // keep the slabs off the flight
+        steps.push({ pts, width: w });
+      }
     } else if ((f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') && t.area === 'yes' && t.highway) {
       (t.highway === 'pedestrian' || t.highway === 'footway' ? paved : carriage).push(...polysOf(f.geometry));
     }
@@ -82,7 +89,7 @@ export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>,
     blocked.push(...polysOf(f.geometry));
   }
   for (const d of decks) { carriage.push(d); blocked.push(d); }
-  return { carriage, paved, blocked, grass };
+  return { carriage, paved, blocked, grass, steps };
 }
 
 const overlaps = (p: Poly, x0: number, z0: number, x1: number, z1: number) => { const b = bboxOf([p[0]]); return b[2] >= x0 && b[0] <= x1 && b[3] >= z0 && b[1] <= z1; };
@@ -177,6 +184,61 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
   return out;
 }
 
+/**
+ * Staircases: every highway=steps way whose midpoint lies in the chunk becomes a flight of boxes from its low end to
+ * its high end (risers 16.5 cm, treads >= 26 cm), appended to the slab mesh: treads are slab tops (walkable, paving),
+ * risers and flanks are kerb faces (granite). The terrain under the flight stays a ramp, so nothing shows beneath.
+ */
+export function addSteps(out: SlabMesh, steps: StepsWay[], ox: number, oz: number, groundY: (x: number, z: number) => number): number {
+  const vert = (x: number, z: number, y: number, flag: number) => { out.pos.push(x - ox, y, z - oz); out.flag.push(flag); return out.pos.length / 3 - 1; };
+  // two triangles for the quad a-b-c-d whose outward normal should point along (nx, ny, nz)
+  const quad = (a: [number, number, number], b: [number, number, number], c: [number, number, number], d: [number, number, number], nx: number, ny: number, nz: number, flag: number) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+    const flip = cx * nx + cy * ny + cz * nz < 0;
+    const ia = vert(a[0], a[2], a[1], flag), ib = vert(b[0], b[2], b[1], flag), ic = vert(c[0], c[2], c[1], flag), id = vert(d[0], d[2], d[1], flag);
+    if (flip) out.idx.push(ia, ic, ib, ia, id, ic); else out.idx.push(ia, ib, ic, ia, ic, id);
+    out.tris += 2;
+  };
+  let flights = 0;
+  for (const sw of steps) {
+    const pts = sw.pts;
+    const mid = pts[Math.floor(pts.length / 2)];
+    if (mid[0] < ox || mid[0] >= ox + CHUNK_SIZE || mid[1] < oz || mid[1] >= oz + CHUNK_SIZE) continue;
+    const y0 = groundY(pts[0][0], pts[0][1]), y1 = groundY(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    if (Math.abs(y1 - y0) < 0.3) continue;
+    const line = y1 > y0 ? pts : [...pts].reverse();
+    const yLow = Math.min(y0, y1), rise = Math.abs(y1 - y0);
+    const cum: number[] = [0];
+    for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+    const L = cum[cum.length - 1];
+    if (L < 0.6) continue;
+    let n = Math.max(2, Math.min(80, Math.round(rise / RISER)));
+    if (L / n < TREAD_MIN) n = Math.max(2, Math.floor(L / TREAD_MIN));
+    const tread = L / n, riser = rise / n, h = sw.width / 2;
+    const at = (s: number): [number, number, number, number] => {   // x, z, ux, uz
+      let i = 0; while (i + 2 < cum.length && cum[i + 1] < s) i++;
+      const a = line[i], b = line[i + 1], seg = cum[i + 1] - cum[i] || 1, t = Math.max(0, Math.min(1, (s - cum[i]) / seg));
+      const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+      return [a[0] + dx * t, a[1] + dz * t, dx / l, dz / l];
+    };
+    for (let k = 0; k < n; k++) {
+      const [x0, z0, ux, uz] = at(k * tread), [x1, z1] = at((k + 1) * tread);
+      const nx = -uz, nz = ux;   // right of travel
+      const yT = yLow + (k + 1) * riser, yB = yT - riser - 0.06;
+      const A: [number, number, number] = [x0 + nx * h, yT, z0 + nz * h], B: [number, number, number] = [x0 - nx * h, yT, z0 - nz * h];
+      const C: [number, number, number] = [x1 - nx * h, yT, z1 - nz * h], D: [number, number, number] = [x1 + nx * h, yT, z1 + nz * h];
+      quad(A, B, C, D, 0, 1, 0, StreetFlag.Top);                                                        // tread
+      quad([A[0], yB, A[2]], [B[0], yB, B[2]], B, A, -ux, 0, -uz, StreetFlag.Kerb);                      // riser faces the low side
+      quad([A[0], yB, A[2]], A, D, [D[0], yB, D[2]], nx, 0, nz, StreetFlag.Kerb);                        // right flank
+      quad([B[0], yB, B[2]], B, C, [C[0], yB, C[2]], -nx, 0, -nz, StreetFlag.Kerb);                      // left flank
+      out.kerbs += 3;
+    }
+    flights++;
+  }
+  return flights;
+}
+
 /** Insert points along edges longer than maxLen (ring stays closed-by-convention, no repeated last point). */
 export function densify(ring: Ring, maxLen: number): Ring {
   const out: Ring = [];
@@ -237,11 +299,12 @@ export async function run(_ctx: BakeContext) {
   const dir = path.join(OUT_DIR, 'streets');
   await ensureDir(dir);
   const grid = new Uint8Array(SURFACE_N * SURFACE_N);
-  let bytes = 0, tris = 0, kerbs = 0, polys = 0, empty = 0;
+  let bytes = 0, tris = 0, kerbs = 0, polys = 0, empty = 0, flights = 0;
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const o = chunkOrigin(i, j);
     const slabs = chunkSidewalks(input, o.x, o.z);
     const mesh = buildSlabMesh(slabs, o.x, o.z, groundY);
+    flights += addSteps(mesh, input.steps, o.x, o.z, groundY);
     const buf = encodeBinMesh({ x: o.x, z: o.z }, mesh.tris ? [slabSection(mesh)] : [], { polys: slabs.length, tris: mesh.tris, kerbs: mesh.kerbs });
     await fs.writeFile(path.join(dir, `${chunkKey(i, j)}.bin`), buf);
     bytes += buf.length; tris += mesh.tris; kerbs += mesh.kerbs; polys += slabs.length; if (!slabs.length) empty++;
@@ -258,7 +321,7 @@ export async function run(_ctx: BakeContext) {
   }
   await fs.writeFile(path.join(OUT_DIR, 'surface.bin'), grid);
   const counts: Record<number, number> = {}; for (const v of grid) counts[v] = (counts[v] ?? 0) + 1;
-  log.info(`streets: ${polys} slabs, ${tris} slab tris, ${kerbs} kerb quads, ${(bytes / 1e6).toFixed(1)} MB, ${empty} empty chunks; surface cells ${JSON.stringify(counts)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  log.info(`streets: ${polys} slabs, ${flights} staircases (of ${input.steps.length} steps ways), ${tris} slab tris, ${kerbs} kerb quads, ${(bytes / 1e6).toFixed(1)} MB, ${empty} empty chunks; surface cells ${JSON.stringify(counts)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   manifest.files.streets = 'streets/{i}_{j}.bin';
   manifest.files.surface = 'surface.bin';
   manifest.counts.sidewalkSlabs = polys; manifest.counts.sidewalkTris = tris;
