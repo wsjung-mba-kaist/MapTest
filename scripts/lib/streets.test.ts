@@ -14,7 +14,7 @@ function input(): StreetInput {
   return {
     carriage: [...bufferLine(ew, W), ...bufferLine(ns, W)],
     paved: [...bufferLine(ew, W + 2 * SIDEWALK_W), ...bufferLine(ns, W + 2 * SIDEWALK_W)],
-    blocked: [], grass: [],
+    blocked: [], grass: [], steps: [],
   };
 }
 

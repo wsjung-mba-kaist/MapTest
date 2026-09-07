@@ -15,8 +15,10 @@ const shared = {
   uHasDetail: { value: 0 },
   uAsphaltC: { value: null as THREE.Texture | null }, uAsphaltN: { value: null as THREE.Texture | null },
   uPavingC: { value: null as THREE.Texture | null }, uPavingN: { value: null as THREE.Texture | null },
-  uGrassC: { value: null as THREE.Texture | null }, uGrassN: { value: null as THREE.Texture | null },
-  uGravelC: { value: null as THREE.Texture | null }, uGravelN: { value: null as THREE.Texture | null },
+  // grass and gravel keep only their normal maps: the fragment shader must stay within 16 samplers
+  // (tile, overview, mask, 5 detail sets, shadow map, environment) or it fails to link on most GPUs
+  uGrassN: { value: null as THREE.Texture | null },
+  uGravelN: { value: null as THREE.Texture | null },
   uCobbleC: { value: null as THREE.Texture | null }, uCobbleN: { value: null as THREE.Texture | null },
   uStoneC: { value: null as THREE.Texture | null }, uStoneN: { value: null as THREE.Texture | null },
   uWaterY: { value: -7.5 },
@@ -40,7 +42,7 @@ export function loadGroundDetail(): Promise<void> {
     tex('cobblestone_floor_08_color', true), tex('cobblestone_floor_08_normal', false),
   ]).then(([ac, an, pc, pn, gc, gn, vc, vn, sc, sn, cc, cn]) => {
     shared.uAsphaltC.value = ac; shared.uAsphaltN.value = an; shared.uPavingC.value = pc; shared.uPavingN.value = pn;
-    shared.uGrassC.value = gc; shared.uGrassN.value = gn; shared.uGravelC.value = vc; shared.uGravelN.value = vn;
+    shared.uGrassN.value = gn; shared.uGravelN.value = vn; gc.dispose(); vc.dispose();
     shared.uStoneC.value = sc; shared.uStoneN.value = sn; shared.uCobbleC.value = cc; shared.uCobbleN.value = cn; shared.uHasDetail.value = 1;
   }).catch(e => console.warn('ground detail textures missing', e));
   return detailPromise;
@@ -87,7 +89,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
         varying float vSFlag;
         #endif
         uniform sampler2D uMask; uniform float uHasMask; uniform sampler2D uOverview; uniform float uHasOverview; uniform float uHasTile; uniform float uHasDetail;
-        uniform sampler2D uAsphaltC, uAsphaltN, uPavingC, uPavingN, uGrassC, uGrassN, uGravelC, uGravelN, uStoneC, uStoneN;
+        uniform sampler2D uAsphaltC, uAsphaltN, uPavingC, uPavingN, uGrassN, uGravelN, uStoneC, uStoneN;
         uniform float uWaterY; uniform float uNight; uniform float uWet; uniform sampler2D uCobbleC; uniform sampler2D uCobbleN;
         float ghash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float gnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(ghash(i), ghash(i + vec2(1.0, 0.0)), f.x), mix(ghash(i + vec2(0.0, 1.0)), ghash(i + vec2(1.0, 1.0)), f.x), f.y); }
@@ -146,7 +148,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
           vec3 n = nA * r + nV * a + nP * g + nG * b + nC * gPave * 1.3 + nP * rest * 0.5;
           gDetailN = normalize(vec3(n.xy * 0.9, max(0.3, n.z)));
           float cA = mix(texture2D(uAsphaltC, uvA1).g, texture2D(uAsphaltC, uvA2).g, macro), cP = mix(texture2D(uPavingC, uvP1).g, texture2D(uPavingC, uvP2).g, macro);
-          float cG = texture2D(uGrassC, wxz / 1.4).g, cV = texture2D(uGravelC, wxz / 1.1).g;
+          float cG = 0.5 + 0.35 * (nG.z - 0.85), cV = 0.5 + 0.4 * (nV.z - 0.85);   // relief-derived shade (no colour samplers left)
           vec3 cobble = texture2D(uCobbleC, uvC).rgb;
           float luma = cA * r + cV * a + cP * g + cG * b + dot(cobble, vec3(0.333)) * gPave + 0.5 * rest;
           // Micro-contrast from the detail colour, fading with distance; pavé shows its own stones (the photo is plain grey there)
