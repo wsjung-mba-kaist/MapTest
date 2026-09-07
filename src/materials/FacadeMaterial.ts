@@ -175,23 +175,58 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
     float fFlag = floor(vColor.a * 255.0 + 0.5);
     vec2 uvT = (vUvM - uChunkOrigin + 32.0) / 320.0; uvT.y = 1.0 - uvT.y;
     vec2 uvO = (vUvM + 1536.0) / 3072.0; uvO.y = 1.0 - uvO.y;
-    bool inTile = all(greaterThan(uvT, vec2(0.002))) && all(lessThan(uvT, vec2(0.998)));
+    // Fade into the overview across a margin instead of switching at the tile edge. A landmark wider than one
+    // 320 m tile (the Invalides is ~450 m) otherwise gets a straight line of changing sharpness and colour
+    // running across its roof, exactly where the chunk boundary falls.
     vec3 photo = vColor.rgb;
-    if (inTile && uHasTile > 0.5) photo = texture2D(uTile, uvT).rgb;
-    else if (uHasOverview > 0.5) photo = texture2D(uOverview, uvO).rgb;
+    float edgeT = min(min(uvT.x, uvT.y), min(1.0 - uvT.x, 1.0 - uvT.y));
+    float tileW = uHasTile > 0.5 ? smoothstep(0.004, 0.035, edgeT) : 0.0;
+    if (uHasOverview > 0.5) photo = texture2D(uOverview, uvO).rgb;
+    if (tileW > 0.0) {
+      vec3 photoT = texture2D(uTile, clamp(uvT, vec2(0.002), vec2(0.998))).rgb;
+      photo = uHasOverview > 0.5 ? mix(photo, photoT, tileW) : photoT;
+    }
     photo = mix(photo, vec3(dot(photo, vec3(0.3, 0.59, 0.11))), 0.15) * 0.92;
     photo *= 1.0 - 0.45 * uNight;
     // a degenerate triangle leaves a zero vertex normal; normalize(0) is NaN and the bloom would smear it over the frame
     vec3 Nw = length(vNormal) > 1e-6 ? normalize(transpose(mat3(viewMatrix)) * normalize(vNormal)) : vec3(0.0, 1.0, 0.0);
     float flatness = smoothstep(0.55, 0.85, Nw.y);
-    // steep faces: metres along the surface (a rough tangent-plane projection) and metres of height
-    vec2 uvS = vec2(vWorldPosV.x * 0.7 + vWorldPosV.z * 0.7, vWorldPosV.y);
+    // The crown of a dome or a vault is shallow enough to count as "flat", so the aerial photo used to cover the
+    // whole top and only the flanks kept their material: the gilded Invalides dome read as a brown blur and the
+    // Grand Palais nave as grey concrete. Copper, glass and gold are the silhouette — never photograph over them.
+    int rMat = int(vMetaV.z + 0.5);
+    if (rMat == 3 || rMat == 5 || rMat == 6) flatness = 0.0;
+    else flatness *= 0.85;   // elsewhere let a little material show through the photo
+    // Curved caps: u is arc length around the dome axis, taken from the normal's azimuth. The old fixed
+    // horizontal direction (x + z) is constant across two opposite quadrants of every dome, so ribs and standing
+    // seams stretched into two smeared bands there. 12 m of radius ≈ the drum of a Paris dome.
+    vec2 uvS = vec2(atan(Nw.z, Nw.x) * 12.0, vWorldPosV.y);
     Facade fc = shadeRoofSlope(uvS, vMetaV, vColor.rgb, 5.0, uNight, uTime);
     diffuseColor.rgb = mix(fc.color, photo, flatness);
-    float fRough = mix(fc.rough, 0.85, flatness); float fMetal = mix(fc.metal, 0.0, flatness); vec3 fEmissive = fc.emissive * (1.0 - flatness); float fAo = 1.0; vec3 fDetailN = vec3(0.0, 0.0, 1.0);
+    float fRough = mix(fc.rough, 0.85, flatness); float fMetal = mix(fc.metal, 0.0, flatness); vec3 fEmissive = fc.emissive * (1.0 - flatness); float fAo = 1.0;
+    // Use the material's own detail normal (ribs, seams, slate relief) instead of a flat one, or the dome lights
+    // like plastic.
+    vec3 fDetailN = normalize(mix(fc.n, vec3(0.0, 0.0, 1.0), flatness));
   `, shader => {
     Object.assign(shader.uniforms, uniforms);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', orthoDecl);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', orthoDecl)
+      // Build the tangent frame from the cap's own geometry instead of three's normal-map path. The dsm section's
+      // uv is a top-down (world x, z) projection, so it is degenerate on the steep flanks of a dome and the
+      // derivative-based frame there is garbage — exactly where the ribs need to show. The frame we want is
+      // analytic: u runs around the axis, v runs up the surface.
+      .replace('#include <normal_fragment_begin>', /* glsl */`#include <normal_fragment_begin>
+        {
+          vec3 upAxis = vec3(0.0, 1.0, 0.0);
+          vec3 aTan = cross(upAxis, Nw);
+          float aLen = length(aTan);
+          if (aLen > 1e-3) {
+            aTan /= aLen;
+            vec3 aBit = cross(Nw, aTan);
+            vec3 pert = normalize(aTan * fDetailN.x + aBit * fDetailN.y + Nw * fDetailN.z);
+            normal = normalize((viewMatrix * vec4(pert, 0.0)).xyz);
+          }
+        }`);
   });
   patch(mat, /* glsl */`
     float fFlag = floor(vColor.a * 255.0 + 0.5);

@@ -111,3 +111,20 @@ export const STYLE_SCALE = 256;
 export function packStyleSeed(style: number, seed: number): number { return style * STYLE_SCALE + (seed % STYLE_SCALE); }
 export function unpackStyle(w: number): number { return Math.floor(w / STYLE_SCALE); }
 export function unpackSeed(w: number): number { return w % STYLE_SCALE; }
+
+/**
+ * Read a finite number from a URL query, falling back when the parameter is missing, empty or not a number and
+ * clamping to a sane range. `?hour=` alone used to yield NaN, which propagated into the sun direction, the sky
+ * shader and the bloom pass and left a black screen with no clue why.
+ */
+export function queryNum(q: URLSearchParams, key: string, fallback: number, min = -Infinity, max = Infinity): number {
+  const raw = q.get(key);
+  if (raw === null || raw.trim() === '') return fallback;
+  const v = Number(raw);
+  return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+}
+/** True when the query carries a usable number for `key` (present, non-empty and finite). */
+export function hasNum(q: URLSearchParams, key: string): boolean {
+  const raw = q.get(key);
+  return raw !== null && raw.trim() !== '' && Number.isFinite(Number(raw));
+}

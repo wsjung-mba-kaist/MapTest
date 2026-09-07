@@ -13,9 +13,17 @@ export class Post {
   readonly tone: ToneMappingEffect;
   private readonly vignette: VignetteEffect;
   private readonly smaaPass: EffectPass;
-  private readonly aoPass: N8AOPostPass;
-  enabled = true;
+  /** Whether ambient occlusion is wanted at all (mobile preset / ?ao=0); a quality preset must not override it. */
+  aoWanted = true;
   reflection?: WaterReflection;
+
+  /** Turn the composer on or off. With it off the renderer has to do its own tone mapping. */
+  set enabled(v: boolean) {
+    this._enabled = v;
+    this.renderer.toneMapping = v ? THREE.NoToneMapping : THREE.AgXToneMapping;
+  }
+  get enabled() { return this._enabled; }
+  private _enabled = true;
 
   constructor(readonly renderer: THREE.WebGLRenderer, readonly scene: THREE.Scene, readonly camera: THREE.PerspectiveCamera) {
     renderer.toneMapping = THREE.NoToneMapping; // tone mapping happens in the composer
@@ -24,7 +32,6 @@ export class Post {
 
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     this.n8ao = new N8AOPostPass(scene, camera, size.x, size.y);
-    this.aoPass = this.n8ao;
     const c = this.n8ao.configuration;
     c.aoRadius = 2.5; c.distanceFalloff = 1.2; c.intensity = 2.6; c.halfRes = true; c.gammaCorrection = false;
     c.aoSamples = 12; c.denoiseSamples = 6; c.denoiseRadius = 10; c.depthAwareUpsampling = true;
@@ -57,12 +64,17 @@ export class Post {
     this.renderer.toneMappingExposure = L(dayExposure, 1.25, n);
   }
 
+  /** Quality preset. It picks AO *settings*; whether AO runs at all stays with `aoWanted`, so `?ao=0` and the
+   *  mobile preset are not undone by a `?quality=` that happens to be parsed later. */
   setQuality(q: Quality) {
-    const c = this.aoPass.configuration;
-    if (q === 'low') { this.aoPass.enabled = false; this.smaaPass.enabled = true; }
-    else if (q === 'medium') { this.aoPass.enabled = true; c.halfRes = true; c.aoSamples = 12; c.denoiseSamples = 6; }
-    else { this.aoPass.enabled = true; c.halfRes = false; c.aoSamples = 16; c.denoiseSamples = 8; }
+    const c = this.n8ao.configuration;
+    if (q === 'low') { this.n8ao.enabled = false; this.smaaPass.enabled = true; }
+    else if (q === 'medium') { this.n8ao.enabled = this.aoWanted; c.halfRes = true; c.aoSamples = 12; c.denoiseSamples = 6; }
+    else { this.n8ao.enabled = this.aoWanted; c.halfRes = false; c.aoSamples = 16; c.denoiseSamples = 8; }
   }
+
+  /** Single entry point for turning AO off: remembers the intent so a later preset cannot switch it back on. */
+  setAo(on: boolean) { this.aoWanted = on; this.n8ao.enabled = on; }
 
   render(dt: number) {
     if (this.reflection?.enabled) this.reflection.render(this.scene, this.camera);

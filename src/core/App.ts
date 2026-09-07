@@ -31,7 +31,7 @@ import { Post } from '../render/Post';
 import { Glide } from '../player/Glide';
 import { PlacePanel, CATEGORY_COLOR } from '../ui/PlacePanel';
 import { PlaceList } from '../ui/PlaceList';
-import type { Landmark } from '../../shared/layout';
+import { hasNum, queryNum, type Landmark } from '../../shared/layout';
 
 /** yaw so that the camera at (x,z) faces (tx,tz); yaw 0 = north (-z), clockwise positive. */
 export const yawTo = (x: number, z: number, tx = 0, tz = 0) => Math.atan2(tx - x, -(tz - z));
@@ -196,7 +196,7 @@ export class App {
       // mobile preset: native resolution capped at 1x, no ambient occlusion, no planar reflection, smaller shadow map,
       // facade details only nearby
       this.renderer.setPixelRatio(1);
-      this.post.n8ao.enabled = false;
+      this.post.setAo(false);
       if (this.post.reflection) { this.post.reflection = undefined; this.world.water?.setReflection(null, null, 0); }
       this.env.sun.shadow.mapSize.set(2048, 2048);
       if (this.env.sun.shadow.map) { this.env.sun.shadow.map.dispose(); this.env.sun.shadow.map = null; }
@@ -426,31 +426,35 @@ export class App {
   /** Debug helpers: ?auto=1 skips the overlay; ?fly=1&x=..&y=..&z=..&yaw=deg&pitch=deg places the camera; ?hour=19.5 sets the time. */
   private applyUrlParams() {
     const q = new URLSearchParams(location.search);
-    if (q.get('walk') === '1' && q.has('x')) {
+    // Every number here is clamped: a malformed share link (or `?hour=` with no value) used to put NaN into the
+    // camera, the sun and the sky shader, and the whole frame went black with nothing in the console.
+    const HALF = 4000;   // generous: the world square is +/-1536 m but the fly camera may sit outside it
+    if (q.get('walk') === '1' && hasNum(q, 'x')) {
       // Walk-mode placement (share links): feet at (x,z), optional y to probe a deck at that height.
       this.flying = false;
-      const x = parseFloat(q.get('x')!), z = parseFloat(q.get('z') ?? '-409');
-      this.player.place(x, z, q.has('yaw') ? THREE.MathUtils.degToRad(parseFloat(q.get('yaw')!)) : yawTo(x, z), q.has('y') ? parseFloat(q.get('y')!) : undefined);
-      if (q.has('pitch')) { this.input.pitch = THREE.MathUtils.degToRad(parseFloat(q.get('pitch')!)); this.player.apply(); }
-    } else if (q.has('x') || q.has('fly')) {
+      const x = queryNum(q, 'x', 0, -HALF, HALF), z = queryNum(q, 'z', -409, -HALF, HALF);
+      const yaw = hasNum(q, 'yaw') ? THREE.MathUtils.degToRad(queryNum(q, 'yaw', 0, -3600, 3600)) : yawTo(x, z);
+      this.player.place(x, z, yaw, hasNum(q, 'y') ? queryNum(q, 'y', 0, -100, 1000) : undefined);
+      if (hasNum(q, 'pitch')) { this.input.pitch = THREE.MathUtils.degToRad(queryNum(q, 'pitch', 0, -89, 89)); this.player.apply(); }
+    } else if (hasNum(q, 'x') || q.has('fly')) {
       this.flying = true;
-      const x = parseFloat(q.get('x') ?? '-480'), z = parseFloat(q.get('z') ?? '-409');
-      const y = q.has('y') ? parseFloat(q.get('y')!) : this.world.groundY(x, z) + 1.7;
+      const x = queryNum(q, 'x', -480, -HALF, HALF), z = queryNum(q, 'z', -409, -HALF, HALF);
+      const y = hasNum(q, 'y') ? queryNum(q, 'y', 0, -100, 3000) : this.world.groundY(x, z) + 1.7;
       this.fly.position.set(x, y, z);
-      this.input.yaw = q.has('yaw') ? THREE.MathUtils.degToRad(parseFloat(q.get('yaw')!)) : yawTo(x, z);
-      this.input.pitch = q.has('pitch') ? THREE.MathUtils.degToRad(parseFloat(q.get('pitch')!)) : 0;
+      this.input.yaw = hasNum(q, 'yaw') ? THREE.MathUtils.degToRad(queryNum(q, 'yaw', 0, -3600, 3600)) : yawTo(x, z);
+      this.input.pitch = THREE.MathUtils.degToRad(queryNum(q, 'pitch', 0, -89, 89));
       this.fly.apply();
     }
     // ?at=<landmark id>: land there (unless x/z were given) and open its card
     const at = q.get('at') ? this.world.landmarks.byId.get(q.get('at')!) : undefined;
     if (at) { if (!q.has('x')) this.goTo(at, { instant: true, quiet: true }); this.currentLandmark = at.hidden ? null : at; this.placePanel.show(at, 'manual'); }   // a shared link keeps the card open until I
-    if (q.has('hour')) this.setHour(parseFloat(q.get('hour')!));
+    if (hasNum(q, 'hour')) this.setHour(queryNum(q, 'hour', 12, 0, 24));
     if (q.has('timepanel')) this.hud.toggleTimePanel(q.get('timepanel') !== '0');
     if (q.get('auto') === '1') { this.hud.showOverlay(false); this.gpuNotice(); }
-    if (q.has('fov')) { this.camera.fov = parseFloat(q.get('fov')!); this.camera.updateProjectionMatrix(); }
+    if (hasNum(q, 'fov')) { this.camera.fov = queryNum(q, 'fov', 70, 20, 130); this.camera.updateProjectionMatrix(); }
     if (q.get('xr') === '1' && 'xr' in navigator) this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input);   // experimental WebXR
     if (q.get('post') === '0') this.post.enabled = false;
-    if (q.get('ao') === '0') this.post.n8ao.enabled = false;                 // no ambient occlusion (A/B)
+    if (q.get('ao') === '0') this.post.setAo(false);                          // no ambient occlusion (A/B)
     if (q.get('clouds') === '0') this.env.setClouds(false);
     if (q.get('noshadow') === '1') this.renderer.shadowMap.enabled = false;
     if (q.get('noenv') === '1') { this.scene.environment = null; this.env.disableHdri = true; }
@@ -464,7 +468,7 @@ export class App {
     if (q.get('stars') === '0') { this.env.starsOn = false; (this.env.sky.material as THREE.ShaderMaterial).uniforms.uStarsOn.value = 0; }
     if (q.get('lampsdebug') === '1') localLights.debug = true;        // magenta lamps: spot materials that miss the hook
     if (q.has('clear')) this.renderer.setClearColor(new THREE.Color('#' + q.get('clear')));
-    if (q.has('skydim')) { const u = (this.env.sky.material as THREE.ShaderMaterial).uniforms; u.uDim.value = parseFloat(q.get('skydim')!); console.log('sky uniforms', JSON.stringify({ dim: u.uDim.value, sun: u.sunPosition.value, turb: u.turbidity.value, ray: u.rayleigh.value, mie: u.mieCoefficient.value, night: this.env.night })); }
+    if (q.has('skydim')) { const u = (this.env.sky.material as THREE.ShaderMaterial).uniforms; u.uDim.value = queryNum(q, 'skydim', 1, 0, 10); console.log('sky uniforms', JSON.stringify({ dim: u.uDim.value, sun: u.sunPosition.value, turb: u.turbidity.value, ray: u.rayleigh.value, mie: u.mieCoefficient.value, night: this.env.night })); }
     // ?hide=far,eiffel,trees,buildings,terrain,water,bridges,furniture,sky  (debugging)
     for (const name of (q.get('hide') ?? '').split(',').filter(Boolean)) {
       const w = this.world as unknown as Record<string, { group?: THREE.Object3D } | undefined>;
