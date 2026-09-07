@@ -5,12 +5,13 @@ import { EdgeFlag, NodeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shared/signals';
 import type { CrossingTable } from '../../../shared/crossings';
-import { carColor, loadCarKit, makeCarMaterial, type CarModel } from './CarKit';
+import { busModel, carColor, loadCarKit, makeBusMaterial, makeCarMaterial, type CarModel } from './CarKit';
 import type { LocalLight } from '../../render/LocalLights';
 
 const CAP = 384;
 const VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi'] as const;
-const VARIANT_W = [0.32, 0.2, 0.2, 0.13, 0.15];
+const VARIANT_W = [0.30, 0.19, 0.19, 0.12, 0.14, 0.06];   // the last entry is the bus
+const BUS = VARIANTS.length;
 const GAP_MIN = 7.5;          // bumper-to-bumper target gap at standstill (m)
 const JUNCTION_RUN_IN = 8;    // metres of the next edge consumed by the junction curve
 const NO_SPAWN_NEAR = 12;
@@ -101,6 +102,26 @@ export class Traffic {
       this.meshes.push(mesh);
       this.group.add(mesh);
     });
+    // buses: a procedural RATP-style 12 m bus in the kerb lane of the main streets
+    if (this.models.length === VARIANTS.length) {
+      const bus = busModel();
+      this.models.push(bus);
+      const mesh = new THREE.InstancedMesh(bus.geometry, makeBusMaterial(this.uniforms), CAP);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = false;
+      mesh.setColorAt(0, this.color.setHex(0xffffff));
+      const st = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3); st.setUsage(THREE.DynamicDrawUsage);
+      mesh.geometry.setAttribute('aState', st); this.stateAttrs.push(st);
+      this.meshes.push(mesh);
+      this.group.add(mesh);
+    }
+  }
+
+  /** Buses on the road and the nearest one to (x, z), for the debug readout. */
+  busInfo(x: number, z: number): { n: number; d: number; x: number; z: number } {
+    let n = 0, best = -1, bd = Infinity;
+    for (let i = 0; i < this.count; i++) { if (this.variant[i] !== BUS) continue; n++; const d = Math.hypot(this.px[i] - x, this.pz[i] - z); if (d < bd) { bd = d; best = i; } }
+    return { n, d: bd, x: best < 0 ? NaN : this.px[best], z: best < 0 ? NaN : this.pz[best] };
   }
 
   private laneKey(e: number, dir: number, lane: number) { return e * 8 + (dir > 0 ? 0 : 4) + Math.min(3, lane); }
@@ -160,7 +181,12 @@ export class Traffic {
           const seed = (hash32(e, k, lap, 24) * 4294967295) >>> 0;
           const i = this.count++;
           this.edge[i] = e; this.dir[i] = dir; this.lane[i] = lane; this.seg[i] = this.tmp.seg; this.s[i] = sPos;
-          this.v[i] = speed; this.vCruise[i] = speed; this.variant[i] = pickVariant(hash32(seed, 25)); this.seed[i] = seed; this.hop[i] = 0;
+          // buses: kerb lane of trunk..tertiary streets only (several RATP lines share the main avenues), 12 % of that lane
+          const busLane = lane === 0 && g.eCls[e] <= 3 && this.models.length > BUS;
+          let vi = busLane && hash32(seed, 26) < 0.12 ? BUS : pickVariant(hash32(seed, 25));
+          if (vi === BUS && !busLane) vi = 0;
+          const sp = vi === BUS ? speed * 0.85 : speed;
+          this.v[i] = sp; this.vCruise[i] = sp; this.variant[i] = vi; this.seed[i] = seed; this.hop[i] = 0;
           this.px[i] = this.tmp.x; this.pz[i] = this.tmp.z; this.hx[i] = dir * this.tmp.ux; this.hz[i] = dir * this.tmp.uz;
           this.jt[i] = -1; this.ident[i] = id; this.alive.add(id);
           this.chooseNext(i);
@@ -299,7 +325,7 @@ export class Traffic {
       const a = mesh.instanceMatrix.array as Float32Array, o = slot * 16;
       a[o] = c; a[o + 1] = 0; a[o + 2] = -sn; a[o + 3] = 0; a[o + 4] = 0; a[o + 5] = 1; a[o + 6] = 0; a[o + 7] = 0;
       a[o + 8] = sn; a[o + 9] = 0; a[o + 10] = c; a[o + 11] = 0; a[o + 12] = x; a[o + 13] = y; a[o + 14] = z; a[o + 15] = 1;
-      mesh.setColorAt(slot, this.color.setHex(carColor(hash32(this.seed[i], 27), vi)));
+      mesh.setColorAt(slot, this.color.setHex(vi === BUS ? 0xffffff : carColor(hash32(this.seed[i], 27), vi)));
       const st = this.stateAttrs[vi].array as Float32Array, remain = g.eLen[this.edge[i]] - this.progress(i);
       const indicating = this.lightFx && this.turn[i] !== 0 && (remain < 25 || this.jt[i] >= 0);
       st[slot * 3] = this.lightFx ? this.brake[i] : 0; st[slot * 3 + 1] = indicating ? this.turn[i] : 0; st[slot * 3 + 2] = this.odo[i];

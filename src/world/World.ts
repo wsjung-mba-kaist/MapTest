@@ -45,7 +45,7 @@ export class World {
   /** 2 m surface class grid (sidewalk slabs, road, grass...); null when the streets bake has not run */
   surface: SurfaceGrid | null = null;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
-  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, debug: false };
+  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
 
   async load(onProgress: (frac: number, msg: string) => void) {
     onProgress(0.05, 'Loading manifest...');

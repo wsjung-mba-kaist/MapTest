@@ -9,6 +9,7 @@ import type { Boats } from './Boats';
 import type { Signals } from './Signals';
 import type { FarTraffic } from './FarTraffic';
 import type { Metro } from './Metro';
+import type { Cyclists } from './Cyclists';
 import type { LocalLight } from '../../render/LocalLights';
 import { activity } from '../../../shared/nightlife';
 import { buildCrossings } from '../../../shared/crossings';
@@ -28,6 +29,7 @@ export class Life {
   signals?: Signals;
   farTraffic?: FarTraffic;
   metro?: Metro;
+  cyclists?: Cyclists;
   /** activation radii (metres) */
   walkRadius = 220;
   driveRadius = 350;
@@ -41,7 +43,7 @@ export class Life {
   constructor() { this.group.name = 'life'; }
 
   crossingStats = '';
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; cyclists?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
     await this.graph.load();
     this.debugOn = !!opts.debug;
     if (opts.crowd) { const { Crowd } = await import('./Crowd'); this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
@@ -49,6 +51,7 @@ export class Life {
     if (opts.boats) { const { Boats } = await import('./Boats'); this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
     if (opts.signals !== false) { const { Signals } = await import('./Signals'); this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
     if (opts.traffic && opts.farTraffic !== false) { const { FarTraffic } = await import('./FarTraffic'); this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
+    if (opts.crowd && opts.cyclists !== false) { const { Cyclists } = await import('./Cyclists'); this.cyclists = new Cyclists(this.graph, this.clock, surface); this.group.add(this.cyclists.group); }
     if (opts.metro !== false) {
       try { const { Metro } = await import('./Metro'); const m = new Metro(this.clock); await m.load(); this.metro = m; this.group.add(m.group); } catch (e) { console.warn('rail.json missing: no métro', e); }
     }
@@ -61,7 +64,7 @@ export class Life {
   }
 
   /** Player collision with people and cars: total push-out for a circle (x, z, r). */
-  pushOut(x: number, z: number, r: number, out: { dx: number; dz: number }) { this.crowd?.pushOut(x, z, r, out); this.traffic?.pushOut(x, z, r, out); }
+  pushOut(x: number, z: number, r: number, out: { dx: number; dz: number }) { this.crowd?.pushOut(x, z, r, out); this.traffic?.pushOut(x, z, r, out); this.cyclists?.pushOut(x, z, r, out); }
 
   /** Dynamic local lights (boat floodlights first, then the nearest cars' headlights); `cars` = 0 disables headlights. */
   dynamicLights(x: number, z: number, cars = 5): LocalLight[] {
@@ -85,8 +88,10 @@ export class Life {
       if (this.debugOn) this.rebuildDebug();
     }
     if (moved || reseedWalk) this.crowd?.setActive(this.activeWalk, x, z, this.walkRadius);
+    if (moved) this.cyclists?.setActive(this.activeWalk, x, z, this.walkRadius);
     if (moved || reseedDrive) this.traffic?.setActive(this.activeDrive, x, z, this.driveRadius);
     this.crowd?.update(simDt, x, z, camDir, night);
+    this.cyclists?.update(simDt);
     this.traffic?.update(simDt, x, z, camDir, night);
     this.boats?.update(simDt, night);
     this.signals?.update(this.clock.time, night);
@@ -99,6 +104,9 @@ export class Life {
     const parts: string[] = [];
     if (this.crowd) parts.push(`walk ${this.crowd.count}`);
     if (this.traffic) parts.push(`cars ${this.traffic.count}`);
+    if (this.cyclists) parts.push(`bikes ${this.cyclists.count}`);
+    if (this.debugOn && this.traffic) { const b = this.traffic.busInfo(this.lastX, this.lastZ); parts.push(`buses ${b.n}${b.n ? ` @${b.x.toFixed(0)},${b.z.toFixed(0)} ${b.d.toFixed(0)}m` : ''}`); }
+    if (this.debugOn && this.cyclists) { const c = this.cyclists.nearest(this.lastX, this.lastZ); if (c) parts.push(`bike @${c.x.toFixed(0)},${c.z.toFixed(0)} ${c.d.toFixed(0)}m`); }
     if (this.boats) parts.push(`boats ${this.boats.count} ${this.boats.stats}`);
     return `life ${parts.join(' ')} ${this.crossingStats} ${this.lastMs.toFixed(2)}ms`;
   }

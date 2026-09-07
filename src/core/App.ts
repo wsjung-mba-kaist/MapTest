@@ -14,7 +14,7 @@ import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
 import { AudioEngine } from '../audio/Audio';
 import { TowerAccess, type Hotspot } from '../world/TowerAccess';
-import { createRenderer } from './Renderer';
+import { createRenderer, gpuInfo } from './Renderer';
 import { Hud, formatHour } from '../ui/Hud';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
@@ -44,6 +44,7 @@ export const VIEWPOINTS: { key: string; name: string; x: number; z: number; yaw?
 export const yawTo = (x: number, z: number, tx = 0, tz = 0) => Math.atan2(tx - x, -(tz - z));
 
 export class App {
+  readonly canvas: HTMLCanvasElement;
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -76,10 +77,11 @@ export class App {
   flying = false;
   private captureRequested = false;
 
-  constructor(readonly canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement) {
     this.renderer = createRenderer(canvas);
+    this.canvas = this.renderer.domElement;   // createRenderer may have swapped in a fresh canvas
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.2, 9000);
-    this.input = new Input(canvas);
+    this.input = new Input(this.canvas);
     this.fly = new FlyControls(this.camera, this.input);
     this.scene.add(this.world.group);
     this.env = new Environment(this.scene, this.renderer);
@@ -113,7 +115,7 @@ export class App {
       const dateS = q.get('date');
       if (dateS && /^\d{4}-\d{2}-\d{2}$/.test(dateS)) { const [y, m, d] = dateS.split('-').map(Number); this.env.setDate([y, m, d]); }
       if (life === '0') this.world.lifeOptions = null;
-      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), metro: set.has('traffic'), debug: q.get('lifedebug') === '1' }; }
+      else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), metro: set.has('traffic'), cyclists: set.has('crowd'), debug: q.get('lifedebug') === '1' }; }
       else if (this.world.lifeOptions) this.world.lifeOptions.debug = q.get('lifedebug') === '1';
       // ?marks=0 road markings, ?streets=0 sidewalk slabs, ?signs=0 shop signs + plaques; *debug=1 variants paint them magenta / log placements
       if (q.get('marks') === '0') this.world.marksEnabled = false;
@@ -129,6 +131,7 @@ export class App {
       if (q.get('fartraffic') === '0' && this.world.lifeOptions) this.world.lifeOptions.farTraffic = false;
       if (q.get('crossings') === '0' && this.world.lifeOptions) this.world.lifeOptions.crossings = false;
       if (q.get('metro') === '0' && this.world.lifeOptions) this.world.lifeOptions.metro = false;
+      if (q.get('cyclists') === '0' && this.world.lifeOptions) this.world.lifeOptions.cyclists = false;
       this.carLights = q.get('carlights') !== '0';
       if (q.get('shoplights') === '0') setShopLights(false);
       if (tower === 'lit') this.towerAlwaysOn = true;
@@ -281,6 +284,7 @@ export class App {
     this.hud.setTimeDisplay(this.env.hour);
     document.addEventListener('pointerlockchange', () => { if (!this.input.touchMode) this.hud.showOverlay(!this.input.locked); });
     this.hud.onStart = () => {
+      this.gpuNotice();
       this.audio.ensure();
       if (this.touch.enabled) { this.input.touchMode = true; this.hud.showOverlay(false); }   // phones: no pointer lock
       else this.input.lock();
@@ -295,6 +299,17 @@ export class App {
     if (open) this.input.unlock();
     else if (!this.input.locked) this.input.lock();
   }
+  private gpuNoticed = false;
+  /** One-time GPU readout after the first click: the adapter name, or how to get off software rendering. */
+  private gpuNotice() {
+    if (this.gpuNoticed) return;
+    this.gpuNoticed = true;
+    const g = gpuInfo();
+    if (g.software) this.hud.toast(`⚠ 하드웨어 GPU 없이 소프트웨어 렌더링(${g.name}) 중입니다 · Chrome 설정 → 시스템 → "가능한 경우 그래픽 가속 사용" 켜기 · chrome://gpu 에서 WebGL 상태 확인 · 드라이버 업데이트`, 90000);
+    else if (g.integrated) this.hud.toast(`GPU: ${g.name} (내장) · 고성능 GPU가 따로 있으면 Windows 설정 → 시스템 → 디스플레이 → 그래픽에서 브라우저를 "고성능"으로 지정하세요`, 12000);
+    else this.hud.toast(`GPU: ${g.name}`, 5000);
+  }
+
   setHour(h: number) { this.env.setHour(h); this.hud.setTimeDisplay(this.env.hour); }
   /** Preset hours follow the day's real sunrise / sunset (a June sunset is 21:58, a December one 16:56). */
   applyDayPresets() {
@@ -357,7 +372,7 @@ export class App {
     }
     if (q.has('hour')) this.setHour(parseFloat(q.get('hour')!));
     if (q.has('timepanel')) this.hud.toggleTimePanel(q.get('timepanel') !== '0');
-    if (q.get('auto') === '1') this.hud.showOverlay(false);
+    if (q.get('auto') === '1') { this.hud.showOverlay(false); this.gpuNotice(); }
     if (q.has('fov')) { this.camera.fov = parseFloat(q.get('fov')!); this.camera.updateProjectionMatrix(); }
     if (q.get('xr') === '1' && 'xr' in navigator) this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input);   // experimental WebXR
     if (q.get('post') === '0') this.post.enabled = false;
@@ -417,6 +432,6 @@ export class App {
     const yawDeg = ((THREE.MathUtils.radToDeg(this.input.yaw) % 360) + 360) % 360;
     const w = this.world;
     const floor = !this.flying ? this.tower.floorAt(this.player.position.x, this.player.position.y, this.player.position.z) : null;
-    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)`);
+    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)\ngpu ${gpuInfo().name}${gpuInfo().software ? ' (SOFTWARE)' : gpuInfo().integrated ? ' (integrated)' : ''}`);
   }
 }

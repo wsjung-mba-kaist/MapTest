@@ -171,41 +171,93 @@ export function carTexture() { return texture; }
  * slightly metallic), head / tail lights emissive at night. three's own instance-colour multiply (`vColor`) is
  * bypassed: `color_fragment` is replaced, not appended, so the texture keeps its colours outside the paint.
  */
-export function makeCarMaterial(uniforms: { uLights: { value: number }; uTime: { value: number } }): THREE.MeshStandardMaterial {
+type CarUniforms = { uLights: { value: number }; uTime: { value: number } };
+
+/** Vertex side shared by cars and buses: paint / light tags, wheel spin about the axle, per-instance state to the fragment. */
+function carVertexPatch(shader: THREE.WebGLProgramParametersWithUniforms) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aBody; attribute float aEmit; attribute vec3 aAxle; attribute vec3 aState; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;')
+    // wheels spin about their axle by odometer / radius (aState.z); the car faces -z, so forward is a negative angle
+    .replace('#include <beginnormal_vertex>', /* glsl */`#include <beginnormal_vertex>
+      if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); objectNormal.yz = vec2(c * objectNormal.y - s * objectNormal.z, s * objectNormal.y + c * objectNormal.z); }`)
+    .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
+      if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); vec2 d = transformed.yz - aAxle.xy; transformed.yz = aAxle.xy + vec2(c * d.x - s * d.y, s * d.x + c * d.y); }`)
+    .replace('#include <color_vertex>', /* glsl */`#include <color_vertex>
+      vEmit = aEmit; vBody = aBody; vState = aState; vSide = position.x;
+      vPaint = vec3(0.85);
+      #ifdef USE_INSTANCING_COLOR
+        vPaint = instanceColor.xyz;
+      #endif`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uLights; uniform float uTime; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;');
+}
+
+/** Fragment side shared by cars and buses: light-disc albedo, night glow + brake + blinking indicator. */
+const LIGHT_DISCS = /* glsl */`
+  if (vEmit > 0.5) diffuseColor.rgb = vEmit > 1.5 ? vec3(0.5, 0.05, 0.03) : vec3(0.9, 0.9, 0.85);`;
+const LIGHT_EMISSIVE = /* glsl */`#include <emissivemap_fragment>
+  if (vEmit > 0.5) {
+    float blink = step(0.5, fract(uTime * 1.25));
+    float ind = (abs(vState.y) > 0.5 && vSide * vState.y > 0.0) ? blink : 0.0;
+    vec3 amber = vec3(1.0, 0.45, 0.05);
+    totalEmissiveRadiance += vEmit > 1.5 ? vec3(1.0, 0.08, 0.04) * (uLights * 3.5 + vState.x * 5.0) + amber * ind * 6.0 : vec3(1.0, 0.95, 0.8) * uLights * 9.0 + amber * ind * 4.0;
+  }`;
+
+export function makeCarMaterial(uniforms: CarUniforms): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.55, metalness: 0.12 });
-  mat.customProgramCacheKey = () => 'carkit-v4';
+  mat.customProgramCacheKey = () => 'carkit-v5';
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aBody; attribute float aEmit; attribute vec3 aAxle; attribute vec3 aState; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;')
-      // wheels spin about their axle by odometer / radius (aState.z); the car faces -z, so forward is a negative angle
-      .replace('#include <beginnormal_vertex>', /* glsl */`#include <beginnormal_vertex>
-        if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); objectNormal.yz = vec2(c * objectNormal.y - s * objectNormal.z, s * objectNormal.y + c * objectNormal.z); }`)
-      .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
-        if (aAxle.z > 0.0) { float ang = -aState.z / aAxle.z; float c = cos(ang), s = sin(ang); vec2 d = transformed.yz - aAxle.xy; transformed.yz = aAxle.xy + vec2(c * d.x - s * d.y, s * d.x + c * d.y); }`)
-      .replace('#include <color_vertex>', /* glsl */`#include <color_vertex>
-        vEmit = aEmit; vBody = aBody; vState = aState; vSide = position.x;
-        vPaint = vec3(0.85);
-        #ifdef USE_INSTANCING_COLOR
-          vPaint = instanceColor.xyz;
-        #endif`);
+    carVertexPatch(shader);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uLights; uniform float uTime; varying float vEmit; varying float vBody; varying vec3 vPaint; varying vec3 vState; varying float vSide;')
       .replace('#include <color_fragment>', /* glsl */`
         // paint swatch -> instance colour times the swatch's gradient shade; everything else keeps the palette texture
-        if (vBody > 0.01) diffuseColor.rgb = vPaint * vBody;
-        if (vEmit > 0.5) diffuseColor.rgb = vEmit > 1.5 ? vec3(0.5, 0.05, 0.03) : vec3(0.9, 0.9, 0.85);`)
+        if (vBody > 0.01) diffuseColor.rgb = vPaint * vBody;` + LIGHT_DISCS)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vBody > 0.01 ? 0.3 : roughness;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vBody > 0.01 ? 0.5 : metalness;')
-      // tail discs: night glow + brake (day too); indicator: the disc on the turning side blinks amber at 1.25 Hz
-      .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
-        if (vEmit > 0.5) {
-          float blink = step(0.5, fract(uTime * 1.25));
-          float ind = (abs(vState.y) > 0.5 && vSide * vState.y > 0.0) ? blink : 0.0;
-          vec3 amber = vec3(1.0, 0.45, 0.05);
-          totalEmissiveRadiance += vEmit > 1.5 ? vec3(1.0, 0.08, 0.04) * (uLights * 3.5 + vState.x * 5.0) + amber * ind * 6.0 : vec3(1.0, 0.95, 0.8) * uLights * 9.0 + amber * ind * 4.0;
-        }`);
+      .replace('#include <emissivemap_fragment>', LIGHT_EMISSIVE);
   };
   withLamps(mat);
   return mat;
+}
+
+/** Bus material: vertex-coloured livery (no palette texture), same lights / wheels / state as the cars. */
+export function makeBusMaterial(uniforms: CarUniforms): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.15 });
+  mat.customProgramCacheKey = () => 'bus-v1';
+  mat.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, uniforms);
+    carVertexPatch(shader);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <color_fragment>', '#include <color_fragment>' + LIGHT_DISCS)
+      .replace('#include <emissivemap_fragment>', LIGHT_EMISSIVE);
+  };
+  withLamps(mat);
+  return mat;
+}
+
+/** RATP-style standard bus, 12 m: white body, jade band, dark window strip, four spinning wheels, light discs. */
+export function busModel(): CarModel {
+  const col = (g: THREE.BufferGeometry, hex: number) => {
+    const c = new THREE.Color(hex), n = g.attributes.position.count, arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    return g;
+  };
+  const L = 12, W = 2.55;
+  const parts: THREE.BufferGeometry[] = [
+    col(tagged(new THREE.BoxGeometry(W, 2.6, L).translate(0, 1.85, 0), 0, 0), 0xf2f2ee),
+    col(tagged(new THREE.BoxGeometry(W + 0.03, 0.55, L + 0.02).translate(0, 0.95, 0), 0, 0), 0x2a8c74),
+    col(tagged(new THREE.BoxGeometry(W + 0.05, 0.95, L - 1.0).translate(0, 2.45, 0), 0, 0), 0x14171c),
+    col(tagged(new THREE.BoxGeometry(W - 0.3, 1.7, 0.06).translate(0, 2.15, -L / 2 - 0.01), 0, 0), 0x14171c),
+    col(tagged(new THREE.BoxGeometry(1.6, 0.35, 3.0).translate(0, 3.3, 1.0), 0, 0), 0x9a9ea3),
+  ];
+  for (const sx of [-1.05, 1.05]) for (const sz of [-3.9, 3.9]) parts.push(col(tagged(new THREE.CylinderGeometry(0.5, 0.5, 0.3, 14).rotateZ(Math.PI / 2).translate(sx, 0.5, sz), 0, 0, [0.5, sz, 0.5]), 0x17181a));
+  for (const sx of [-0.9, 0.9]) {
+    parts.push(col(tagged(new THREE.CircleGeometry(0.16, 10).rotateY(Math.PI).translate(sx, 1.0, -L / 2 - 0.03), 0, 1), 0xffffff));
+    parts.push(col(tagged(new THREE.CircleGeometry(0.14, 8).translate(sx * 1.05, 1.35, L / 2 + 0.02), 0, 2), 0xffffff));
+  }
+  const geometry = mergeGeometries(parts, false)!;
+  geometry.computeBoundingSphere();
+  return { geometry, length: L, width: W, height: 3.5 };
 }
