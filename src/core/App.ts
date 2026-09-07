@@ -14,7 +14,8 @@ import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
 import { AudioEngine } from '../audio/Audio';
 import { TowerAccess, type Hotspot } from '../world/TowerAccess';
-import { createRenderer, gpuInfo } from './Renderer';
+import { createRenderer, gpuInfo, hpAdapter, probeHighPerfAdapter } from './Renderer';
+import { GpuPanel } from '../ui/GpuPanel';
 import { Hud, formatHour } from '../ui/Hud';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
@@ -82,6 +83,7 @@ export class App {
     this.canvas = this.renderer.domElement;   // createRenderer may have swapped in a fresh canvas
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.2, 9000);
     this.input = new Input(this.canvas);
+    this.gpuPanel.onOpen = () => this.input.unlock();
     this.fly = new FlyControls(this.camera, this.input);
     this.scene.add(this.world.group);
     this.env = new Environment(this.scene, this.renderer);
@@ -132,6 +134,7 @@ export class App {
       if (q.get('crossings') === '0' && this.world.lifeOptions) this.world.lifeOptions.crossings = false;
       if (q.get('metro') === '0' && this.world.lifeOptions) this.world.lifeOptions.metro = false;
       if (q.get('cyclists') === '0' && this.world.lifeOptions) this.world.lifeOptions.cyclists = false;
+      this.forceGpuPanel = q.get('gpu') === '1';
       this.carLights = q.get('carlights') !== '0';
       if (q.get('shoplights') === '0') setShopLights(false);
       if (tower === 'lit') this.towerAlwaysOn = true;
@@ -254,6 +257,7 @@ export class App {
 
     this.input.onKey((code, e) => {
       if (code === 'KeyH') this.hud.toggleHelp();
+      if (code === 'KeyG') this.toggleGpuPanel();
       if (code === 'KeyF') this.toggleFly();
       if (code === 'KeyT') this.toggleTimePanel();
       if (code === 'KeyN') this.cycleTime();
@@ -299,15 +303,27 @@ export class App {
     if (open) this.input.unlock();
     else if (!this.input.locked) this.input.lock();
   }
+  private readonly gpuPanel = new GpuPanel();
+  private forceGpuPanel = false;
   private gpuNoticed = false;
-  /** One-time GPU readout after the first click: the adapter name, or how to get off software rendering. */
+  /** G: the "GPU 선택" panel (which adapter WebGL got, which one the browser could use, how to switch). */
+  private toggleGpuPanel(force = false) {
+    if (this.gpuPanel.open && !force) { this.gpuPanel.hide(); return; }
+    this.gpuPanel.show(gpuInfo(), hpAdapter());
+    void probeHighPerfAdapter().then(hp => { if (this.gpuPanel.open) this.gpuPanel.show(gpuInfo(), hp); });
+  }
+  /** One-time GPU readout after the first click; opens the panel when WebGL is on a weaker adapter than the browser can see. */
   private gpuNotice() {
     if (this.gpuNoticed) return;
     this.gpuNoticed = true;
     const g = gpuInfo();
-    if (g.software) this.hud.toast(`⚠ 하드웨어 GPU 없이 소프트웨어 렌더링(${g.name}) 중입니다 · Chrome 설정 → 시스템 → "가능한 경우 그래픽 가속 사용" 켜기 · chrome://gpu 에서 WebGL 상태 확인 · 드라이버 업데이트`, 90000);
-    else if (g.integrated) this.hud.toast(`GPU: ${g.name} (내장) · 고성능 GPU가 따로 있으면 Windows 설정 → 시스템 → 디스플레이 → 그래픽에서 브라우저를 "고성능"으로 지정하세요`, 12000);
-    else this.hud.toast(`GPU: ${g.name}`, 5000);
+    void probeHighPerfAdapter().then(hp => {
+      const better = !!hp && hp.vendor !== '' && hp.vendor !== 'unknown' && hp.vendor !== g.vendor;
+      const wrongGpu = g.software || (g.integrated && better);
+      if (this.forceGpuPanel || (wrongGpu && !GpuPanel.suppressed)) this.toggleGpuPanel(true);
+      else if (g.software || g.integrated) this.hud.toast(`GPU: ${g.name}${g.software ? ' · 소프트웨어 렌더링' : ' · 내장 GPU'} · G 키: GPU 선택 안내`, 8000);
+      else this.hud.toast(`GPU: ${g.name}`, 5000);
+    });
   }
 
   setHour(h: number) { this.env.setHour(h); this.hud.setTimeDisplay(this.env.hour); }
@@ -432,6 +448,6 @@ export class App {
     const yawDeg = ((THREE.MathUtils.radToDeg(this.input.yaw) % 360) + 360) % 360;
     const w = this.world;
     const floor = !this.flying ? this.tower.floorAt(this.player.position.x, this.player.position.y, this.player.position.z) : null;
-    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)\ngpu ${gpuInfo().name}${gpuInfo().software ? ' (SOFTWARE)' : gpuInfo().integrated ? ' (integrated)' : ''}`);
+    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)\ngpu ${gpuInfo().name}${gpuInfo().software ? ' (SOFTWARE)' : gpuInfo().integrated ? ' (integrated)' : ''}  hp-adapter ${hpAdapter() === undefined ? '…' : hpAdapter()?.vendor ?? 'n/a'}`);
   }
 }

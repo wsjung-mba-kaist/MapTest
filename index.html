@@ -60,6 +60,20 @@
     html.touch #overlay p { padding: 0 24px; text-align: center; }
     html.touch #crosshair { display: none; }
     #touch .touch-row button.on { background: rgba(232,194,122,.55); }
+    #gpupanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 40; width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; background: rgba(8,10,16,.93); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 16px 18px; font-size: 13px; line-height: 1.6; pointer-events: auto; backdrop-filter: blur(8px); -webkit-user-select: text; user-select: text; }
+    #gpupanel[hidden] { display: none; }
+    #gpupanel h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+    #gpupanel .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 4px 0 8px; font: 12px/1.7 ui-monospace, monospace; }
+    #gpupanel .badge { display: inline-block; padding: 0 6px; margin-left: 6px; border-radius: 4px; font: 11px/18px system-ui, sans-serif; background: rgba(224,96,96,.35); vertical-align: 1px; }
+    #gpupanel .badge.ok { background: rgba(96,180,120,.35); }
+    #gpupanel .verdict { margin: 6px 0; }
+    #gpupanel .warn { color: #f3c0a6; }
+    #gpupanel .method { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.05); }
+    #gpupanel .method b { display: block; margin-bottom: 3px; color: #e8c27a; }
+    #gpupanel code { font: 12px ui-monospace, monospace; background: rgba(255,255,255,.09); padding: 1px 5px; border-radius: 4px; }
+    #gpupanel button, #gpupanel a.btn { display: inline-block; padding: 2px 9px; margin: 0 4px; border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; font-size: 12px; line-height: 18px; cursor: pointer; text-decoration: none; }
+    #gpupanel button:hover, #gpupanel a.btn:hover { background: rgba(232,194,122,.3); }
+    #gpupanel .foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -69,6 +83,7 @@
     <div id="status"></div>
     <div id="toast" hidden></div>
     <div id="prompt" hidden></div>
+    <div id="gpupanel" hidden></div>
     <div id="timepanel">
       <div class="row"><label for="timeslider">시간 <span id="timeval">17:30</span></label><span class="hint" id="datelabel">오늘 · 파리</span></div>
       <input id="timeslider" type="range" min="0" max="24" step="0.1" value="17.5" />
@@ -79,7 +94,7 @@
       <b>Paris · Champ de Mars</b><br/>
       <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · <kbd>Shift</kbd> 달리기 · 마우스 시점<br/>
       <kbd>1</kbd>–<kbd>8</kbd> 명소 이동 · <kbd>F</kbd> 비행 · <kbd>T</kbd> 시간 패널 · <kbd>N</kbd> 야경 · <kbd>H</kbd> 도움말 · <kbd>Esc</kbd> 마우스 해제<br/>
-      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 · <kbd>V</kbd> 소리 끄기/켜기 · 게임패드 지원
+      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 · <kbd>V</kbd> 소리 끄기/켜기 · <kbd>G</kbd> GPU 선택 · 게임패드 지원
     </div>
     <div id="overlay">
       <h1>Tour Eiffel</h1>

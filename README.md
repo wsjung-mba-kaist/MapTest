@@ -143,12 +143,15 @@ src/render   Environment(태양·하늘·HDRI·안개·야간), NightSky(별·�
 
 좌표계: 에펠탑 중심을 원점으로 하는 ENU 미터 좌표(x 동, z 남, y 위), y = NGF 고도 − 33.8 m.
 
-## GPU 확인
+## GPU 확인 · 선택
 
 WebGL2 컨텍스트는 `powerPreference: 'high-performance'` + `failIfMajorPerformanceCaveat`로 먼저 요청해 브라우저가 소프트웨어 렌더러(SwiftShader·WARP)를 조용히 내주지 못하게 하고, 실패했을 때만 새 캔버스에서 소프트웨어 컨텍스트로 물러납니다(`src/core/Renderer.ts`). 시작 클릭 뒤 토스트로 감지된 GPU 이름이 뜨고, `?status=1`의 마지막 줄(`gpu …`)과 콘솔의 `[gpu]` 줄에도 나옵니다.
 
+- **`G` 키 = GPU 선택 패널**: WebGL이 받은 GPU와, 브라우저가 WebGPU로 볼 수 있는 고성능 GPU를 나란히 보여 주고, 브라우저를 외장 GPU로 옮기는 스위치를 복사 버튼과 함께 안내합니다. WebGL이 내장·소프트웨어 GPU에 있고 더 센 GPU가 보이면 첫 클릭 뒤 자동으로 열립니다(`다시 보지 않기`로 끌 수 있고, `?gpu=1`로 강제로 엽니다). 웹 페이지는 자기 WebGL 컨텍스트가 돌 GPU를 고를 수 없으므로(Windows의 Chrome/Edge는 GPU 프로세스 하나에 어댑터 하나) 선택은 브라우저·OS 단에서 합니다.
+  - **가장 간단**: `chrome://flags/#force-high-performance-gpu`(Edge는 `edge://flags/...`)를 `Enabled`로 바꾸고 Relaunch. Chrome 문서(WebGPU troubleshooting)가 안내하는 공식 스위치로, 브라우저 전체를 고성능 GPU로 옮깁니다.
+  - **OS 단**: 패널의 "Windows 그래픽 설정 열기"(`ms-settings:display-advancedgraphics`) → 데스크톱 앱 → 브라우저 exe 추가 → 고성능 → `chrome://quit` 후 재시작.
 - **`(SOFTWARE)`가 보이면** Chrome 설정 → 시스템 → "가능한 경우 그래픽 가속 사용"을 켜고, `chrome://gpu`에서 WebGL/WebGL2가 `Hardware accelerated`인지, 그래픽 드라이버가 차단 목록에 있지 않은지 확인합니다(드라이버 업데이트 또는 `chrome://flags/#ignore-gpu-blocklist`).
-- **`(integrated)`가 보이면** 내장 GPU로 돌고 있습니다. 외장 GPU가 있는 노트북은 Windows 설정 → 시스템 → 디스플레이 → 그래픽에서 브라우저 실행 파일을 추가하고 "고성능"으로 지정하세요(브라우저 재시작 필요). Windows의 Chrome은 프로세스 단위로 GPU를 쓰므로 페이지 쪽 `powerPreference`만으로는 외장 GPU로 바뀌지 않습니다.
+- **`(integrated)`가 보이면** 내장 GPU로 돌고 있습니다(예: `chrome://gpu`에 `GPU0 … AMD Radeon(TM) 610M *ACTIVE*`, `GPU1 … NVIDIA GeForce RTX 5070`처럼 외장이 놀고 있는 하이브리드 노트북). Windows의 Chrome은 GPU 프로세스 하나가 OS가 정해 준 GPU를 쓰므로 페이지 쪽 `powerPreference`로는 바뀌지 않습니다. 순서: Windows 설정 → 시스템 → 디스플레이 → 그래픽 → "데스크톱 앱" 선택 후 찾아보기로 `C:\Program Files\Google\Chrome\Application\chrome.exe` 추가 → 목록의 Google Chrome → 옵션 → **고성능**(외장 GPU 이름 표시) → 저장 → 주소창에 `chrome://quit`로 완전히 종료 → 다시 실행 → `chrome://gpu`의 `GL_RENDERER`와 이 앱의 시작 토스트에 외장 GPU 이름이 뜨는지 확인합니다. NVIDIA 제어판의 "3D 설정 관리 → 프로그램 설정"으로도 지정할 수 있지만 Windows 그래픽 설정이 우선합니다.
 - 헤드리스 검증(SwiftShader)에서는 첫 요청이 거부되고 소프트웨어 폴백 경로가 실행되므로 스크린샷에 경고 토스트가 함께 찍힙니다.
 
 ## 검증
