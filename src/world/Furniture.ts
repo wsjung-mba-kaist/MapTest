@@ -108,6 +108,8 @@ export class Furniture {
     if (bins.length) place(wasteBasket(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 })), bins);
     const statues = byKind.get(FurnitureKind.Statue) ?? [];
     if (statues.length) place(statue(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 })), statues).layers.enable(REFLECT_LAYER);
+    const flames = byKind.get(FurnitureKind.Flame) ?? [];
+    if (flames.length) place(libertyFlame(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.55 })), flames).layers.enable(REFLECT_LAYER);
     const poles = byKind.get(FurnitureKind.Flagpole) ?? [];
     if (poles.length) place(flagpole(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide })), poles, { shadow: false });
 
@@ -256,11 +258,12 @@ function wasteBasket(): THREE.BufferGeometry {
 /** 9 m flagpole with a tricolore (blue at the hoist). */
 /**
  * A statue on its plinth: a stepped stone base carrying a standing bronze figure. Scale 1 is a ~4.5 m figure on a
- * 2.6 m plinth, the size of a park bronze; the bake passes a larger scale where OSM tags a height, which is how the
- * Liberty replica on the Île aux Cygnes comes out at its real 11.5 m on a tall pedestal.
+ * 2.6 m plinth, the size of a park bronze.
  *
- * The figure is deliberately schematic — a robed body, arms and a head read correctly at the distance you actually
- * see these from, and nothing here is trying to be a portrait.
+ * This stands in for every artwork and memorial OSM marks with a node, so it must stay ANONYMOUS. It carried a
+ * raised torch and a spiked crown once, which made every park bronze in the city read as the Statue of Liberty —
+ * including the one standing where the Wall for Peace should be. A named monument gets a real model instead
+ * (see scripts/landmarks_models.ts).
  */
 function statue(): THREE.BufferGeometry {
   const STONE = 0xb9b2a4, BRONZE = 0x5d6b52;
@@ -275,17 +278,39 @@ function statue(): THREE.BufferGeometry {
     tint(new THREE.SphereGeometry(0.44, 12, 8).translate(0, 5.5, 0), BRONZE),
     // head
     tint(new THREE.SphereGeometry(0.26, 10, 8).translate(0, 6.05, 0), BRONZE),
-    // raised right arm holding a torch, and a tablet held to the chest on the left
-    tint(new THREE.CylinderGeometry(0.11, 0.13, 1.7, 8).rotateZ(-0.28).translate(0.42, 6.1, 0), BRONZE),
-    tint(new THREE.CylinderGeometry(0.17, 0.1, 0.5, 8).translate(0.68, 7.1, 0), 0xc8a24a),
-    tint(new THREE.CylinderGeometry(0.1, 0.12, 1.3, 8).rotateZ(0.5).translate(-0.5, 4.9, 0.1), BRONZE),
-    tint(new THREE.BoxGeometry(0.5, 0.72, 0.16).rotateZ(0.35).translate(-0.62, 4.5, 0.24), BRONZE),
+    // arms held close: one across the body, one down at the side
+    tint(new THREE.CylinderGeometry(0.1, 0.12, 1.15, 8).rotateZ(0.42).translate(-0.46, 4.85, 0.06), BRONZE),
+    tint(new THREE.CylinderGeometry(0.1, 0.12, 1.25, 8).rotateZ(-0.2).translate(0.44, 4.75, 0.1), BRONZE),
   ];
-  // crown spikes: the detail that makes the silhouette read as this statue and not a generic bronze
+  return mergeGeometries(parts, false)!;
+}
+
+/**
+ * Flamme de la Liberté: a full-size gilded replica of the torch flame the Statue of Liberty holds, standing on a
+ * square stone plinth over the Alma tunnel entrance. Modelled at 3.5 m overall — the flame itself is about 2 m.
+ */
+function libertyFlame(): THREE.BufferGeometry {
+  const STONE = 0xbdb6a6, GOLD = 0xd8ab3c;
+  const parts: THREE.BufferGeometry[] = [
+    tint(new THREE.BoxGeometry(2.3, 0.28, 2.3).translate(0, 0.14, 0), STONE),
+    tint(new THREE.BoxGeometry(1.9, 1.15, 1.9).translate(0, 0.85, 0), STONE),
+    tint(new THREE.BoxGeometry(2.1, 0.16, 2.1).translate(0, 1.5, 0), STONE),
+    // the torch handle rising out of the plinth
+    tint(new THREE.CylinderGeometry(0.17, 0.21, 0.55, 12).translate(0, 1.85, 0), GOLD),
+    tint(new THREE.CylinderGeometry(0.30, 0.17, 0.18, 12).translate(0, 2.2, 0), GOLD),
+  ];
+  // The flame: tapering leaves twisted around the axis, the shape that reads from the roundabout.
   for (let k = 0; k < 7; k++) {
-    const a = (k / 6 - 0.5) * Math.PI * 1.5;
-    parts.push(tint(new THREE.ConeGeometry(0.055, 0.5, 5).translate(Math.sin(a) * 0.34, 6.42, Math.cos(a) * 0.34), BRONZE));
+    const a = (k / 7) * Math.PI * 2;
+    const lean = 0.22 + 0.1 * ((k % 3) / 2);
+    const g = new THREE.ConeGeometry(0.16, 1.25 - 0.12 * (k % 3), 5);
+    g.translate(0, 0.62, 0);
+    g.rotateX(lean);
+    g.rotateY(a);
+    g.translate(Math.sin(a) * 0.17, 2.3, Math.cos(a) * 0.17);
+    parts.push(tint(g, GOLD));
   }
+  parts.push(tint(new THREE.ConeGeometry(0.13, 1.5, 6).translate(0, 2.95, 0), GOLD));
   return mergeGeometries(parts, false)!;
 }
 

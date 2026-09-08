@@ -145,8 +145,8 @@ function addArches(gb: GeomBuilder, b: Bridge, piers: PierBox[], bottom: number,
 }
 
 /** Elevated rail deck (métro line 6): thin steel-green deck, low parapet, pairs of columns every 7 m down to `columnsTo`. */
-function addViaduct(deck: GeomBuilder, stone: GeomBuilder, parapet: GeomBuilder, b: Bridge) {
-  const top = b.deckTop, bottom = top - VIADUCT_THICK, base = b.columnsTo!;
+function addViaduct(deck: GeomBuilder, stone: GeomBuilder, parapet: GeomBuilder, b: Bridge, surfaceAt: (x: number, z: number) => number) {
+  const top = b.deckTop, bottom = top - VIADUCT_THICK;
   addCapAt(deck, b.poly, top, SurfaceFlag.RoofTopOverview, ROAD, true);
   addCapAt(stone, b.poly, bottom, SurfaceFlag.Plinth, STEEL, false);
   for (const r of b.poly) addWalls(stone, r, bottom, top, SurfaceFlag.Plinth, STEEL);
@@ -169,7 +169,11 @@ function addViaduct(deck: GeomBuilder, stone: GeomBuilder, parapet: GeomBuilder,
     for (const side of [-1, 1]) {
       const cx = st.x - st.tz * side * half, cz = st.z + st.tx * side * half;
       const ring: Ring = orient([[cx - 0.28, cz - 0.28], [cx + 0.28, cz - 0.28], [cx + 0.28, cz + 0.28], [cx - 0.28, cz + 0.28]], false);
-      addWalls(stone, ring, base + 0.05, bottom + 0.05, SurfaceFlag.Plinth, STEEL);
+      // Foot on whatever is actually under THIS column — the road deck it crosses, or the ground. One height for
+      // the whole line left the Metro 6 columns floating up to 5.6 m over the Bir-Hakeim roadway and buried 2 m
+      // elsewhere, because a 2.4 km viaduct crosses a bridge deck, a quay and open ground in turn.
+      const foot = Math.min(bottom - 0.5, surfaceAt(cx, cz));
+      addWalls(stone, ring, foot - 0.15, bottom + 0.05, SurfaceFlag.Plinth, STEEL);
     }
   }
 }
@@ -368,9 +372,16 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
 export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): Promise<{ count: number; bytes: number; names: string[] }> {
   const { bridges, outlines, fromLines } = collectBridges(roads, hm, waterLevelY, flowAt);
   const deck = new GeomBuilder(), stone = new GeomBuilder(), parapet = new GeomBuilder();
+  // What a viaduct column at (x, z) stands on: the highest road deck it crosses, otherwise the ground.
+  const roadDecks = bridges.filter(b => b.columnsTo === undefined);
+  const surfaceAt = (x: number, z: number): number => {
+    let y = hm.sample(x, z);
+    for (const o of roadDecks) if (o.deckTop > y && pointInPoly(x, z, o.poly)) y = o.deckTop;
+    return y;
+  };
   for (const b of bridges) {
     const outer = b.poly[0];
-    if (b.columnsTo !== undefined) { addViaduct(deck, stone, parapet, b); continue; }
+    if (b.columnsTo !== undefined) { addViaduct(deck, stone, parapet, b, surfaceAt); continue; }
     const top = b.deckTop, bottom = top - DECK_THICK;
     // Deck top samples the overview ortho (flag 4), underside and sides are stone.
     addCapAt(deck, b.poly, top, SurfaceFlag.RoofTopOverview, ROAD, true);

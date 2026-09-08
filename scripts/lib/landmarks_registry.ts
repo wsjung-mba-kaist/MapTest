@@ -25,7 +25,9 @@ export interface LandmarkSpec {
 }
 
 export const LANDMARKS: LandmarkSpec[] = [
-  { id: 'trocadero', osm: 'node/1697202142', category: 'square', hotkey: 1, approx: [-424, -393], view: { x: -480, z: -409 }, face: 'tower', radius: 90, short: '트로카데로',
+  // The old viewpoint stood 5.8 m from the Palais de Chaillot's wall and read as being trapped inside it. This one
+  // is out on the esplanade with 53 m of clearance, facing the tower — the view the square is known for.
+  { id: 'trocadero', osm: 'node/1697202142', category: 'square', hotkey: 1, approx: [-424, -393], view: { x: -420, z: -397 }, face: 'tower', radius: 90, short: '트로카데로',
     blurbKo: '샤요 궁 두 날개 사이의 인권 광장. 에펠탑을 정면으로 마주 보는 파리 최고의 전망대다.' },
   { id: 'pont-iena', osm: 'way/184263889', category: 'bridge', hotkey: 2, approx: [-177, -160], view: { x: -190, z: -200 }, face: 'tower', radius: 90, short: '이에나 다리',
     blurbKo: '트로카데로와 에펠탑을 잇는 1814년의 석조 아치교. 양쪽 끝을 네 기의 기마상이 지킨다.' },
@@ -55,7 +57,9 @@ export const LANDMARKS: LandmarkSpec[] = [
   { id: 'guimet', osm: 'way/79641993', category: 'museum', approx: [-68, -781], radius: 60, short: '기메 박물관' },
   { id: 'pont-alma', osm: 'way/183589443', wikidata: 'Q1621256', category: 'bridge', approx: [534, -566], face: 'tower', radius: 70, short: '알마 다리',
     blurbKo: '센강의 수위를 재는 잣대로 쓰이는 주아브 병사 석상이 서 있는 다리.' },
-  { id: 'flamme-liberte', osm: 'way/92316094', category: 'monument', approx: [469, -647], radius: 40, short: '자유의 불꽃',
+  // approx is the anchor when OSM/Wikidata give nothing; the flame stands over the Alma tunnel mouth at
+  // 2.301389, 48.864167, which is where config.STATUES places the mesh. Keep the two in step.
+  { id: 'flamme-liberte', osm: 'way/92316094', category: 'monument', approx: [507, -645], view: { x: 519, z: -628, yaw: 325 }, radius: 40, short: '자유의 불꽃',
     blurbKo: '자유의 여신상 횃불의 실물 크기 복제품(1989). 알마 지하차도 위에 있어 다이애나 비 추모의 장소가 되었다.' },
   { id: 'pont-invalides', osm: 'way/183618971', category: 'bridge', approx: [1167, -579], radius: 70, short: '앵발리드 다리' },
   { id: 'pont-alexandre-iii', osm: 'way/183620685', category: 'bridge', approx: [1399, -588], radius: 90, short: '알렉상드르 3세 다리',

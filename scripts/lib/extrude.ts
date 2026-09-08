@@ -318,7 +318,10 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
     // caps 9 cm apart and the Invalides dome as thirty-nine, which z-fought into grey and dark shards. The parts
     // still need their walls, so they are extruded normally but their roof goes to the ?dsm=0 fallback sections,
     // where it cannot fight the cap that already covers them.
-    if (b.group !== undefined && b.group !== b.id && dsmCovers?.(b)) {
+    // Only for parts that sit ON the group's mass. A part raised on `min_height` (the Quai Branly dome starts at
+    // 27.5 m) has nothing under it, so sending its roof to the ?dsm=0 sections leaves a bare wall ring hanging in
+    // the air — it used to be hidden under that part's own cap. Raised parts keep a normal roof.
+    if (b.group !== undefined && b.group !== b.id && b.minH <= 0 && dsmCovers?.(b)) {
       const partScratch: ChunkBuilders = { walls: cb.walls, roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod, details: cb.details };
       extrudeAnalytic(b, partScratch, ox, oz);
       return {};
