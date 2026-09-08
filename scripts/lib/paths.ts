@@ -143,7 +143,21 @@ function distSeg(x: number, z: number, a: Pt, b: Pt): number {
 
 /** Per-vertex heights: terrain (or bridge deck) at the centre and at both sidewalk offsets. */
 function assignHeights(g: Graph, hm: Heightmap, bridges: Bridge[]) {
-  const deckAt = (x: number, z: number): number | null => { for (const b of bridges) if (pointInPoly(x, z, b.poly)) return b.deckTop; return null; };
+  // A carriageway's end node usually sits a few centimetres OUTSIDE the deck outline it belongs to, so a strict
+  // containment test dropped it to the terrain and the last segment of every bridge became a cliff — 4.95 m at the
+  // Pont d'Iena. Accept a deck the point is nearly on.
+  const NEAR_DECK = 2.5;
+  const deckAt = (x: number, z: number): number | null => {
+    for (const b of bridges) if (pointInPoly(x, z, b.poly)) return b.deckTop;
+    let best: { d: number; y: number } | null = null;
+    for (const b of bridges) {
+      for (const r of b.poly) for (let i = 0; i < r.length; i++) {
+        const d = distSeg(x, z, r[i], r[(i + 1) % r.length]);
+        if (d < NEAR_DECK && (!best || d < best.d)) best = { d, y: b.deckTop };
+      }
+    }
+    return best ? best.y : null;
+  };
   for (const e of g.edges) {
     e.verts = densify(e.verts, DENSIFY);
     const n = e.verts.length;

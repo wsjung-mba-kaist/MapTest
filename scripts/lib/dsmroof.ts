@@ -25,6 +25,21 @@ interface Window { win: DsmWindow; grids: BilGrid[] }
 export class DsmProvider {
   private constructor(private readonly windows: Map<string, Window>) {}
 
+  /** Tallest ridge among a group's members, filled by `noteGroupHeights`. */
+  private readonly ridges = new Map<string, number>();
+  /**
+   * Record how tall each landmark group actually is. The group's own outline is squashed to a plinth by its parts,
+   * so its ridge cannot bound the cap: the Invalides outline reports 13.1 m for a 107 m dome.
+   */
+  noteGroupHeights(specs: { group?: string; id: string; ridge: number; eave: number }[]) {
+    for (const s of specs) {
+      const g = s.group ?? s.id;
+      const h = Math.max(s.ridge, s.eave);
+      if (h > (this.ridges.get(g) ?? 0)) this.ridges.set(g, h);
+    }
+  }
+  groupRidge(group: string): number | undefined { return this.ridges.get(group); }
+
   static async load(): Promise<DsmProvider | null> {
     if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
     const index = await readJson<DsmIndex>(DSM_INDEX);
@@ -90,7 +105,11 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
 
   // ---- raw samples, median 3x3, plausibility clamp
   const base = b.groundY + (b.minH > 0 ? b.minH : 0);
-  const lo = base + 1, hi = b.groundY + Math.max(b.ridge, b.eave) * 1.8 + 15;
+  // The outline of a landmark is squashed to a plinth by its parts, so its own ridge is no guide to how tall the
+  // building is: the Invalides outline reports 13.1 m and clamped the cap to a flat grey plate at 43.1 m across
+  // 96 % of the dome. Take the tallest member of the group.
+  const groupRidge = dsm.groupRidge(group) ?? Math.max(b.ridge, b.eave);
+  const lo = base + 1, hi = b.groundY + Math.max(groupRidge, b.ridge, b.eave) * 1.8 + 15;
   const raw = new Float64Array(nx * nz);
   let valid = 0;
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {

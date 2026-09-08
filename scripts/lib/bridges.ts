@@ -93,6 +93,32 @@ function addWalls(gb: GeomBuilder, ring: Ring, y0: number, y1: number, flag: Sur
   }
 }
 
+/**
+ * Deck side walls that reach the ground where there is ground: over the river they stop at the deck's underside,
+ * on the bank they continue down to the terrain so the abutment is closed. The foot follows the terrain per
+ * vertex, so a skewed abutment on sloping ground still meets it.
+ */
+function addWallsToGround(gb: GeomBuilder, ring: Ring, bottom: number, top: number, waterLevelY: number, hm: Heightmap) {
+  const n = ring.length;
+  let u = 0;
+  const c: [number, number, number, number] = [STONE[0], STONE[1], STONE[2], SurfaceFlag.Plinth];
+  const footAt = (p: Pt) => {
+    const g = hm.sample(p[0], p[1]);
+    return g > waterLevelY + 0.6 ? Math.min(bottom, g - 0.4) : bottom;
+  };
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 0.02) continue;
+    const m: [number, number, number, number] = [3.1, 1, len, 2 * 256 + 17];
+    const ya = footAt(a), yb = footAt(b);
+    const i0 = gb.vertex(a[0], ya, a[1], u, 0, m, c), i1 = gb.vertex(b[0], yb, b[1], u + len, 0, m, c);
+    const i2 = gb.vertex(b[0], top, b[1], u + len, top - yb, m, c), i3 = gb.vertex(a[0], top, a[1], u, top - ya, m, c);
+    gb.quad(i0, i1, i2, i3);
+    u += len;
+  }
+}
+
 function addCapAt(gb: GeomBuilder, rings: Poly, y: number, flag: SurfaceFlag, tint: [number, number, number], up: boolean) {
   const { flat, tris } = triangulateCap(rings);
   const base = gb.vertexCount;
@@ -253,6 +279,27 @@ export function principalAxis(ring: Ring): { cx: number; cz: number; dx: number;
 
 /** Half-width of a ring measured across `dir` through the point `(px, pz)`; used to keep a pier inside its deck. */
 function halfWidthAt(ring: Ring, px: number, pz: number, dx: number, dz: number): number {
+  // Distance to the nearest ring EDGE each way along the ray, not the ring's overall extent. Projecting every
+  // vertex answers "how wide is this deck anywhere", which on the skewed Pont d'Iena parallelogram put the arch
+  // wall a constant 19.9 m out while the real edge slid between 16.6 and 19.8 — up to 3.2 m outboard of the deck,
+  // reading as a detached panel with open water behind it.
+  let back = Infinity, fwd = Infinity;
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const ex = b[0] - a[0], ez = b[1] - a[1];
+    // solve a + u*e = p + t*d
+    const den = ex * dz - ez * dx;
+    if (Math.abs(den) < 1e-9) continue;
+    const rx = a[0] - px, rz = a[1] - pz;
+    const u = (rx * dz - rz * dx) / -den;          // parameter along the edge
+    if (u < -1e-6 || u > 1 + 1e-6) continue;
+    const t = (rx * ez - rz * ex) / -den;          // signed distance along the ray
+    if (t >= 0) { if (t < fwd) fwd = t; } else if (-t < back) back = -t;
+  }
+  const half = Math.min(back, fwd);
+  if (Number.isFinite(half)) return half;
+  // outside the ring, or a degenerate crossing: fall back to the overall extent
   let lo = Infinity, hi = -Infinity;
   for (const p of ring) {
     const t = (p[0] - px) * dx + (p[1] - pz) * dz;
@@ -383,6 +430,39 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     const polys = bufferLine(l.pts, roadWidth(l.tags));
     for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0], l.pts), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
   }
+  // Reach the road. A `man_made=bridge` outline stops where the structure stops, which on the Seine bridges is
+  // still inside the riverbank trench: the Pont d'Iena's outline ended 7.6 m short of ground at deck level, so
+  // traffic met a 5.9 m drop at the abutment. Grow the deck along its centreline until the ground comes up to it.
+  for (const b of bridges) {
+    if (b.columnsTo !== undefined || !b.centre || b.centre.length < 2) continue;
+    const ax = principalAxis(b.poly[0]);
+    const w = Math.max(4, ax.width);
+    const aprons: Poly[] = [];
+    for (const [end, prev] of [[b.centre[0], b.centre[1]], [b.centre[b.centre.length - 1], b.centre[b.centre.length - 2]]] as [Pt, Pt][]) {
+      const dx = end[0] - prev[0], dz = end[1] - prev[1], L = Math.hypot(dx, dz) || 1;
+      const ux = dx / L, uz = dz / L;
+      // Run out until the ground has come up to deck level, then a few metres more so the join is on solid ground
+      // rather than on the lip of the trench the riverside walkway cuts under the bridge.
+      let reach = 0;
+      for (let d = 1; d <= 26; d += 1) {
+        reach = d;
+        if (hm.sample(end[0] + ux * d, end[1] + uz * d) >= b.deckTop - 0.25) { reach = Math.min(26, d + 5); break; }
+      }
+      if (reach < 1.5) continue;
+      // a rectangular apron from a little inside the deck out to where the ground meets it
+      const nx = -uz, nz = ux, back = 3;
+      const p0: Pt = [end[0] - ux * back + nx * w / 2, end[1] - uz * back + nz * w / 2];
+      const p1: Pt = [end[0] + ux * reach + nx * w / 2, end[1] + uz * reach + nz * w / 2];
+      const p2: Pt = [end[0] + ux * reach - nx * w / 2, end[1] + uz * reach - nz * w / 2];
+      const p3: Pt = [end[0] - ux * back - nx * w / 2, end[1] - uz * back - nz * w / 2];
+      aprons.push([orient([p0, p1, p2, p3], false)]);
+    }
+    if (!aprons.length) continue;
+    const merged = unionAll([b.poly, ...aprons]);
+    const biggest = merged.reduce((p, q) => (area(p[0]) >= area(q[0]) ? p : q), merged[0]);
+    if (biggest && area(biggest[0]) > area(b.poly[0]) * 0.95) b.poly = biggest;
+  }
+
   const piers: PierBox[] = [];
   for (const b of bridges) if (b.columnsTo === undefined) piers.push(...pierBoxes(b, hm, waterLevelY, flowAt));
   return { bridges, piers, outlines: outlines.length, fromLines };
@@ -405,7 +485,9 @@ export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>,
     // Deck top samples the overview ortho (flag 4), underside and sides are stone.
     addCapAt(deck, b.poly, top, SurfaceFlag.RoofTopOverview, ROAD, true);
     addCapAt(stone, b.poly, bottom, SurfaceFlag.Plinth, STONE, false);
-    for (const r of b.poly) addWalls(stone, r, bottom, top, SurfaceFlag.Plinth, STONE);
+    // Side and end faces. Carry them down to the ground wherever the deck stands over land, so the abutments meet
+    // the bank instead of ending in mid-air: the Pont d'Iena's end faces hung 3.7 m and 1.7 m clear of the ground.
+    for (const r of b.poly) addWallsToGround(stone, r, bottom, top, waterLevelY, hm);
     // Parapets along the outer ring.
     const inner = insetRing(outer, PARAPET_T, 0.2);
     if (inner) {

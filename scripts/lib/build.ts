@@ -146,6 +146,7 @@ export async function run(_ctx: BakeContext) {
   await ensureDir(detailDir);
   // LiDAR HD surface-model caps for the landmarks (npm run bake:dsm); null = analytic roofs everywhere
   const dsm = await DsmProvider.load();
+  dsm?.noteGroupHeights(specs);
   const dsmHook = dsm ? ((gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => (dsm.has(b.group ?? b.id) ? addDsmCap(gb, b, dsm, ox, oz, meta, tint) : null)) : undefined;
   const dsmCovers = dsm ? ((b: BuildingSpec) => dsm.has(b.group ?? b.id)) : undefined;
   let detailRows = 0;

@@ -71,7 +71,7 @@ export const EIFFEL_SOURCE_GLB = 'eiffel_tower_model_3d_with_best_quality.glb';
  */
 export const ROOF_OVERRIDES: Record<string, { shape?: string; material?: string; colour?: string }> = {
   'way/227662013': { material: 'gold' },      // Dôme des Invalides: gilded lead dome
-  'way/227662030': { material: 'gold' },      // its lantern / spire
+  'way/227662012': { material: 'gold' },      // its lantern (way/227662030 no longer exists in OSM)
   'way/1462542858': { material: 'gold' },     // the cone above the drum
 };
 
@@ -108,7 +108,7 @@ export const STATUES: { id: string; lon: number; lat: number; height: number; fa
   { id: 'statue-liberte', lon: 2.279701, lat: 48.850024, height: 11.5, facing: 270 },
   // Flamme de la Liberte: a full-size gilded copy of the torch the Liberty statue holds, on a stone plinth
   // above the Alma tunnel. Not a figure, so it gets its own shape.
-  { id: 'flamme-liberte', lon: 2.301389, lat: 48.864167, height: 3.5, facing: 200, kind: 'flame' },
+  { id: 'flamme-liberte', lon: 2.301389, lat: 48.864167, height: 4.3, facing: 200, kind: 'flame' },
   // Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000): two glass walls under a canopy on the
   // Champ de Mars axis, which runs south-east from the tower, so the passage through it faces 135 degrees.
   { id: 'mur-paix', lon: 2.30199, lat: 48.8534, height: 9, facing: 135, kind: 'peacewall' },

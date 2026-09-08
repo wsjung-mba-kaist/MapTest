@@ -292,60 +292,67 @@ function statue(): THREE.BufferGeometry {
 }
 
 /**
- * Flamme de la Liberté: a full-size gilded replica of the torch flame the Statue of Liberty holds, standing on a
- * square stone plinth over the Alma tunnel entrance. Modelled at 3.5 m overall — the flame itself is about 2 m.
+ * Flamme de la Liberté (1989): a full-size gilded copy of the flame from the Statue of Liberty's torch, given to
+ * Paris by the International Herald Tribune and standing over the mouth of the Alma tunnel.
+ *
+ * From the photographs: a bulbous mass of broad overlapping gilded leaves, about as wide as it is tall and widest
+ * near the top, on a dark patinated bronze drum with a moulded base and cap, itself on a low faceted granite star
+ * set into a circular paved plaza. Modelled at 4.3 m overall.
  */
 function libertyFlame(): THREE.BufferGeometry {
-  const STONE = 0xbdb6a6, GOLD = 0xd8ab3c;
+  const GOLD = 0xd4a53a, BRONZE = 0x4a4f48, GRANITE = 0x3a3d42, PAVING = 0x9c968c;
   const parts: THREE.BufferGeometry[] = [
-    tint(new THREE.BoxGeometry(2.3, 0.28, 2.3).translate(0, 0.14, 0), STONE),
-    tint(new THREE.BoxGeometry(1.9, 1.15, 1.9).translate(0, 0.85, 0), STONE),
-    tint(new THREE.BoxGeometry(2.1, 0.16, 2.1).translate(0, 1.5, 0), STONE),
-    // the torch handle rising out of the plinth
-    tint(new THREE.CylinderGeometry(0.17, 0.21, 0.55, 12).translate(0, 1.85, 0), GOLD),
-    tint(new THREE.CylinderGeometry(0.30, 0.17, 0.18, 12).translate(0, 2.2, 0), GOLD),
+    // circular paved plaza and the faceted granite star it sits in
+    tint(new THREE.CylinderGeometry(3.6, 3.7, 0.12, 24).translate(0, 0.06, 0), PAVING),
+    tint(new THREE.ConeGeometry(1.5, 0.5, 8).translate(0, 0.37, 0), GRANITE),
+    // patinated bronze drum: moulded base, shaft, cap
+    tint(new THREE.CylinderGeometry(0.62, 0.72, 0.2, 20).translate(0, 0.72, 0), BRONZE),
+    tint(new THREE.CylinderGeometry(0.55, 0.58, 1.15, 20).translate(0, 1.4, 0), BRONZE),
+    tint(new THREE.CylinderGeometry(0.68, 0.58, 0.16, 20).translate(0, 2.05, 0), BRONZE),
   ];
-  // The flame: tapering leaves twisted around the axis, the shape that reads from the roundabout.
-  for (let k = 0; k < 7; k++) {
-    const a = (k / 7) * Math.PI * 2;
-    const lean = 0.22 + 0.1 * ((k % 3) / 2);
-    const g = new THREE.ConeGeometry(0.16, 1.25 - 0.12 * (k % 3), 5);
-    g.translate(0, 0.62, 0);
-    g.rotateX(lean);
+  // The flame: broad curved leaves around a core, leaning outward and widest near the top. Spheres scaled into
+  // teardrops read far better at this size than cones do.
+  const leaf = (r: number, h: number) => { const g = new THREE.SphereGeometry(r, 10, 8); g.scale(1, h / r, 0.55); return g; };
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + 0.3;
+    const g = leaf(0.52, 0.95);
+    g.rotateX(-0.34);
     g.rotateY(a);
-    g.translate(Math.sin(a) * 0.17, 2.3, Math.cos(a) * 0.17);
+    g.translate(Math.sin(a) * 0.46, 3.0, Math.cos(a) * 0.46);
     parts.push(tint(g, GOLD));
   }
-  parts.push(tint(new THREE.ConeGeometry(0.13, 1.5, 6).translate(0, 2.95, 0), GOLD));
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 - 0.4;
+    const g = leaf(0.4, 1.05);
+    g.rotateX(-0.16);
+    g.rotateY(a);
+    g.translate(Math.sin(a) * 0.24, 3.45, Math.cos(a) * 0.24);
+    parts.push(tint(g, GOLD));
+  }
+  // the core tongue rising through the middle
+  parts.push(tint(leaf(0.34, 1.25).translate(0, 3.55, 0), GOLD));
+  parts.push(tint(new THREE.SphereGeometry(0.62, 12, 8).scale(1, 0.7, 1).translate(0, 2.55, 0), GOLD));
   return mergeGeometries(parts, false)!;
 }
 
 /**
  * Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000): two glass walls carrying the word "peace" in
- * 49 languages, standing either side of a walk-through passage under a flat canopy on slender steel posts, on the
- * Champ de Mars axis. Modelled at its real 9 m height; the passage runs along the mesh's +x axis.
- *
- * The glass is a separate material from the frame, so it is built as two geometries and merged by the caller's
- * vertex-colour material with a transparent flag in the tint — see peaceWallGlass below.
+ * 49 languages, either side of a walk-through passage under a flat canopy on slender steel posts, on the Champ de
+ * Mars axis. Modelled at its real 9 m height; the passage runs along the mesh's +x axis.
  */
 const PEACE_STEEL = 0x8f9298, PEACE_STONE = 0xc9c4b8;
 
 function peaceWallFrame(): THREE.BufferGeometry {
-  const L = 16.0, W = 13.0, H = 9.0, GAP = 6.2;   // overall length, width, height, and the passage between the walls
+  const L = 16.0, W = 13.0, H = 9.0, GAP = 6.2;
   const parts: THREE.BufferGeometry[] = [
-    // stone platform with a step
     tint(new THREE.BoxGeometry(L + 2.4, 0.22, W + 2.4).translate(0, 0.11, 0), PEACE_STONE),
     tint(new THREE.BoxGeometry(L + 1.2, 0.24, W + 1.2).translate(0, 0.34, 0), PEACE_STONE),
-    // canopy slab and its fascia
     tint(new THREE.BoxGeometry(L, 0.42, W).translate(0, H - 0.21, 0), PEACE_STEEL),
     tint(new THREE.BoxGeometry(L + 0.5, 0.14, W + 0.5).translate(0, H - 0.49, 0), PEACE_STEEL),
   ];
-  // posts: a row down each side of the passage, and one at each corner of the canopy
   for (let k = 0; k < 7; k++) {
     const x = -L / 2 + 1.2 + (k * (L - 2.4)) / 6;
-    for (const side of [-1, 1]) {
-      parts.push(tint(new THREE.BoxGeometry(0.22, H - 0.9, 0.22).translate(x, 0.46 + (H - 0.9) / 2, side * (GAP / 2 + 0.35)), PEACE_STEEL));
-    }
+    for (const side of [-1, 1]) parts.push(tint(new THREE.BoxGeometry(0.22, H - 0.9, 0.22).translate(x, 0.46 + (H - 0.9) / 2, side * (GAP / 2 + 0.35)), PEACE_STEEL));
   }
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     parts.push(tint(new THREE.BoxGeometry(0.26, H - 0.9, 0.26).translate(sx * (L / 2 - 0.5), 0.46 + (H - 0.9) / 2, sz * (W / 2 - 0.5)), PEACE_STEEL));
@@ -353,17 +360,14 @@ function peaceWallFrame(): THREE.BufferGeometry {
   return mergeGeometries(parts, false)!;
 }
 
-/** The two inscribed glass walls, drawn with a translucent material so you can see through the passage. */
+/** The two inscribed glass walls, translucent so the passage reads through. */
 function peaceWallGlass(): THREE.BufferGeometry {
   const L = 16.0, H = 9.0, GAP = 6.2;
   const parts: THREE.BufferGeometry[] = [];
-  for (const side of [-1, 1]) {
-    // each wall is a run of panes with thin joints, from just above the platform to just under the canopy
-    for (let k = 0; k < 6; k++) {
-      const w = (L - 1.6) / 6 - 0.12;
-      const x = -L / 2 + 0.8 + w / 2 + k * ((L - 1.6) / 6);
-      parts.push(tint(new THREE.BoxGeometry(w, H - 1.9, 0.12).translate(x, 0.58 + (H - 1.9) / 2, side * GAP / 2), 0xbcd2d6));
-    }
+  for (const side of [-1, 1]) for (let k = 0; k < 6; k++) {
+    const w = (L - 1.6) / 6 - 0.12;
+    const x = -L / 2 + 0.8 + w / 2 + k * ((L - 1.6) / 6);
+    parts.push(tint(new THREE.BoxGeometry(w, H - 1.9, 0.12).translate(x, 0.58 + (H - 1.9) / 2, side * GAP / 2), 0xbcd2d6));
   }
   return mergeGeometries(parts, false)!;
 }

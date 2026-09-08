@@ -34,6 +34,8 @@ const PAD = 10;                     // metres of neighbouring geometry considere
 const MIN_AREA = 4;                 // m² - smaller slivers are dropped
 const STEINER = 4;                  // m grid of interior points so wide slabs follow the terrain
 const SKIRT = 0.12;                 // kerb face extends this far below the terrain
+const WALL_PROBE = 1.6;             // m outside the edge where the drop is measured
+const WALL_MIN = 0.8;               // a drop bigger than this is a retaining wall, not a kerb
 
 export interface StreetInput { carriage: Poly[]; paved: Poly[]; blocked: Poly[]; grass: Poly[]; steps: StepsWay[] }
 export interface StepsWay { pts: Pt[]; width: number }
@@ -162,7 +164,7 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
       if (ny > 0) out.idx.push(base + a, base + b, base + c); else out.idx.push(base + a, base + c, base + b);
       out.tris++;
     }
-    // kerb skirt along every ring edge
+    // kerb skirt along every ring edge, deepened into a retaining wall where the ground outside drops away
     for (const ring of poly) {
       const n = ring.length;
       for (let i = 0; i < n; i++) {
@@ -173,8 +175,15 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
         const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
         if (pointInPoly(mx + nx * 0.05, mz + nz * 0.05, poly)) { nx = -nx; nz = -nz; }
         const ya = groundY(a[0], a[1]), yb = groundY(b[0], b[1]);
+        // A surveyed paved area sitting on a terrace has its retaining wall exactly on this boundary — the parvis
+        // at the Trocadéro stands 11.4 m above the gardens. The 12 cm skirt drew that as a kerb, so the terraces
+        // read as smooth slopes. Where the ground a step outside is well below the slab, carry the face down to it.
+        const outA = groundY(a[0] + nx * WALL_PROBE, a[1] + nz * WALL_PROBE);
+        const outB = groundY(b[0] + nx * WALL_PROBE, b[1] + nz * WALL_PROBE);
+        const footA = Math.min(ya - SKIRT, ya - outA > WALL_MIN ? outA - 0.3 : Infinity);
+        const footB = Math.min(yb - SKIRT, yb - outB > WALL_MIN ? outB - 0.3 : Infinity);
         const aT = vert(a[0], a[1], ya + KERB_H, StreetFlag.Kerb), bT = vert(b[0], b[1], yb + KERB_H, StreetFlag.Kerb);
-        const aB = vert(a[0], a[1], ya - SKIRT, StreetFlag.Kerb), bB = vert(b[0], b[1], yb - SKIRT, StreetFlag.Kerb);
+        const aB = vert(a[0], a[1], footA, StreetFlag.Kerb), bB = vert(b[0], b[1], footB, StreetFlag.Kerb);
         // (aT, bT, aB) faces (dz, -dx); flip when the outward normal is the other way
         if (nx * dz - nz * dx > 0) out.idx.push(aT, bT, aB, bT, bB, aB); else out.idx.push(aT, aB, bT, bT, aB, bB);
         out.kerbs++;

@@ -318,12 +318,13 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
     // caps 9 cm apart and the Invalides dome as thirty-nine, which z-fought into grey and dark shards. The parts
     // still need their walls, so they are extruded normally but their roof goes to the ?dsm=0 fallback sections,
     // where it cannot fight the cap that already covers them.
-    // Only for parts that sit ON the group's mass. A part raised on `min_height` (the Quai Branly dome starts at
-    // 27.5 m) has nothing under it, so sending its roof to the ?dsm=0 sections leaves a bare wall ring hanging in
-    // the air — it used to be hidden under that part's own cap. Raised parts keep a normal roof.
-    if (b.group !== undefined && b.group !== b.id && b.minH <= 0 && dsmCovers?.(b)) {
-      const partScratch: ChunkBuilders = { walls: cb.walls, roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod, details: cb.details };
-      extrudeAnalytic(b, partScratch, ox, oz);
+    // Every `building:part` of a capped group takes the ordinary analytic path. Only the group's outline gets a
+    // surface-model cap: the parts all share one DSM window, so capping each of them re-sampled the same roof once
+    // per part — 20 coincident caps over the Invalides dome, 4 over the Grand Palais nave, z-fighting into shards.
+    // Their roofs go to the main sections, not the ?dsm=0 fallback, or a part raised on `min_height` (the Quai
+    // Branly dome starts at 27.5 m) is left as a bare wall ring hanging in the air.
+    if (b.group !== undefined && b.group !== b.id && dsmCovers?.(b)) {
+      extrudeAnalytic(b, cb, ox, oz);
       return {};
     }
     const res = dsm(cb.dsm, b, ox, oz, rmeta, b.roofTint);
