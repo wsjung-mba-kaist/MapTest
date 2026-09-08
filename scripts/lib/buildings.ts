@@ -146,12 +146,18 @@ export function classify(tags: Record<string, string>, nature: string, usage: st
   // but such a building still counts as a landmark for the surface-model roof when it is big
   const notable = (!!tags.heritage || !!tags.historic) && !RESIDENTIAL.test(b);
   const named = !!tags.name && MONUMENT_NAME.test(tags.name) && !RESIDENTIAL.test(b);
+  const monumental = religious || civic || named || notable;
+  // A landmark of the Trente Glorieuses is not a masonry palace. The Maison de la Radio (start_date 1963) is a
+  // smooth aluminium curtain wall, and the monument facade hung a stone cornice, a balustrade and a pilaster at
+  // every bay on it: 40 m piers that stood out of the LiDAR cap as a radial comb of dark fins round the crown.
+  // It stays a landmark either way - that is what gates the surface-model roof - it just is not made of stone.
+  const postwar = Number((tags.start_date ?? '').slice(0, 4)) >= 1945;
   let style: Style = Style.Haussmann;
-  if (religious || civic || named || notable) style = Style.Monument;
+  if (monumental) style = postwar ? Style.Modern : Style.Monument;
   else if (levels > 10 || eave > 36 || material.includes('glass') || material.includes('metal')) style = Style.Modern;
   else if (usage.includes('industriel') || light || b === 'industrial' || b === 'warehouse') style = Style.Industrial;
   else if (tags['building:levels'] && levels <= 3) style = Style.Stone;
-  const landmark = (style === Style.Monument && (area >= 400 || ridge >= 25 || !!tags.wikidata)) || (!!tags.wikidata && !RESIDENTIAL.test(b) && area >= 400);
+  const landmark = (monumental && (area >= 400 || ridge >= 25 || !!tags.wikidata)) || (!!tags.wikidata && !RESIDENTIAL.test(b) && area >= 400);
   return { style, landmark };
 }
 
@@ -350,8 +356,9 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       const defaults: Record<number, [number, number, number]> = {
         [Style.Haussmann]: [224, 212, 186], [Style.Modern]: [150, 160, 170], [Style.Stone]: [206, 196, 172], [Style.Industrial]: [180, 176, 168], [Style.Monument]: [222, 214, 196],
       };
-      let tint = parseColour(tags['building:colour']) ?? defaults[style];
-      if (!tags['building:colour']) { const v = ((seed % 21) - 10) * (style === Style.Monument ? 0.6 : 1.2); tint = [tint[0] + v, tint[1] + v * 0.8, tint[2] + v * 0.5].map(c => Math.max(0, Math.min(255, Math.round(c)))) as [number, number, number]; }
+      const colourTag = tags['building:colour'] ?? tags['building:facade:colour'];
+      let tint = parseColour(colourTag) ?? defaults[style];
+      if (!colourTag) { const v = ((seed % 21) - 10) * (style === Style.Monument ? 0.6 : 1.2); tint = [tint[0] + v, tint[1] + v * 0.8, tint[2] + v * 0.5].map(c => Math.max(0, Math.min(255, Math.round(c)))) as [number, number, number]; }
 
       // ---- roof material: OSM roof:material / roof:colour first, then the BD TOPO MAJIC code (two digits: main then
       // secondary material; 1 tiles, 2 slate, 3 zinc, 4 concrete, 9 other). Haussmann mansards are mostly "23": slate
@@ -410,12 +417,12 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
         const plinth = Math.max(2.5, Math.min(...bulk.map(p => (p.minH > 0 ? p.minH : p.eave))));
         b.isPlinth = true; b.eave = Math.min(b.eave, plinth); b.ridge = b.eave; b.roof = 'flat'; stats.plinths++;
       }
-      // the parts of a landmark are the landmark: monument facades, its name and (unless they say otherwise) its stone
+      // the parts of a landmark are the landmark: its facade style, its name and (unless they say otherwise) its colour
       if (b.landmark || b.style === Style.Monument) for (const p of inside) {
-        p.style = Style.Monument; p.landmark = p.landmark || b.landmark;
+        p.style = b.style; p.landmark = p.landmark || b.landmark;
         p.name = p.name ?? b.name; p.wikidata = p.wikidata ?? b.wikidata;
         p.group = b.id;
-        if (!p.tags['building:colour']) p.tint = b.tint;
+        if (!p.tags['building:colour'] && !p.tags['building:facade:colour']) p.tint = b.tint;
       }
     }
     specs.push(b);

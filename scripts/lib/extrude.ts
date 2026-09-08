@@ -13,10 +13,21 @@ export interface ChunkBuilders {
 }
 /** True when this spec's landmark group has a surface-model window, i.e. its outline will carry a cap. */
 export type DsmCovers = (b: BuildingSpec) => boolean;
+/** Wall tops for a part of a capped group, read off the cap's own surface; null when the window does not reach it. */
+export type DsmParts = (b: BuildingSpec) => ((p: Pt) => number) | null;
 /** Hook for the DSM cap (scripts/lib/dsmroof.ts): returns null to fall back to the analytic roof. */
 export type DsmHook = (gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => { trisBefore: number; trisAfter: number; wallTop: (p: Pt) => number } | null;
 
 const MANSARD = { inset1: 1.3, rise1Max: 4.0, inset2Max: 4.0 };
+/**
+ * Extra wall-top samples along a long edge, matching the spacing the surface fit uses. Without them one quad spans
+ * the whole edge and its top is a straight line between the two ends: the Maison de la Radio had a 42 m facade
+ * whose top slid 10 m from one corner to the other.
+ */
+const followSurface = (a: Pt, b: Pt): number[] => {
+  const n = Math.min(48, Math.floor(Math.hypot(b[0] - a[0], b[1] - a[1]) / 4));
+  return n > 1 ? Array.from({ length: n - 1 }, (_, i) => (i + 1) / n) : [];
+};
 type Meta = [number, number, number, number];
 type Tint = [number, number, number];
 
@@ -310,7 +321,7 @@ function addProfileRoof(cb: ChunkBuilders, b: BuildingSpec, kind: RoofKind, yEav
 
 // ------------------------------------------------------------------------------------------------ building
 
-export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number, dsm?: DsmHook, dsmCovers?: DsmCovers): { dsmTris?: [number, number] } {
+export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number, dsm?: DsmHook, dsmCovers?: DsmCovers, dsmParts?: DsmParts): { dsmTris?: [number, number] } {
   if (dsm && b.landmark && cb.dsm && cb.roofsAlt && cb.topsAlt) {
     const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, packStyleSeed(b.style, b.seed)];
     // Only the group's outline gets a surface-model cap. Every `building:part` of a landmark shares one DSM window,
@@ -321,9 +332,26 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
     // Every `building:part` of a capped group takes the ordinary analytic path. Only the group's outline gets a
     // surface-model cap: the parts all share one DSM window, so capping each of them re-sampled the same roof once
     // per part — 20 coincident caps over the Invalides dome, 4 over the Grand Palais nave, z-fighting into shards.
-    // Their roofs go to the main sections, not the ?dsm=0 fallback, or a part raised on `min_height` (the Quai
-    // Branly dome starts at 27.5 m) is left as a bare wall ring hanging in the air.
     if (b.group !== undefined && b.group !== b.id && dsmCovers?.(b)) {
+      // A part of a capped group carries the facade, so it is the part — not the outline, which its own parts have
+      // squashed to a plinth — that has to reach the cap. Its walls follow the same LiDAR surface the cap is built
+      // from, because OSM's part heights are guesses: at the Maison de la Radio the crown arcs stop 7 m under the
+      // measured roof, opening a slot right round the 500 m facade, while Studio 101 and Studio 106 stand 13 m
+      // above it — the chimneys on the roof of a building that has none. The analytic roof then goes to the
+      // ?dsm=0 sections, moved to sit on the fitted wall so it does not float there either.
+      const tops = dsmParts?.(b);
+      if (tops) {
+        const y0 = b.minH > 0 ? b.groundY + b.minH : (b.floating ? b.groundY : b.groundY - 1.0);
+        const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
+        for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, tops, followSurface, ox, oz, meta, b.tint, b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall);
+        const ys = b.rings.flat().map(tops).sort((p, q) => p - q);
+        const eave = Math.max(b.minH + 0.5, ys[ys.length >> 1] - b.groundY);
+        extrudeAnalytic({ ...b, eave, ridge: eave + Math.max(0, b.ridge - b.eave) }, { walls: new GeomBuilder(), roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod }, ox, oz);
+        return {};
+      }
+      // No usable surface over this part (an arcade, a court, a wing under a dome): the analytic roof stands, and
+      // it goes to the main sections or a part raised on `min_height` — the Quai Branly dome starts at 27.5 m —
+      // is left as a bare wall ring hanging in the air.
       extrudeAnalytic(b, cb, ox, oz);
       return {};
     }
@@ -334,7 +362,11 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
       const y0 = b.minH > 0 ? b.groundY + b.minH : yBase;
       const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
       const wallFlag = b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall;
-      for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, res.wallTop, () => [], ox, oz, meta, b.tint, wallFlag);
+      // An outline squashed to a plinth has parts standing on it that already carry its facade — every metre of the
+      // Maison de la Radio's outer ring has a part wall within 1 m — so following the cap's edge up would stand a
+      // blank stone cylinder in front of them. The outline stops at the plinth; the parts close the gap.
+      const wallTop = b.isPlinth ? (p: Pt) => Math.min(res.wallTop(p), b.groundY + b.eave) : res.wallTop;
+      for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, wallTop, followSurface, ox, oz, meta, b.tint, wallFlag);
       const scratch: ChunkBuilders = { walls: new GeomBuilder(), roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod };
       extrudeBuilding(b, scratch, ox, oz);
       return { dsmTris: [res.trisBefore, res.trisAfter] };

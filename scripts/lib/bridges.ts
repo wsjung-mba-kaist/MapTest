@@ -127,6 +127,85 @@ function addCapAt(gb: GeomBuilder, rings: Poly, y: number, flag: SurfaceFlag, ti
   for (let t = 0; t < tris.length; t += 3) up ? gb.tri(base + tris[t], base + tris[t + 1], base + tris[t + 2]) : gb.tri(base + tris[t], base + tris[t + 2], base + tris[t + 1]);
 }
 
+interface Mouth { x: number; z: number; ux: number; uz: number; half: number }
+
+/**
+ * The mouths of the carriageway: a corridor at either end of the centreline, pointing the way traffic leaves the
+ * deck. The outline is a closed loop and the loop has to cross the road at both abutments, so it marks where the
+ * parapet must stop.
+ */
+function deckMouths(b: Bridge): Mouth[] {
+  if (!b.centre || b.centre.length < 2) return [];
+  const half = Math.max(4, principalAxis(b.poly[0]).width) / 2 + 4;
+  const ends: [Pt, Pt][] = [[b.centre[0], b.centre[1]], [b.centre[b.centre.length - 1], b.centre[b.centre.length - 2]]];
+  return ends.map(([end, prev]) => {
+    const dx = end[0] - prev[0], dz = end[1] - prev[1], L = Math.hypot(dx, dz) || 1;
+    return { x: end[0], z: end[1], ux: dx / L, uz: dz / L, half };
+  });
+}
+
+/**
+ * The outer ring cut into the stretches that get a parapet. An edge is left open where a vehicle crosses it:
+ * inside a mouth, or wherever the ground just outside has already climbed to the deck, which is a road on grade
+ * and wants no parapet at all. Returns null when nothing is open, so the caller can use the plain closed ring.
+ */
+function parapetRuns(ring: Ring, top: number, mouths: Mouth[], hm: Heightmap): Pt[][] | null {
+  const r = cleanRing(ring), n = r.length;
+  if (n < 3) return [];
+  const keep: boolean[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = r[i], b = r[(i + 1) % n];
+    const ex = b[0] - a[0], ez = b[1] - a[1], len = Math.hypot(ex, ez);
+    const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+    const nx = -ez / len, nz = ex / len;   // outward: the outer ring is wound negative
+    const inMouth = mouths.some(m => {
+      if (nx * m.ux + nz * m.uz < 0.3) return false;   // a side edge at the abutment still faces sideways
+      const px = mx - m.x, pz = mz - m.z;
+      return px * m.ux + pz * m.uz > -3 && Math.abs(pz * m.ux - px * m.uz) < m.half;
+    });
+    const onGrade = Math.max(hm.sample(mx + nx * 1.5, mz + nz * 1.5), hm.sample(mx + nx * 4, mz + nz * 4)) > top - 0.6;
+    keep.push(!inMouth && !onGrade);
+  }
+  if (keep.every(k => k)) return null;
+  const runs: Pt[][] = [];
+  let start = keep.findIndex((k, i) => k && !keep[(i + n - 1) % n]);
+  if (start < 0) return [];
+  for (let done = 0; done < n;) {
+    if (!keep[(start + done) % n]) { done++; continue; }
+    const run: Pt[] = [r[(start + done) % n]];
+    while (done < n && keep[(start + done) % n]) { done++; run.push(r[(start + done) % n]); }
+    let len = 0; for (let i = 1; i < run.length; i++) len += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+    if (len > 4) runs.push(run);   // a 1 m stub of parapet reads as debris
+  }
+  return runs;
+}
+
+/** Copy of an open polyline shifted `d` to the deck side (the inside of a negatively wound ring), mitred at the joints. */
+function offsetPolyline(line: Pt[], d: number): Pt[] | null {
+  const ns: Pt[] = [];
+  for (let i = 0; i + 1 < line.length; i++) {
+    const ex = line[i + 1][0] - line[i][0], ez = line[i + 1][1] - line[i][1], L = Math.hypot(ex, ez);
+    if (L < 1e-6) return null;
+    ns.push([ez / L, -ex / L]);
+  }
+  if (!ns.length) return null;
+  return line.map((p, i) => {
+    const a = ns[Math.max(0, i - 1)], b = ns[Math.min(ns.length - 1, i)];
+    const s = d / Math.max(0.35, 1 + a[0] * b[0] + a[1] * b[1]);
+    return [p[0] + (a[0] + b[0]) * s, p[1] + (a[1] + b[1]) * s] as Pt;
+  });
+}
+
+/** One stretch of parapet: a closed PARAPET_T-thick ribbon, so it also gets a clean end face where it stops. */
+function addParapetStrip(gb: GeomBuilder, run: Pt[], y0: number) {
+  const inner = offsetPolyline(run, PARAPET_T);
+  if (!inner) return;
+  const ribbon = orient([...run, ...inner.slice().reverse()], false);
+  if (area(ribbon) < 0.5) return;
+  addWalls(gb, ribbon, y0, y0 + PARAPET_H, SurfaceFlag.Plinth, STONE);
+  addCapAt(gb, [ribbon], y0 + PARAPET_H, SurfaceFlag.Plinth, STONE, true);
+}
+
 /**
  * Spandrel walls with elliptical arch openings between the supports (abutments and piers), on both sides of the deck:
  * from the quays a masonry bridge reads as arches, not as a slab. The vault itself stays the flat underside.
@@ -488,13 +567,18 @@ export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>,
     // Side and end faces. Carry them down to the ground wherever the deck stands over land, so the abutments meet
     // the bank instead of ending in mid-air: the Pont d'Iena's end faces hung 3.7 m and 1.7 m clear of the ground.
     for (const r of b.poly) addWallsToGround(stone, r, bottom, top, waterLevelY, hm);
-    // Parapets along the outer ring.
-    const inner = insetRing(outer, PARAPET_T, 0.2);
-    if (inner) {
-      addWalls(parapet, outer, top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
-      addWalls(parapet, orient(inner, true), top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
-      addCapAt(parapet, [outer, orient(inner, true)], top + PARAPET_H, SurfaceFlag.Plinth, STONE, true);
-    }
+    // Parapets along the outer ring, but broken where traffic crosses it. The ring is a closed loop, so running a
+    // parapet all the way round stood a 1.05 m wall square across the carriageway at both ends of the Pont d'Iena
+    // and cars had to jump it to get on and off the bridge.
+    const runs = parapetRuns(outer, top, deckMouths(b), hm);
+    if (runs === null) {
+      const inner = insetRing(outer, PARAPET_T, 0.2);
+      if (inner) {
+        addWalls(parapet, outer, top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
+        addWalls(parapet, orient(inner, true), top, top + PARAPET_H, SurfaceFlag.Plinth, STONE);
+        addCapAt(parapet, [outer, orient(inner, true)], top + PARAPET_H, SurfaceFlag.Plinth, STONE, true);
+      }
+    } else for (const run of runs) addParapetStrip(parapet, run, top);
     // Piers along the principal axis (shared with the boat lanes of the path bake), and the arches between them.
     const piers = pierBoxes(b, hm, waterLevelY, flowAt);
     addArches(stone, b, piers, bottom, waterLevelY);
