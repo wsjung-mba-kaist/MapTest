@@ -17,6 +17,8 @@ const PARAPET_T = 0.45;
 const STONE: [number, number, number] = [196, 188, 172];
 const STEEL: [number, number, number] = [74, 84, 76];   // the line 6 viaduct's dark green ironwork
 const VIADUCT_RISE = 8.5;      // rail deck above the road deck / ground (Bir-Hakeim: ~9 m)
+const TWIN_DY = 1.2;                // m: decks closer than this in height are candidates for being one structure
+const TWIN_OVERLAP = 0.3;           // and one has to lie this far inside the other
 const VIADUCT_THICK = 1.4;
 const ARCH_MAX_H = 6.5;
 const ROAD: [number, number, number] = [110, 108, 104];
@@ -213,37 +215,53 @@ function addParapetStrip(gb: GeomBuilder, run: Pt[], y0: number) {
 function addArches(gb: GeomBuilder, b: Bridge, piers: PierBox[], bottom: number, waterLevelY: number) {
   if (!piers.length) return;
   const ax = principalAxis(b.poly[0]);
-  const tOf = (x: number, z: number) => (x - ax.cx) * ax.dx + (z - ax.cz) * ax.dz;
-  const supports = [{ t: -ax.half, half: 0 }, ...piers.map(p => ({ t: tOf(p.cx, p.cz), half: p.halfL })).sort((p, q) => p.t - q.t), { t: ax.half, half: 0 }];
+  // Walk the carriageway, not the polygon's straight PCA chord. On a curved or skewed deck the chord leaves the
+  // structure, and the arcade was built along it: the Pont Rouelle's arches stood up to 35.7 m off the bridge,
+  // floating free in the Seine. `pierBoxes` and `addViaduct` already follow the centreline for the same reason.
+  const line: Pt[] = b.centre && b.centre.length >= 2
+    ? b.centre
+    : [[ax.cx - ax.dx * ax.half, ax.cz - ax.dz * ax.half], [ax.cx + ax.dx * ax.half, ax.cz + ax.dz * ax.half]];
+  const sts = stationsAlong(line, 1.0, 0);
+  if (sts.length < 5) return;
+  const total = lineLength(line), ds = total / (sts.length - 1);
+  const at = (s: number) => sts[Math.max(0, Math.min(sts.length - 1, Math.round(s / ds)))];
+  const sOf = (x: number, z: number) => {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < sts.length; i++) { const d = Math.hypot(sts[i].x - x, sts[i].z - z); if (d < bd) { bd = d; best = i; } }
+    return best * ds;
+  };
+  const supports = [{ s: 0, half: 0 }, ...piers.map(p => ({ s: sOf(p.cx, p.cz), half: p.halfL })).sort((p, q) => p.s - q.s), { s: total, half: 0 }];
   const spring = Math.max(waterLevelY + 1.2, bottom - ARCH_MAX_H);
   if (bottom - spring < 1.5) return;
-  // Local half-width per station, not one figure for the whole span: a constant put Alexandre III's arcade 12.6 m
-  // (max 15.6) outside its own deck, standing free in the water.
-  const halfAt = (x: number, z: number) => Math.max(1, halfWidthAt(b.poly[0], x, z, -ax.dz, ax.dx) - 0.05);
   const m: [number, number, number, number] = [3.1, 1, 0, 2 * 256 + 17];
   const c: [number, number, number, number] = [STONE[0], STONE[1], STONE[2], SurfaceFlag.Plinth];
-  for (let s = 0; s + 1 < supports.length; s++) {
-    const a = supports[s].t + supports[s].half, e = supports[s + 1].t - supports[s + 1].half;
+  for (let k = 0; k + 1 < supports.length; k++) {
+    const a = supports[k].s + supports[k].half, e = supports[k + 1].s - supports[k + 1].half;
     if (e - a < 4) continue;
-    const mid = (a + e) / 2, half = (e - a) / 2, steps = Math.max(12, Math.ceil((e - a) / 1.0));
+    const mid = (a + e) / 2, half = (e - a) / 2, steps = Math.max(12, Math.ceil(e - a));
     for (const side of [-1, 1]) {
-      const nx = -ax.dz * side, nz = ax.dx * side;
-      let prev: [number, number, number, number] | null = null;   // x, z, yArch, t
-      for (let k = 0; k <= steps; k++) {
-        const t = a + (e - a) * k / steps;
-        const yArch = spring + (bottom - spring) * Math.sqrt(Math.max(0, 1 - ((t - mid) / half) ** 2));
-        const cxT = ax.cx + ax.dx * t, czT = ax.cz + ax.dz * t;
-        const w = halfAt(cxT, czT);
-        const x = cxT + nx * w, z = czT + nz * w;
+      let prev: [number, number, number, number] | null = null;   // x, z, yArch, s
+      for (let q = 0; q <= steps; q++) {
+        const s = a + (e - a) * q / steps;
+        const st = at(s);
+        const nx = -st.tz * side, nz = st.tx * side;
+        // Local half-width per station, not one figure for the whole span: a constant put Alexandre III's arcade
+        // 12.6 m (max 15.6) outside its own deck. `halfWidthAt` falls back to the ring's overall extent when the
+        // ray misses it, so check the wall really lands on the deck and break the strip where it does not - that
+        // fallback is what set the loose panels adrift on the water.
+        const w = halfWidthAt(b.poly[0], st.x, st.z, nx, nz) - 0.05;
+        if (!(w > 1) || !pointInPoly(st.x, st.z, b.poly) || !pointInPoly(st.x + nx * (w - 0.35), st.z + nz * (w - 0.35), b.poly)) { prev = null; continue; }
+        const yArch = spring + (bottom - spring) * Math.sqrt(Math.max(0, 1 - ((s - mid) / half) ** 2));
+        const x = st.x + nx * w, z = st.z + nz * w;
         if (prev) {
-          const i0 = gb.vertex(prev[0], prev[2], prev[1], prev[3], prev[2] - spring, m, c), i1 = gb.vertex(x, yArch, z, t, yArch - spring, m, c);
-          const i2 = gb.vertex(x, bottom + 0.02, z, t, bottom - spring, m, c), i3 = gb.vertex(prev[0], bottom + 0.02, prev[1], prev[3], bottom - spring, m, c);
+          const i0 = gb.vertex(prev[0], prev[2], prev[1], prev[3], prev[2] - spring, m, c), i1 = gb.vertex(x, yArch, z, s, yArch - spring, m, c);
+          const i2 = gb.vertex(x, bottom + 0.02, z, s, bottom - spring, m, c), i3 = gb.vertex(prev[0], bottom + 0.02, prev[1], prev[3], bottom - spring, m, c);
           // outward = (nx, nz): the quad (i0, i1, i2) has normal cross(p1 - p0, p2 - p0); flip when it points inward
           const ux = x - prev[0], uz = z - prev[1], vy = bottom + 0.02 - yArch;
           const nyx = uz * vy, nyz = -ux * vy;   // cross((ux, 0, uz), (0, vy, 0)) -> (-uz*vy, 0, ux*vy) for the other order
           if (-nyx * nx - nyz * nz > 0) gb.quad(i0, i1, i2, i3); else gb.quad(i0, i3, i2, i1);
         }
-        prev = [x, z, yArch, t];
+        prev = [x, z, yArch, s];
       }
     }
   }
@@ -288,6 +306,30 @@ function lineLength(pts: Pt[]): number {
   let L = 0;
   for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
   return L;
+}
+
+/**
+ * One structure mapped as several ways. OSM gives the Metro 6 and the RER C viaducts one line per track and some
+ * road bridges one way per carriageway, so the same deck was built twice: 22,121 m2 and 22,124 m2 of Metro 6 deck
+ * 7 cm apart, two rows of columns beside each other, and parapets z-fighting the whole way across. Decks that
+ * overlap and sit at the same level are the same structure - keep their union, the longer centreline and the
+ * higher top, and build one set of supports under it.
+ */
+function mergeTwinDecks(bridges: Bridge[]): Bridge[] {
+  const kept: Bridge[] = [];
+  for (const b of bridges) {
+    const twin = kept.find(k => k.rail === b.rail && (k.columnsTo !== undefined) === (b.columnsTo !== undefined)
+      && Math.abs(k.deckTop - b.deckTop) < TWIN_DY
+      && Math.max(fractionInside(b.poly[0], k.poly), fractionInside(k.poly[0], b.poly)) > TWIN_OVERLAP);
+    if (!twin) { kept.push(b); continue; }
+    const union = unionAll([twin.poly, b.poly]);
+    const biggest = union.reduce((p, q) => (area(p[0]) >= area(q[0]) ? p : q), union[0]);
+    if (biggest && area(biggest[0]) >= area(twin.poly[0])) twin.poly = biggest;
+    if (lineLength(b.centre ?? []) > lineLength(twin.centre ?? [])) twin.centre = b.centre;
+    twin.deckTop = Math.max(twin.deckTop, b.deckTop);
+    if (b.columnsTo !== undefined) twin.columnsTo = Math.min(twin.columnsTo ?? b.columnsTo, b.columnsTo);
+  }
+  return kept;
 }
 
 /** Fraction of a polyline's length whose sample points fall inside `poly` (sampled every ~2 m). */
@@ -424,7 +466,7 @@ function pierBoxes(b: Bridge, hm: Heightmap, waterLevelY: number, flowAt?: FlowF
 
 /** Deck polygons (from man_made=bridge outlines, else buffered bridge=yes lines) and their piers. */
 export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): { bridges: Bridge[]; piers: PierBox[]; outlines: number; fromLines: number } {
-  const bridges: Bridge[] = [];
+  let bridges: Bridge[] = [];
   const outlines: { poly: Poly; tags: Record<string, string>; id: string }[] = [];
   for (const f of roads.features) {
     const t = f.properties.tags ?? {};
@@ -509,6 +551,8 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     const polys = bufferLine(l.pts, roadWidth(l.tags));
     for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0], l.pts), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
   }
+  bridges = mergeTwinDecks(bridges);
+
   // Reach the road. A `man_made=bridge` outline stops where the structure stops, which on the Seine bridges is
   // still inside the riverbank trench: the Pont d'Iena's outline ended 7.6 m short of ground at deck level, so
   // traffic met a 5.9 m drop at the abutment. Grow the deck along its centreline until the ground comes up to it.

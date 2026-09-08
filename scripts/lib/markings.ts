@@ -108,7 +108,10 @@ export async function buildMarkings(roads: FeatureCollection<Geometry, OsmProps>
       for (const e of grid.get(`${gi}_${gj}`) ?? []) { const d = segDist(x, z, e.s.pts[e.i], e.s.pts[e.i + 1]); if (d <= r) out.push({ ...e, d }); }
     return out;
   };
-  const deckAt = (x: number, z: number): number | null => { for (const b of bridges) if (pointInPoly(x, z, b.poly)) return b.deckTop; return null; };
+  // Only a deck this surface can actually rest on. A rail viaduct is not one: the RER C crosses the Grenelle quay
+  // 8 m up, and lifting the vertices under it onto the rail deck while their neighbours stayed on the ground
+  // reared the pavement into a vertical sheet 11 m tall - a black wedge standing over the Seine.
+  const deckAt = (x: number, z: number): number | null => { for (const b of bridges) if (!b.rail && pointInPoly(x, z, b.poly)) return b.deckTop; return null; };
   const groundY = (x: number, z: number) => deckAt(x, z) ?? hm.meshY(x, z);
 
   const perChunk = new Map<string, MarkBuilder>();

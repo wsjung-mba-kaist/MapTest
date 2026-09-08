@@ -36,6 +36,8 @@ const STEINER = 4;                  // m grid of interior points so wide slabs f
 const SKIRT = 0.12;                 // kerb face extends this far below the terrain
 const WALL_PROBE = 1.6;             // m outside the edge where the drop is measured
 const WALL_MIN = 0.8;               // a drop bigger than this is a retaining wall, not a kerb
+const WALL_MAX = 12;                // m: the deepest real one here is the Trocadero parvis at 11.4 m
+const STEEP_TOP = 0.34;             // min |normal.y| of a slab top: steeper than ~70 deg is a wall, not paving
 
 export interface StreetInput { carriage: Poly[]; paved: Poly[]; blocked: Poly[]; grass: Poly[]; steps: StepsWay[] }
 export interface StepsWay { pts: Pt[]; width: number }
@@ -120,7 +122,7 @@ export function chunkSidewalks(input: StreetInput, ox: number, oz: number): Poly
 export interface SlabMesh { pos: number[]; flag: number[]; idx: number[]; tris: number; kerbs: number }
 
 /** Triangulate slabs on the rendered terrain with kerb skirts along every boundary edge (except chunk borders). */
-export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x: number, z: number) => number): SlabMesh {
+export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x: number, z: number) => number, waterY = -Infinity): SlabMesh {
   const out: SlabMesh = { pos: [], flag: [], idx: [], tris: 0, kerbs: 0 };
   const vert = (x: number, z: number, y: number, flag: number) => {
     const lx = x - ox, lz = z - oz;
@@ -154,13 +156,21 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
     for (const s of steiner) { holeIdx.push(flat.length / 2); flat.push(s[0], s[1]); }
     const tris = earcut(flat, holeIdx.length ? holeIdx : undefined, 2);
     const base = out.pos.length / 3;
-    for (let k = 0; k < flat.length; k += 2) vert(flat[k], flat[k + 1], groundY(flat[k], flat[k + 1]) + KERB_H, StreetFlag.Top);
+    const ys: number[] = [];
+    for (let k = 0; k < flat.length; k += 2) { const y = groundY(flat[k], flat[k + 1]) + KERB_H; ys.push(y); vert(flat[k], flat[k + 1], y, StreetFlag.Top); }
     for (let t = 0; t < tris.length; t += 3) {
       const a = tris[t], b = tris[t + 1], c = tris[t + 2];
       const ax = flat[a * 2], az = flat[a * 2 + 1], bx = flat[b * 2], bz = flat[b * 2 + 1], cx = flat[c * 2], cz = flat[c * 2 + 1];
       // +y normal: cross(b - a, c - a).y = (bz - az) * (cx - ax) - (bx - ax) * (cz - az)
       const ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
       if (Math.abs(ny) < 1e-9) continue;
+      // A pavement is not a wall. Where a slab polygon straddles a step in the ground - a quay edge, a bridge
+      // abutment - the triangulation drapes a vertical sheet down it: 11227 of those stood across the city, the
+      // largest 527 m2. Nothing walkable is that steep, so leave them out and let the ground show through.
+      const ex = [bx - ax, ys[b] - ys[a], bz - az], fx = [cx - ax, ys[c] - ys[a], cz - az];
+      const n3 = [ex[1] * fx[2] - ex[2] * fx[1], ex[2] * fx[0] - ex[0] * fx[2], ex[0] * fx[1] - ex[1] * fx[0]];
+      const n3l = Math.hypot(n3[0], n3[1], n3[2]);
+      if (n3l > 1e-9 && Math.abs(n3[1]) / n3l < STEEP_TOP) continue;
       if (ny > 0) out.idx.push(base + a, base + b, base + c); else out.idx.push(base + a, base + c, base + b);
       out.tris++;
     }
@@ -180,8 +190,12 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
         // read as smooth slopes. Where the ground a step outside is well below the slab, carry the face down to it.
         const outA = groundY(a[0] + nx * WALL_PROBE, a[1] + nz * WALL_PROBE);
         const outB = groundY(b[0] + nx * WALL_PROBE, b[1] + nz * WALL_PROBE);
-        const footA = Math.min(ya - SKIRT, ya - outA > WALL_MIN ? outA - 0.3 : Infinity);
-        const footB = Math.min(yb - SKIRT, yb - outB > WALL_MIN ? outB - 0.3 : Infinity);
+        // A retaining wall stands on dry ground. Along the quays the terrain a step outside the slab is the dredged
+        // river bed - `build` lowers it 1.5 m under the water line - so the Beaugrenelle deck grew a 17 m wall down
+        // into the Seine, a black wedge standing over the water. Only follow ground that is above the water, and
+        // never deeper than a terrace could really stand.
+        const foot = (y: number, out: number) => (out > waterY + 0.3 && y - out > WALL_MIN ? Math.max(out - 0.3, y - WALL_MAX) : y - SKIRT);
+        const footA = foot(ya, outA), footB = foot(yb, outB);
         const aT = vert(a[0], a[1], ya + KERB_H, StreetFlag.Kerb), bT = vert(b[0], b[1], yb + KERB_H, StreetFlag.Kerb);
         const aB = vert(a[0], a[1], footA, StreetFlag.Kerb), bB = vert(b[0], b[1], footB, StreetFlag.Kerb);
         // (aT, bT, aB) faces (dz, -dx); flip when the outward normal is the other way
@@ -299,7 +313,10 @@ export async function run(_ctx: BakeContext) {
   const [roads, land, water] = await Promise.all([loadTheme('roads'), loadTheme('landcover'), loadTheme('water')]);
   const { bridges } = collectBridges(roads, hm, manifest.waterLevelY, makeFlowField(riverArms(water)));
   const decks = bridges.map(b => b.poly);
-  const deckAt = (x: number, z: number): number | null => { for (const b of bridges) if (pointInPoly(x, z, b.poly)) return b.deckTop; return null; };
+  // Only a deck this surface can actually rest on. A rail viaduct is not one: the RER C crosses the Grenelle quay
+  // 8 m up, and lifting the vertices under it onto the rail deck while their neighbours stayed on the ground
+  // reared the pavement into a vertical sheet 11 m tall - a black wedge standing over the Seine.
+  const deckAt = (x: number, z: number): number | null => { for (const b of bridges) if (!b.rail && pointInPoly(x, z, b.poly)) return b.deckTop; return null; };
   const groundY = (x: number, z: number) => deckAt(x, z) ?? hm.meshY(x, z);
   const t0 = Date.now();
   const input = collectStreetPolys(roads, land, water, decks);
@@ -312,7 +329,7 @@ export async function run(_ctx: BakeContext) {
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const o = chunkOrigin(i, j);
     const slabs = chunkSidewalks(input, o.x, o.z);
-    const mesh = buildSlabMesh(slabs, o.x, o.z, groundY);
+    const mesh = buildSlabMesh(slabs, o.x, o.z, groundY, manifest.waterLevelY);
     flights += addSteps(mesh, input.steps, o.x, o.z, groundY);
     const buf = encodeBinMesh({ x: o.x, z: o.z }, mesh.tris ? [slabSection(mesh)] : [], { polys: slabs.length, tris: mesh.tris, kerbs: mesh.kerbs });
     await fs.writeFile(path.join(dir, `${chunkKey(i, j)}.bin`), buf);

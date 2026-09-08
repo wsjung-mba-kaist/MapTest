@@ -9,7 +9,7 @@ import { loadTheme, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
 import { buildSpecs, type BuildingSpec } from './buildings.ts';
 import { extrudeBuilding, triangulateCap, type ChunkBuilders } from './extrude.ts';
-import { DsmProvider, addDsmCap, dsmPartTops } from './dsmroof.ts';
+import { DsmProvider, addDsmCap } from './dsmroof.ts';
 import { GeomBuilder, encodeBinMesh } from './binmesh.ts';
 import { buildBridges } from './bridges.ts';
 import { makeFlowField, riverArms } from './river.ts';
@@ -149,7 +149,7 @@ export async function run(_ctx: BakeContext) {
   dsm?.noteGroupHeights(specs);
   const dsmHook = dsm ? ((gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => (dsm.has(b.group ?? b.id) ? addDsmCap(gb, b, dsm, ox, oz, meta, tint) : null)) : undefined;
   const dsmCovers = dsm ? ((b: BuildingSpec) => dsm.has(b.group ?? b.id)) : undefined;
-  const dsmParts = dsm ? ((b: BuildingSpec) => dsmPartTops(b, dsm)) : undefined;
+  const dsmParts = dsm ? ((b: BuildingSpec) => dsm.partTops(b)) : undefined;
   let detailRows = 0;
   let totalBytes = 0, totalTris = 0, dsmBuildings = 0, dsmTrisTotal = 0, dsmTrisRaw = 0;
   const DSM_BUDGET = 1_200_000;

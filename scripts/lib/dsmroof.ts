@@ -22,42 +22,54 @@ import { sampleBil, type BilGrid } from './wmsgrid.ts';
 
 interface Window { win: DsmWindow; grids: BilGrid[] }
 
-/** The footprint edges of a landmark group, binned on a 4 m grid: "is there already a wall here?" in O(1). */
+/** One footprint edge and the height the wall on it reaches at either end. */
+interface WallSeg { a: Pt; b: Pt; ya: number; yb: number }
+
+/**
+ * The footprint edges of a landmark group with the height each one reaches, binned on a 4 m grid, so the cap can
+ * ask "is there already a wall here, and does it come up this far?" in O(1).
+ */
 export class WallIndex {
   private static readonly CELL = 4;
-  private readonly bins = new Map<number, [Pt, Pt][]>();
+  private readonly bins = new Map<number, WallSeg[]>();
   private static key(i: number, j: number) { return i * 100003 + j; }
 
-  add(ring: Ring) {
+  /** `top` gives the height the wall reaches at a point of the ring; omit it for a wall of unknown height. */
+  add(ring: Ring, top?: (p: Pt) => number) {
     const n = ring.length;
     for (let k = 0; k < n; k++) {
       const a = ring[k], b = ring[(k + 1) % n];
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.05) continue;
+      const seg: WallSeg = { a, b, ya: top ? top(a) : Infinity, yb: top ? top(b) : Infinity };
       const c = WallIndex.CELL;
       const i0 = Math.floor(Math.min(a[0], b[0]) / c), i1 = Math.floor(Math.max(a[0], b[0]) / c);
       const j0 = Math.floor(Math.min(a[1], b[1]) / c), j1 = Math.floor(Math.max(a[1], b[1]) / c);
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const kk = WallIndex.key(i, j);
-        const arr = this.bins.get(kk); if (arr) arr.push([a, b]); else this.bins.set(kk, [[a, b]]);
+        const arr = this.bins.get(kk); if (arr) arr.push(seg); else this.bins.set(kk, [seg]);
       }
     }
   }
 
-  /** True when (x, z) is within `d` of a footprint edge. */
-  near(x: number, z: number, d: number): boolean {
+  /** True when a footprint edge within `d` of (x, z) carries a wall that reaches `y`. */
+  reaches(x: number, z: number, d: number, y: number): boolean {
     const c = WallIndex.CELL;
     const i0 = Math.floor((x - d) / c), i1 = Math.floor((x + d) / c);
     const j0 = Math.floor((z - d) / c), j1 = Math.floor((z + d) / c);
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const arr = this.bins.get(WallIndex.key(i, j)); if (!arr) continue;
-      for (const [a, b] of arr) {
+      for (const { a, b, ya, yb } of arr) {
         const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9;
         const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2));
-        if (Math.hypot(x - (a[0] + dx * t), z - (a[1] + dz * t)) <= d) return true;
+        if (Math.hypot(x - (a[0] + dx * t), z - (a[1] + dz * t)) > d) continue;
+        if (ya * (1 - t) + yb * t >= y) return true;
       }
     }
     return false;
   }
+
+  /** True when (x, z) is within `d` of a footprint edge, whatever height it reaches. */
+  near(x: number, z: number, d: number): boolean { return this.reaches(x, z, d, -Infinity); }
 }
 
 export class DsmProvider {
@@ -67,23 +79,33 @@ export class DsmProvider {
   private readonly ridges = new Map<string, number>();
   /** Footprint rings of a group's `building:part`s: the walls it models *inside* its outline. */
   private readonly parts = new Map<string, WallIndex>();
+  /** Fitted wall tops of each `building:part`, so `extrude` and the cap agree on where a part reaches. */
+  private readonly tops = new WeakMap<BuildingSpec, ((p: Pt) => number) | null>();
   /**
-   * Record how tall each landmark group actually is, and where its walls run. The group's own outline is squashed
-   * to a plinth by its parts, so its ridge cannot bound the cap: the Invalides outline reports 13.1 m for a 107 m
-   * dome.
+   * Record how tall each landmark group actually is, where its parts' walls run and how high each reaches. The
+   * group's own outline is squashed to a plinth by its parts, so its ridge cannot bound the cap: the Invalides
+   * outline reports 13.1 m for a 107 m dome.
    */
-  noteGroupHeights(specs: { group?: string; id: string; ridge: number; eave: number; rings: Ring[] }[]) {
+  noteGroupHeights(specs: BuildingSpec[]) {
+    for (const s of specs) {
+      const h = Math.max(s.ridge, s.eave), g = s.group ?? s.id;
+      if (h > (this.ridges.get(g) ?? 0)) this.ridges.set(g, h);
+    }
+    // second pass: the fitted tops need the group ridges above, and the index needs the fitted tops
     for (const s of specs) {
       const g = s.group ?? s.id;
-      const h = Math.max(s.ridge, s.eave);
-      if (h > (this.ridges.get(g) ?? 0)) this.ridges.set(g, h);
       if (!this.windows.has(g) || s.id === g) continue;   // the outline is not an interior wall
+      const top = dsmPartTops(s, this);
+      this.tops.set(s, top);
+      if (!top) continue;                                 // no fitted wall: it cannot be relied on to close a cut
       let w = this.parts.get(g); if (!w) { w = new WallIndex(); this.parts.set(g, w); }
-      for (const r of s.rings) w.add(r);
+      for (const r of s.rings) w.add(r, top);
     }
   }
   groupRidge(group: string): number | undefined { return this.ridges.get(group); }
   groupParts(group: string): WallIndex | undefined { return this.parts.get(group); }
+  /** The fitted wall top of a part, computed once in `noteGroupHeights`. */
+  partTops(b: BuildingSpec): ((p: Pt) => number) | null { const t = this.tops.get(b); return t === undefined ? dsmPartTops(b, this) : t; }
 
   static async load(): Promise<DsmProvider | null> {
     if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
@@ -330,8 +352,14 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
   const parts = dsm.groupParts(group);
   const seam = new WallIndex();
   for (const r of rings) seam.add(r);
-  const isDrape = (ys: number[], x: number, z: number) =>
-    parts != null && Math.max(...ys) - Math.min(...ys) > cliff && parts.near(x, z, g + 1.5) && !seam.near(x, z, g + 1.5);
+  const isDrape = (ys: number[], x: number, z: number) => {
+    if (parts == null) return false;
+    const hiY = Math.max(...ys);
+    // Only where the part's wall actually comes up to the top of the curtain. Cutting on proximity alone tore a
+    // hole in the Maison de la Radio's roof over its service court, where the wall beside the cliff stops 24 m
+    // below it, and left the surviving triangles hanging in the air as shards.
+    return hiY - Math.min(...ys) > cliff && !seam.near(x, z, g + 1.5) && parts.reaches(x, z, g + 1.5, hiY - 1);
+  };
   for (let j = 0; j + 1 < nz; j++) for (let i = 0; i + 1 < nx; i++) {
     const c00 = ins(i, j), c10 = ins(i + 1, j), c01 = ins(i, j + 1), c11 = ins(i + 1, j + 1);
     const count = +c00 + +c10 + +c01 + +c11;

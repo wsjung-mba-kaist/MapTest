@@ -276,6 +276,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
 
       // ---- height cascade
       let eave = 0, ridge = 0, source: HeightSource = 'default', bdp: BdTopoProps | null = null;
+      let lowDefault = false;   // an untagged footprint too small or too narrow to be an apartment block
       if (heightTag != null && heightTag > 1.5) {
         // OSM "height" is the total height including the roof.
         ridge = heightTag;
@@ -319,6 +320,13 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
           source = 'levels';
         } else {
           eave = HAUSSMANN.defaultEave; ridge = HAUSSMANN.defaultRidge; source = 'default';
+          // A cadastre polygon carrying nothing but `building=yes` is not automatically a six-storey block. Half of
+          // the 1317 that reach here are under 80 m2 and 696 are strips under 4 m wide: light wells, lift shafts,
+          // bin stores, sheds traced off the cadastre. Four of them at the foot of the Eiffel Tower (10 to 57 m2,
+          // one of them 0.4 m wide) stood in front of it as 24 m mansard blocks. Give the full default only to a
+          // footprint that could hold flats, and fall to a single storey below that.
+          const fit = Math.min(Math.max((a - 50) / 150, 0), 1) * Math.min(Math.max((minor - 3) / 4, 0), 1);
+          if (fit < 1) { eave = HAUSSMANN.groundFloor + (HAUSSMANN.defaultEave - HAUSSMANN.groundFloor) * fit; ridge = eave; lowDefault = true; }
         }
         if (floating && source === 'default') {
           // A hull with a deckhouse: low and flat, a little taller for the bigger barges.
@@ -339,6 +347,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       else if (RELIGIOUS.test(nature) || RELIGIOUS_BUILDING.test(tags.building ?? '')) roof = 'gabled';
       else if (bdp?.construction_legere || usage.includes('industriel')) roof = 'flat';
       else if (ridge - eave > HAUSSMANN.minMansardDelta) roof = 'mansard';
+      else if (lowDefault) roof = 'flat';   // a shed gets a shed's roof, not a mansard raised on top of it
       else if (source === 'default' || (source === 'levels' && (levelsTag ?? 0) >= 4)) roof = 'mansard';
       else roof = 'flat';
       if (roof !== 'flat' && ridge - eave < 1.5) ridge = eave + (roof === 'mansard' ? 5.0 : CURVED_ROOFS.has(roof) || roof === 'round' ? Math.max(1.5, defaultRise(roof, minor, 40)) : 4.0);
