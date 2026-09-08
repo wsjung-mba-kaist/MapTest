@@ -314,7 +314,7 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
     const res = dsm(cb.dsm, b, ox, oz, rmeta, b.roofTint);
     if (res) {
       // walls follow the surface model's edge, LOD1 stays the analytic box, the analytic roof goes to the alt sections
-      const yBase = b.groundY - 1.0;
+      const yBase = b.floating ? b.groundY : b.groundY - 1.0;   // the 1 m skirt hides terrain gaps on land; on water it just drowns the hull
       const y0 = b.minH > 0 ? b.groundY + b.minH : yBase;
       const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
       const wallFlag = b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall;
@@ -330,7 +330,7 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
 
 function extrudeAnalytic(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number) {
   const outer = b.rings[0], holes = b.rings.slice(1);
-  const yBase = b.groundY - 1.0;
+  const yBase = b.floating ? b.groundY : b.groundY - 1.0;   // the 1 m skirt hides terrain gaps on land; on water it just drowns the hull
   const y0 = b.minH > 0 ? b.groundY + b.minH : yBase;
   const yEave = b.groundY + b.eave;
   const yRidge = b.groundY + b.ridge;

@@ -50,6 +50,8 @@ export interface BuildingSpec {
   source: HeightSource;
   isPart: boolean;
   isPlinth: boolean;
+  /** moored boat / pontoon: sits on the water, not on the river bed, and never gets a Haussmann roof */
+  floating: boolean;
   /** notable building: gets the DSM roof cap and the hero-model checks */
   landmark: boolean;
   /** the outline id a landmark part belongs to (DSM windows are fetched per group) */
@@ -225,6 +227,9 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
     if (tags.location === 'underground' || tags.building === 'underground') continue;
     const osmId = `${type}/${id}`;
     const override = ROOF_OVERRIDES[osmId] ?? {};
+    // Moored boats and pontoons are tagged as buildings but carry no height, and BD TOPO does not know them, so
+    // the cascade below handed them the Haussmann default: a barge became an 18.5 m mansard block, half-sunk.
+    const floating = tags.building === 'houseboat' || tags.building === 'boat' || tags.floating === 'yes' || tags.man_made === 'pier';
 
     for (const rings of toWorldPolys(f.geometry)) {
       const a = area(rings[0]);
@@ -233,10 +238,16 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       if (inHero(hero, c[0], c[1])) { stats.eiffel++; continue; }
       const rect = minAreaRect(rings[0]);
       const minor = Math.max(1, Math.min(rect.w, rect.h));
-      // Ground level under the footprint.
-      let gy = Infinity;
-      for (const r of rings) for (const [x, z] of r) gy = Math.min(gy, hm.sample(x, z));
-      gy = Math.min(gy, hm.sample(c[0], c[1]));
+      // Ground level under the footprint. A strict minimum latches onto any DTM pit the outline happens to touch —
+      // at Beaugrenelle the sunken Front-de-Seine roadway is 9 m below the deck above it, which dropped two large
+      // footprints about 5 m and buried their walls. Take a low percentile, and never stray far below the centre.
+      const groundSamples: number[] = [];
+      for (const r of rings) for (const [x, z] of r) groundSamples.push(hm.sample(x, z));
+      const cSample = hm.sample(c[0], c[1]);
+      groundSamples.push(cSample);
+      groundSamples.sort((p, q) => p - q);
+      let gy = groundSamples[Math.floor(groundSamples.length * 0.1)] ?? cSample;
+      gy = Math.max(Math.min(gy, cSample), groundSamples[0], cSample - 3);
 
       // ---- part start height
       let minH = parseLen(tags.min_height) ?? 0;
@@ -303,6 +314,10 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
         } else {
           eave = HAUSSMANN.defaultEave; ridge = HAUSSMANN.defaultRidge; source = 'default';
         }
+        if (floating && source === 'default') {
+          // A hull with a deckhouse: low and flat, a little taller for the bigger barges.
+          eave = a > 300 ? 3.6 : 2.8; ridge = eave;
+        }
         // a tagged shape without an OSM height: the eave above is the gutter, the roof sits on top of it
         if (kindTag && kindTag !== 'flat' && (CURVED_ROOFS.has(kindTag) || kindTag === 'round' || kindTag === 'pyramidal' || kindTag === 'skillion' || roofHeightTag != null || angleRise != null)) ridge = eave + shapedRise(eave + 40);
       }
@@ -321,6 +336,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       else if (source === 'default' || (source === 'levels' && (levelsTag ?? 0) >= 4)) roof = 'mansard';
       else roof = 'flat';
       if (roof !== 'flat' && ridge - eave < 1.5) ridge = eave + (roof === 'mansard' ? 5.0 : CURVED_ROOFS.has(roof) || roof === 'round' ? Math.max(1.5, defaultRise(roof, minor, 40)) : 4.0);
+      if (floating) { roof = 'flat'; ridge = eave; }
       if (roof === 'flat') ridge = eave;
       if (a < 25 && roof === 'mansard') { roof = 'flat'; ridge = eave; }
       if (a < 6 && (CURVED_ROOFS.has(roof) || roof === 'round')) { roof = 'flat'; ridge = eave; }
@@ -363,7 +379,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
 
       raw.push({
         id: osmId, rings, centroid: c, area: a, minH, eave, ridge, groundY: gy, roof, style, tint, roofMat, roofMatId: ROOF_MAT_ID[roofMat], roofTint,
-        roofDir, roofOrient, rect, levels, floorH, seed, source, isPart, isPlinth: false, landmark, name: tags.name, wikidata: tags.wikidata, tags,
+        roofDir, roofOrient, rect, levels, floorH, seed, source, isPart, isPlinth: false, floating, landmark, name: tags.name, wikidata: tags.wikidata, tags,
       });
     }
   }

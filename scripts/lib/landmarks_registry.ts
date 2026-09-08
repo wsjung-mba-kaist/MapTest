@@ -69,7 +69,10 @@ export const LANDMARKS: LandmarkSpec[] = [
     blurbKo: '높이 107 m의 황금 돔 성당(1706). 나폴레옹 1세의 관이 안치되어 있다.' },
   { id: 'saint-louis-invalides', osm: 'way/64955027', category: 'church', approx: [1328, 304], radius: 50, short: '생루이 데 앵발리드 성당' },
   { id: 'musee-armee', osm: 'node/130102845', category: 'museum', approx: [1278, 152], radius: 60, short: '군사박물관' },
+  // The default landing spot fell under the Pont de Grenelle deck, which crosses the island right beside the
+  // statue. Stand up-island of it instead, 26 m away on dry ground and 74 m clear of any deck.
   { id: 'statue-liberte', osm: 'node/465294103', category: 'monument', approx: [-1085, 928], radius: 50, short: '자유의 여신상',
+    view: { x: -1080, z: 902, yaw: 190 },
     blurbKo: '백조의 섬 끝에 선 뉴욕 자유의 여신상의 1/4 크기 복제품(1889). 서쪽 뉴욕을 바라본다.' },
   { id: 'saint-pierre-chaillot', osm: 'way/79276832', category: 'church', approx: [294, -1037], radius: 60, short: '생피에르 드 샤요 교회' },
   { id: 'eglise-americaine', osm: 'way/69049385', category: 'church', approx: [911, -417], radius: 40, short: '아메리칸 교회' },

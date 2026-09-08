@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { OUT_DIR, STATUES } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
 import { FURNITURE_STRIDE, FurnitureKind, WORLD_HALF } from '../../shared/layout.ts';
@@ -15,6 +15,7 @@ import { classify } from './roadnet.ts';
 /** Street lamps along roads (and park alleys), plus OSM-mapped lamps/benches when the points theme is available. */
 export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps>, points: FeatureCollection<Geometry, OsmProps> | null, buildings: BuildingSpec[], hm: Heightmap, waterLevelY: number, land: FeatureCollection<Geometry, OsmProps> | null = null): Promise<{ count: number; bytes: number }> {
   const rows: number[] = [];
+  let statues = 0;
   const occupied = new Map<string, true>();
   const cellKey = (x: number, z: number) => `${Math.floor(x / 6)}_${Math.floor(z / 6)}`;
 
@@ -52,6 +53,17 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
         for (const p of osmLamps.get(`${i}_${j}`) ?? []) if (Math.hypot(p[0] - x, p[1] - z) < LAMP_YIELD_R) return true;
     return false;
   };
+  // Hand-placed monument statues (config.STATUES). These go down first so the OSM pass can defer to them, and so
+  // the landmarks the app advertises are there whether or not the points theme happened to include artwork.
+  const curated: Pt[] = [];
+  for (const st of STATUES) {
+    const w = frame.toWorld(st.lon, st.lat);
+    if (Math.abs(w.x) > WORLD_HALF || Math.abs(w.z) > WORLD_HALF) continue;
+    curated.push([w.x, w.z]);
+    // scale 1 is a ~4.5 m figure on its plinth (see statue() in src/world/Furniture.ts)
+    if (place(w.x, w.z, (st.facing * Math.PI) / 180, FurnitureKind.Statue, Math.max(0.5, st.height / 4.5))) statues++;
+  }
+  const nearCurated = (x: number, z: number) => curated.some(c => Math.hypot(c[0] - x, c[1] - z) < 12);
   if (points) {
     for (const f of points.features) {
       const t = f.properties.tags ?? {};
@@ -82,6 +94,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
       // Statues and memorials (the Liberty replica on the Ile aux Cygnes, the Flame of Liberty, park bronzes).
       // OSM rarely gives a height, so scale 1 is a ~4.5 m figure on a plinth and the tagged height overrides it.
       else if (t.man_made === 'statue' || t.historic === 'memorial' || t.tourism === 'artwork') {
+        if (nearCurated(w.x, w.z)) continue;   // the hand-placed one wins
         const h = parseFloat(t.height ?? '');
         if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.Statue, Number.isFinite(h) && h > 1 ? Math.min(6, h / 4.5) : 1)) fromOsm++;
       }

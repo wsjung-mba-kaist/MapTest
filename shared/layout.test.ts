@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packStyleSeed, unpackSeed, unpackStyle, STYLE_SCALE } from './layout.ts';
+import { FurnitureKind, packStyleSeed, unpackSeed, unpackStyle, STYLE_SCALE } from './layout.ts';
 
 /**
  * meta.w carries the facade style and the per-building seed in one float. A rounding decode (`+ 0.5`) used to
@@ -35,4 +35,23 @@ test('the shader decode matches the TypeScript decode', () => {
     assert.equal(glslStyle(w), unpackStyle(w));
     assert.equal(glslSeed(w), unpackSeed(w));
   }
+});
+
+/**
+ * `Car` and `Person` are bases for runs of consecutive kinds (one per model variant), so any single kind placed
+ * inside those runs is silently read back as a car or a person. `Statue = 11` did exactly that and 927 parked
+ * hatchbacks came back as statues.
+ */
+test('no single furniture kind falls inside the car or person variant runs', () => {
+  const CAR_VARIANTS = 8, PERSON_VARIANTS = 4;
+  const carRun = { lo: FurnitureKind.Car, hi: FurnitureKind.Car + CAR_VARIANTS - 1 };
+  const personRun = { lo: FurnitureKind.Person, hi: FurnitureKind.Person + PERSON_VARIANTS - 1 };
+  assert.ok(carRun.hi < personRun.lo, 'the car run runs into the person run');
+  const singles = Object.entries(FurnitureKind)
+    .filter(([k, v]) => typeof v === 'number' && k !== 'Car' && k !== 'Person') as [string, number][];
+  for (const [name, v] of singles) {
+    assert.ok(!(v >= carRun.lo && v <= carRun.hi), `${name} = ${v} sits inside the car variants ${carRun.lo}..${carRun.hi}`);
+    assert.ok(!(v >= personRun.lo && v <= personRun.hi), `${name} = ${v} sits inside the person variants ${personRun.lo}..${personRun.hi}`);
+  }
+  assert.equal(new Set(singles.map(([, v]) => v)).size, singles.length, 'two furniture kinds share a value');
 });

@@ -94,3 +94,18 @@ export const ASSETS = {
   },
   ambientcg: ['Facade001', 'Facade018A', 'PavingStones138', 'Grass004', 'Gravel043', 'Bark014', 'Asphalt033'],
 };
+
+/**
+ * Monument statues placed by hand (lon, lat, height in metres, and the bearing the figure faces).
+ *
+ * OSM does carry these as `tourism=artwork` / `man_made=statue` nodes and the `points` theme now asks for them,
+ * but the curated list is what guarantees the landmarks the app advertises actually stand there: a landmark card
+ * with nothing under it is worse than no card. Anything the OSM themes bring in within 12 m of one of these is
+ * dropped so the two sources cannot double up.
+ */
+export const STATUES: { id: string; lon: number; lat: number; height: number; facing: number }[] = [
+  // The 1889 quarter-scale replica at the downstream tip of the Ile aux Cygnes, facing west toward New York.
+  { id: 'statue-liberte', lon: 2.279701, lat: 48.850024, height: 11.5, facing: 270 },
+  // Flamme de la Liberte, the gilded torch above the Alma tunnel.
+  { id: 'flamme-liberte', lon: 2.301389, lat: 48.864167, height: 3.5, facing: 200 },
+];
