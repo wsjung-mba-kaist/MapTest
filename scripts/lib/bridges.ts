@@ -9,7 +9,7 @@ import { triangulateCap } from './extrude.ts';
 import { frame } from '../../shared/geo.ts';
 import { SurfaceFlag, WORLD_HALF } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
-import { area, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, centroid, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
 
 const DECK_THICK = 2.2;
 const PARAPET_H = 1.05;
@@ -156,15 +156,40 @@ function addViaduct(deck: GeomBuilder, stone: GeomBuilder, parapet: GeomBuilder,
   }
 }
 
-/** Principal axis of a ring via covariance (unit direction, centre, half-length along the axis). */
-function principalAxis(ring: Ring): { cx: number; cz: number; dx: number; dz: number; half: number; width: number } {
-  let cx = 0, cz = 0; for (const p of ring) { cx += p[0]; cz += p[1]; } cx /= ring.length; cz /= ring.length;
-  let sxx = 0, sxz = 0, szz = 0; for (const p of ring) { const x = p[0] - cx, z = p[1] - cz; sxx += x * x; sxz += x * z; szz += z * z; }
+/**
+ * Principal axis of a ring via covariance (unit direction, centre of the ring's own extent, half-length).
+ *
+ * Callers lay piers and arch springings out across `[-half, +half]` about `(cx, cz)`, so `(cx, cz)` has to be the
+ * middle of the deck, not just some point on the axis. Two things used to break that: the centre came from the
+ * unweighted vertex mean, and the midpoints of the measured extents were thrown away. Measured over the 45 baked
+ * decks that put the pier row up to 17.9 m along the bridge and the spandrel walls up to 7.8 m off its edges.
+ */
+export function principalAxis(ring: Ring): { cx: number; cz: number; dx: number; dz: number; half: number; width: number } {
+  // Area-weighted centre: outlines carry far more vertices along a detailed kerb than a plain one, and buffered
+  // polylines pile twelve into every joint disc, which drags a vertex mean toward the busy side.
+  const [gx, gz] = centroid(ring);
+  let sxx = 0, sxz = 0, szz = 0; for (const p of ring) { const x = p[0] - gx, z = p[1] - gz; sxx += x * x; sxz += x * z; szz += z * z; }
   const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz);
   const dx = Math.cos(ang), dz = Math.sin(ang);
   let lo = Infinity, hi = -Infinity, wlo = Infinity, whi = -Infinity;
-  for (const p of ring) { const t = (p[0] - cx) * dx + (p[1] - cz) * dz; const w = -(p[0] - cx) * dz + (p[1] - cz) * dx; lo = Math.min(lo, t); hi = Math.max(hi, t); wlo = Math.min(wlo, w); whi = Math.max(whi, w); }
-  return { cx, cz, dx, dz, half: (hi - lo) / 2, width: whi - wlo };
+  for (const p of ring) { const t = (p[0] - gx) * dx + (p[1] - gz) * dz; const w = -(p[0] - gx) * dz + (p[1] - gz) * dx; lo = Math.min(lo, t); hi = Math.max(hi, t); wlo = Math.min(wlo, w); whi = Math.max(whi, w); }
+  const tMid = (lo + hi) / 2, wMid = (wlo + whi) / 2;
+  return {
+    cx: gx + dx * tMid - dz * wMid,
+    cz: gz + dz * tMid + dx * wMid,
+    dx, dz, half: (hi - lo) / 2, width: whi - wlo,
+  };
+}
+
+/** Half-width of a ring measured across `dir` through the point `(px, pz)`; used to keep a pier inside its deck. */
+function halfWidthAt(ring: Ring, px: number, pz: number, dx: number, dz: number): number {
+  let lo = Infinity, hi = -Infinity;
+  for (const p of ring) {
+    const t = (p[0] - px) * dx + (p[1] - pz) * dz;
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  return Math.min(Math.abs(lo), Math.abs(hi));
 }
 
 /** Pier boxes of a deck along its principal axis (30 m spacing, only where the ground is under water). */
@@ -178,9 +203,15 @@ function pierBoxes(b: Bridge, hm: Heightmap, waterLevelY: number, flowAt?: FlowF
     const px = ax.cx + ax.dx * t, pz = ax.cz + ax.dz * t;
     if (hm.sample(px, pz) > waterLevelY + 1.5) continue; // pier on land is a wall, skip
     // Real piers are streamlined along the current; without a flow field fall back to the deck's perpendicular.
+    // Reject a flow vector that has swung far off the deck's perpendicular — near the Ile aux Cygnes fork the
+    // 60 m secant window straddles two arms and comes back up to 29 degrees out, which visibly slews the pier.
+    const perp: [number, number] = [-ax.dz, ax.dx];
     const flow = flowAt?.(px, pz);
-    const [fx, fz] = flow ?? [-ax.dz, ax.dx];
-    const halfW = Math.min(pierW / 2, flow ? 14 : pierW / 2);
+    const [fx, fz] = flow && Math.abs(flow[0] * perp[0] + flow[1] * perp[1]) > 0.94 ? flow : perp;
+    // Keep the pier inside the deck it holds up: the old constant made a 28 m pier under decks as narrow as 14 m,
+    // so its corners stuck out into open water.
+    const deckHalf = halfWidthAt(b.poly[0], px, pz, fx, fz);
+    const halfW = Math.max(2, Math.min(pierW / 2, deckHalf - 0.5));
     out.push({ cx: px, cz: pz, dx: -fz, dz: fx, halfL: pierL / 2, halfW, name: b.name });
   }
   return out;
