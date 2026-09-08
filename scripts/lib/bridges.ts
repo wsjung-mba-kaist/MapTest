@@ -21,7 +21,15 @@ const VIADUCT_THICK = 1.4;
 const ARCH_MAX_H = 6.5;
 const ROAD: [number, number, number] = [110, 108, 104];
 
-export interface Bridge { id: string; poly: Poly; deckTop: number; name: string; rail: boolean; columnsTo?: number }
+export interface Bridge {
+  id: string; poly: Poly; deckTop: number; name: string; rail: boolean; columnsTo?: number;
+  /**
+   * The roadway/railway this deck carries, in world coordinates. Supports are placed along it by arc length so
+   * they follow a curve; without it they used to sit on the polygon's straight PCA chord, which on the 2.4 km
+   * Metro 6 alignment wandered up to 190 m off the deck and left columns standing in open water.
+   */
+  centre?: Pt[];
+}
 /** Oriented pier footprint: centre, across-flow unit direction (dx,dz), half-length across the flow (2.25 m), half-width along the flow. */
 export interface PierBox { cx: number; cz: number; dx: number; dz: number; halfL: number; halfW: number; name: string }
 export type FlowField = (x: number, z: number) => [number, number] | null;
@@ -104,7 +112,9 @@ function addArches(gb: GeomBuilder, b: Bridge, piers: PierBox[], bottom: number,
   const supports = [{ t: -ax.half, half: 0 }, ...piers.map(p => ({ t: tOf(p.cx, p.cz), half: p.halfL })).sort((p, q) => p.t - q.t), { t: ax.half, half: 0 }];
   const spring = Math.max(waterLevelY + 1.2, bottom - ARCH_MAX_H);
   if (bottom - spring < 1.5) return;
-  const w = ax.width / 2 - 0.05;
+  // Local half-width per station, not one figure for the whole span: a constant put Alexandre III's arcade 12.6 m
+  // (max 15.6) outside its own deck, standing free in the water.
+  const halfAt = (x: number, z: number) => Math.max(1, halfWidthAt(b.poly[0], x, z, -ax.dz, ax.dx) - 0.05);
   const m: [number, number, number, number] = [3.1, 1, 0, 2 * 256 + 17];
   const c: [number, number, number, number] = [STONE[0], STONE[1], STONE[2], SurfaceFlag.Plinth];
   for (let s = 0; s + 1 < supports.length; s++) {
@@ -117,7 +127,9 @@ function addArches(gb: GeomBuilder, b: Bridge, piers: PierBox[], bottom: number,
       for (let k = 0; k <= steps; k++) {
         const t = a + (e - a) * k / steps;
         const yArch = spring + (bottom - spring) * Math.sqrt(Math.max(0, 1 - ((t - mid) / half) ** 2));
-        const x = ax.cx + ax.dx * t + nx * w, z = ax.cz + ax.dz * t + nz * w;
+        const cxT = ax.cx + ax.dx * t, czT = ax.cz + ax.dz * t;
+        const w = halfAt(cxT, czT);
+        const x = cxT + nx * w, z = czT + nz * w;
         if (prev) {
           const i0 = gb.vertex(prev[0], prev[2], prev[1], prev[3], prev[2] - spring, m, c), i1 = gb.vertex(x, yArch, z, t, yArch - spring, m, c);
           const i2 = gb.vertex(x, bottom + 0.02, z, t, bottom - spring, m, c), i3 = gb.vertex(prev[0], bottom + 0.02, prev[1], prev[3], bottom - spring, m, c);
@@ -145,15 +157,69 @@ function addViaduct(deck: GeomBuilder, stone: GeomBuilder, parapet: GeomBuilder,
     addCapAt(parapet, [b.poly[0], orient(inner, true)], top + 0.9, SurfaceFlag.Plinth, STEEL, true);
   }
   const ax = principalAxis(b.poly[0]);
-  const n = Math.max(1, Math.floor(ax.half * 2 / 7));
-  for (let k = 0; k < n; k++) {
-    const t = -ax.half + 3.5 + (ax.half * 2 - 7) * (n > 1 ? k / (n - 1) : 0.5);
+  // Columns follow the line the viaduct actually runs on. On the straight PCA chord of a 2.4 km curved alignment
+  // 664 of 670 columns landed outside their own deck, dozens of them standing free in the Seine.
+  const line: Pt[] = b.centre && b.centre.length >= 2
+    ? b.centre
+    : [[ax.cx - ax.dx * ax.half, ax.cz - ax.dz * ax.half], [ax.cx + ax.dx * ax.half, ax.cz + ax.dz * ax.half]];
+  for (const st of stationsAlong(line, 7, 3.5)) {
+    if (!pointInPoly(st.x, st.z, b.poly)) continue;
+    // Pairs straddle the centreline, inset from the deck's real edge rather than a fixed ±3 m.
+    const half = Math.max(0.6, Math.min(3.0, halfWidthAt(b.poly[0], st.x, st.z, -st.tz, st.tx) - 0.6));
     for (const side of [-1, 1]) {
-      const cx = ax.cx + ax.dx * t - ax.dz * side * 3.0, cz = ax.cz + ax.dz * t + ax.dx * side * 3.0;
+      const cx = st.x - st.tz * side * half, cz = st.z + st.tx * side * half;
       const ring: Ring = orient([[cx - 0.28, cz - 0.28], [cx + 0.28, cz - 0.28], [cx + 0.28, cz + 0.28], [cx - 0.28, cz + 0.28]], false);
       addWalls(stone, ring, base + 0.05, bottom + 0.05, SurfaceFlag.Plinth, STEEL);
     }
   }
+}
+
+/** Total length of a polyline. */
+function lineLength(pts: Pt[]): number {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return L;
+}
+
+/** Fraction of a polyline's length whose sample points fall inside `poly` (sampled every ~2 m). */
+function fractionInside(pts: Pt[], poly: Poly): number {
+  let inside = 0, total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const n = Math.max(1, Math.ceil(seg / 2));
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) / n;
+      total += seg / n;
+      if (pointInPoly(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, poly)) inside += seg / n;
+    }
+  }
+  return total > 0 ? inside / total : 0;
+}
+
+/** Evenly spaced points along a polyline with the local unit tangent at each, inset from both ends. */
+export function stationsAlong(pts: Pt[], spacing: number, inset: number): { x: number; z: number; tx: number; tz: number }[] {
+  const L = lineLength(pts);
+  const span = L - 2 * inset;
+  if (!(span > 0) || !(spacing > 0)) return [];
+  const n = Math.max(1, Math.round(span / spacing));
+  const out: { x: number; z: number; tx: number; tz: number }[] = [];
+  for (let k = 0; k <= n; k++) {
+    const target = inset + (span * k) / n;
+    let acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (seg < 1e-6) continue;
+      if (acc + seg >= target || i === pts.length - 1) {
+        const t = Math.max(0, Math.min(1, (target - acc) / seg));
+        out.push({ x: a[0] + (b[0] - a[0]) * t, z: a[1] + (b[1] - a[1]) * t, tx: (b[0] - a[0]) / seg, tz: (b[1] - a[1]) / seg });
+        break;
+      }
+      acc += seg;
+    }
+  }
+  return out;
 }
 
 /**
@@ -195,24 +261,33 @@ function halfWidthAt(ring: Ring, px: number, pz: number, dx: number, dz: number)
 /** Pier boxes of a deck along its principal axis (30 m spacing, only where the ground is under water). */
 function pierBoxes(b: Bridge, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): PierBox[] {
   const ax = principalAxis(b.poly[0]);
-  const pierW = Math.max(3, Math.min(ax.width * 0.8, 40)), pierL = 4.5, spacing = 30;
-  const n = Math.max(0, Math.floor((ax.half * 2 - 20) / spacing));
+  // Prefer the carriageway this deck actually carries. The outline of a road bridge is asymmetric — the
+  // carriageway sits to one side of the footways — so its PCA axis is up to 8 m off the road, and on a curved
+  // viaduct the straight axis leaves the deck entirely.
+  const line: Pt[] = b.centre && b.centre.length >= 2
+    ? b.centre
+    : [[ax.cx - ax.dx * ax.half, ax.cz - ax.dz * ax.half], [ax.cx + ax.dx * ax.half, ax.cz + ax.dz * ax.half]];
+  const L = lineLength(line);
+  // One pier per span boundary rather than a blind 30 m grid: a single-span bridge (Alexandre III) used to get
+  // four piers it does not have.
+  const spans = Math.max(1, Math.round(L / 35));
+  if (spans < 2) return [];
+  const stations = stationsAlong(line, L / spans, L / spans);
+  const pierW = Math.max(3, Math.min(ax.width * 0.8, 24)), pierL = 4.5;
   const out: PierBox[] = [];
-  for (let k = 0; k < n; k++) {
-    const t = -ax.half + 10 + spacing * (k + 0.5) + (spacing * (n) < ax.half * 2 - 20 ? (ax.half * 2 - 20 - spacing * n) / 2 : 0);
-    const px = ax.cx + ax.dx * t, pz = ax.cz + ax.dz * t;
-    if (hm.sample(px, pz) > waterLevelY + 1.5) continue; // pier on land is a wall, skip
+  for (const st of stations) {
+    if (!pointInPoly(st.x, st.z, b.poly)) continue;          // never a support outside the deck it holds up
+    if (hm.sample(st.x, st.z) > waterLevelY + 1.5) continue; // pier on land is a wall, skip
     // Real piers are streamlined along the current; without a flow field fall back to the deck's perpendicular.
-    // Reject a flow vector that has swung far off the deck's perpendicular — near the Ile aux Cygnes fork the
-    // 60 m secant window straddles two arms and comes back up to 29 degrees out, which visibly slews the pier.
-    const perp: [number, number] = [-ax.dz, ax.dx];
-    const flow = flowAt?.(px, pz);
+    // Reject a flow vector that has swung far off it — near the Ile aux Cygnes fork the 60 m secant window
+    // straddles two arms and comes back up to 29 degrees out, which visibly slews the pier.
+    const perp: [number, number] = [-st.tz, st.tx];
+    const flow = flowAt?.(st.x, st.z);
     const [fx, fz] = flow && Math.abs(flow[0] * perp[0] + flow[1] * perp[1]) > 0.94 ? flow : perp;
-    // Keep the pier inside the deck it holds up: the old constant made a 28 m pier under decks as narrow as 14 m,
-    // so its corners stuck out into open water.
-    const deckHalf = halfWidthAt(b.poly[0], px, pz, fx, fz);
+    // Keep the pier inside the deck: a constant half-width made a 40 m pier under a 14 m deck, damming the river.
+    const deckHalf = halfWidthAt(b.poly[0], st.x, st.z, fx, fz);
     const halfW = Math.max(2, Math.min(pierW / 2, deckHalf - 0.5));
-    out.push({ cx: px, cz: pz, dx: -fz, dz: fx, halfL: pierL / 2, halfW, name: b.name });
+    out.push({ cx: st.x, cz: st.z, dx: -fz, dz: fx, halfL: pierL / 2, halfW, name: b.name });
   }
   return out;
 }
@@ -233,6 +308,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     if (!t.bridge || t.bridge === 'no' || f.geometry.type !== 'LineString') continue;
     if (!(t.highway || t.railway)) continue;
     if (t.highway === 'steps') continue;
+    if (t.footway === 'sidewalk') continue;   // a sidewalk rides the road deck; it never gets a deck and piers of its own
     const pts: Pt[] = (f.geometry as LineString).coordinates.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
     if (pts.every(p => Math.abs(p[0]) > WORLD_HALF + 100 || Math.abs(p[1]) > WORLD_HALF + 100)) continue;
     lines.push({ pts, tags: t, id: `${f.properties.type}/${f.properties.id}` });
@@ -240,36 +316,49 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
 
   const deckLevel = (ring: Ring): number => {
     const ys = ring.map(p => hm.sample(p[0], p[1])).filter(y => y > waterLevelY + 1.0).sort((a, b) => a - b);
-    if (!ys.length) return waterLevelY + 8;
+    // A deck level inferred from one or two bank samples is a guess, and two paths over open water came out with
+    // their soffits below the surface. Fall back to a standard height unless several samples agree.
+    if (ys.length < 3) return waterLevelY + 8;
     const top = ys.slice(Math.floor(ys.length * 0.5));
-    return top.reduce((s, v) => s + v, 0) / top.length + 0.15;
+    const level = top.reduce((s, v) => s + v, 0) / top.length + 0.15;
+    // Keep a navigable soffit: Paris road bridges clear the water by about 6 m.
+    return Math.max(level, waterLevelY + 0.3 + DECK_THICK + 3.5);
   };
 
   for (const o of outlines) {
     const rail = /rail|subway|viaduc|métro|metro/i.test(o.tags.name ?? '') || !!o.tags.railway;
-    bridges.push({ id: o.id, poly: o.poly, deckTop: deckLevel(o.poly[0]), name: o.tags.name ?? o.id, rail });
+    // The road this outline carries: the longest carriageway lying mostly inside it. Supports go along that, not
+    // along the outline's own axis, which is pulled off-centre by the footways beside the carriageway.
+    let best: { pts: Pt[]; len: number } | null = null;
+    for (const l of lines) {
+      if (fractionInside(l.pts, o.poly) < 0.6) continue;
+      const len = lineLength(l.pts);
+      if (!best || len > best.len) best = { pts: l.pts, len };
+    }
+    bridges.push({ id: o.id, poly: o.poly, deckTop: deckLevel(o.poly[0]), name: o.tags.name ?? o.id, rail, centre: best?.pts });
   }
   // elevated métro: every railway bridge line rides VIADUCT_RISE above the road deck (inside an outline) or the ground,
   // on steel columns; the road outline below keeps its own deck
   for (const l of lines) {
     if (!l.tags.railway) continue;
-    const mid = l.pts[Math.floor(l.pts.length / 2)];
-    const over = outlines.find(o => pointInPoly(mid[0], mid[1], o.poly));
+    const over = outlines.find(o => fractionInside(l.pts, o.poly) > 0.5);
     for (const poly of bufferLine(l.pts, roadWidth(l.tags))) {
       const base = over ? bridges.find(b => b.id === over.id)?.deckTop ?? deckLevel(poly[0]) : deckLevel(poly[0]);
-      bridges.push({ id: l.id, poly, deckTop: base + VIADUCT_RISE, name: l.tags.name ?? l.id, rail: true, columnsTo: base });
+      bridges.push({ id: l.id, poly, deckTop: base + VIADUCT_RISE, name: l.tags.name ?? l.id, rail: true, columnsTo: base, centre: l.pts });
     }
   }
   // Lines not covered by an outline become simple decks (skip tiny spans, e.g. over a ditch).
   let fromLines = 0;
   for (const l of lines) {
     if (l.tags.railway) continue;   // handled above
-    const mid = l.pts[Math.floor(l.pts.length / 2)];
-    if (outlines.some(o => pointInPoly(mid[0], mid[1], o.poly))) continue;
+    // Test how much of the line lies inside an outline, not just its middle VERTEX: the offenders had two
+    // vertices, so their "middle" was an endpoint out on the approach ramp and they escaped this check, giving
+    // Iena and Alexandre III a second parapeted deck hovering a metre above the real one.
+    if (outlines.some(o => fractionInside(l.pts, o.poly) > 0.5)) continue;
     const len = l.pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - l.pts[i - 1][0], p[1] - l.pts[i - 1][1]) : 0, 0);
     if (len < 12) continue;
     const polys = bufferLine(l.pts, roadWidth(l.tags));
-    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0]), name: l.tags.name ?? l.id, rail: !!l.tags.railway }); fromLines++; }
+    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0]), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
   }
   const piers: PierBox[] = [];
   for (const b of bridges) if (b.columnsTo === undefined) piers.push(...pierBoxes(b, hm, waterLevelY, flowAt));

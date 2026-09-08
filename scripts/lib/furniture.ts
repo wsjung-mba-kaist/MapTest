@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import { log } from './log.ts';
-import { OUT_DIR, STATUES } from '../config.ts';
+import { MODELS_DIR, OUT_DIR, STATUES } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
 import { FURNITURE_STRIDE, FurnitureKind, WORLD_HALF } from '../../shared/layout.ts';
@@ -55,8 +55,25 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
   };
   // Hand-placed monument statues (config.STATUES). These go down first so the OSM pass can defer to them, and so
   // the landmarks the app advertises are there whether or not the points theme happened to include artwork.
+  // A hero model (scripts/landmarks_models.ts) replaces the procedural figure wherever one has been baked, so the
+  // two never stand in the same spot.
+  const heroIds = new Set<string>();
+  const heroSpots: { x: number; z: number; r: number }[] = [];
+  try {
+    const idx = JSON.parse(await fs.readFile(path.join(MODELS_DIR, 'landmarks.json'), 'utf8')) as { models?: { id: string; json: string }[] };
+    for (const m of idx.models ?? []) {
+      heroIds.add(m.id);
+      try {
+        const meta = JSON.parse(await fs.readFile(path.join(MODELS_DIR, m.json), 'utf8')) as { centre?: [number, number]; radius?: number };
+        if (meta.centre) heroSpots.push({ x: meta.centre[0], z: meta.centre[1], r: Math.max(12, (meta.radius ?? 0) + 6) });
+      } catch { /* no metadata for this model */ }
+    }
+  } catch { /* no hero models baked yet */ }
+  /** A real model already stands here, so no procedural figure — from either source — may share the spot. */
+  const nearHero = (x: number, z: number) => heroSpots.some(h => Math.hypot(h.x - x, h.z - z) < h.r);
   const curated: Pt[] = [];
   for (const st of STATUES) {
+    if (heroIds.has(st.id)) { log.info(`furniture: ${st.id}: hero model present, procedural statue skipped`); continue; }
     const w = frame.toWorld(st.lon, st.lat);
     if (Math.abs(w.x) > WORLD_HALF || Math.abs(w.z) > WORLD_HALF) continue;
     curated.push([w.x, w.z]);
@@ -94,7 +111,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
       // Statues and memorials (the Liberty replica on the Ile aux Cygnes, the Flame of Liberty, park bronzes).
       // OSM rarely gives a height, so scale 1 is a ~4.5 m figure on a plinth and the tagged height overrides it.
       else if (t.man_made === 'statue' || t.historic === 'memorial' || t.tourism === 'artwork') {
-        if (nearCurated(w.x, w.z)) continue;   // the hand-placed one wins
+        if (nearCurated(w.x, w.z) || nearHero(w.x, w.z)) continue;   // a hand-placed figure or a real model wins
         const h = parseFloat(t.height ?? '');
         if (place(w.x, w.z, seed * Math.PI * 2, FurnitureKind.Statue, Number.isFinite(h) && h > 1 ? Math.min(6, h / 4.5) : 1)) fromOsm++;
       }

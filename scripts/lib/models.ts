@@ -8,6 +8,7 @@ import { loadTheme } from './overpass.ts';
 import { LANDMARK_MODELS, licenseAllowed } from '../landmarks_models.ts';
 import { heroFootprints } from './landmarks_footprints.ts';
 import { processModel } from './model_fit.ts';
+import { frame } from '../../shared/geo.ts';
 
 /**
  * bake:models — every hero model of the registry (scripts/landmarks_models.ts) except the tower, which keeps its
@@ -28,8 +29,10 @@ export async function run(ctx: BakeContext) {
     }
     if (!licenseAllowed(entry.credits.license)) { log.warn(`models: ${entry.id}: licence "${entry.credits.license}" is not free for redistribution; skipped (ALLOW_NONFREE=1 overrides)`); continue; }
     if (!ctx.force && await exists(glb) && await exists(json)) { index.push({ id: entry.id, glb: `${entry.id}.glb`, lod: await exists(lod) ? `${entry.id}_lod.glb` : undefined, json: `${entry.id}.json` }); log.info(`models: ${entry.id}: cached`); continue; }
-    const foot = feet.find(f => f.id === entry.id);
-    if (!foot) { log.warn(`models: ${entry.id}: OSM footprint not in the cached buildings theme; skipped`); continue; }
+    // A statue or memorial is an OSM node, so there is no footprint to fit onto; the registry gives the spot instead.
+    const placed = entry.place ? (() => { const w = frame.toWorld(entry.place!.lon, entry.place!.lat); const r = entry.place!.radius; return { id: entry.id, centre: [w.x, w.z] as [number, number], radius: r, rect: { w: r * 2, h: r * 2, angle: 0, cx: w.x, cz: w.z } }; })() : undefined;
+    const foot = feet.find(f => f.id === entry.id) ?? placed;
+    if (!foot) { log.warn(`models: ${entry.id}: OSM footprint not in the cached buildings theme and no explicit place; skipped`); continue; }
     let src = path.join(MODELS_DIR, entry.source);
     if (/^https?:\/\//.test(entry.source)) {
       const buf = await cachedBytes(entry.source, `models/${entry.id}_src.glb`, { timeoutMs: 600_000 });

@@ -172,6 +172,7 @@ export class App {
     this.collision.flushWalkables();   // bridge decks + tower floors must exist before a URL / viewpoint placement probes them
     // golden projectors at the foot of each pillar (off with the tower after 23:45)
     if (this.tower.pillars.length) localLights.addLights('tower', this.tower.pillars.map(([px, pz]) => ({ x: px, y: this.world.groundY(px, pz) + 1.5, z: pz, radius: 25, r: 1.0, g: 0.62, b: 0.25, intensity: 30, kind: 'tower' as const })));
+    for (const m of this.world.heroModels) { const fl = m.floodlights(); if (fl.length) localLights.addLights(`hero:${m.meta.id}`, fl); }
     this.glide = new Glide(this.camera, this.input);
     const hudEl = document.getElementById('hud') as HTMLElement;
     const q = new URLSearchParams(location.search);

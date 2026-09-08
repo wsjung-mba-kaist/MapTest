@@ -147,6 +147,7 @@ export async function run(_ctx: BakeContext) {
   // LiDAR HD surface-model caps for the landmarks (npm run bake:dsm); null = analytic roofs everywhere
   const dsm = await DsmProvider.load();
   const dsmHook = dsm ? ((gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => (dsm.has(b.group ?? b.id) ? addDsmCap(gb, b, dsm, ox, oz, meta, tint) : null)) : undefined;
+  const dsmCovers = dsm ? ((b: BuildingSpec) => dsm.has(b.group ?? b.id)) : undefined;
   let detailRows = 0;
   let totalBytes = 0, totalTris = 0, dsmBuildings = 0, dsmTrisTotal = 0, dsmTrisRaw = 0;
   const DSM_BUDGET = 1_200_000;
@@ -158,7 +159,7 @@ export async function run(_ctx: BakeContext) {
     const cb: ChunkBuilders = { walls: new GeomBuilder(), roofs: new GeomBuilder(), tops: new GeomBuilder(), lod: new GeomBuilder(), details: [], dsm: new GeomBuilder(), roofsAlt: new GeomBuilder(), topsAlt: new GeomBuilder() };
     for (const b of list) {
       try {
-        const r = extrudeBuilding(b, cb, o.x, o.z, dsmHook);
+        const r = extrudeBuilding(b, cb, o.x, o.z, dsmHook, dsmCovers);
         if (r.dsmTris) { dsmBuildings++; dsmTrisRaw += r.dsmTris[0]; dsmTrisTotal += r.dsmTris[1]; if (r.dsmTris[0] > 20000) log.info(`dsm: ${b.id}${b.name ? ` (${b.name})` : ''}: ${r.dsmTris[0]} -> ${r.dsmTris[1]} tris`); }
       } catch (e) { log.warn(`extrude ${b.id} failed: ${e instanceof Error ? e.message : e}`); }
     }

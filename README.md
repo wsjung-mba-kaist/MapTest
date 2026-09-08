@@ -14,6 +14,7 @@ Google 3D Tiles나 유료 API 키 없이, 공개 데이터만으로 빌드합니
 | 명소 33곳의 이름(한·불·영)·건축가·연도·높이·요약·사진 (`landmarks.json`, `landmarks/*.jpg`) | OSM 태그 → Wikidata → Wikipedia 요약(ko > fr > en) → Wikimedia Commons (CC0/PD/CC BY(-SA)만, 저작자·라이선스는 카드에 표시), `npm run bake:landmarks` | CC BY-SA 4.0 (텍스트) / 사진별 |
 | 랜드마크 실제 지붕 형상 (앵발리드 돔·그랑팔레 유리 볼트·샤요 궁·에콜 밀리테르 등, 50 cm LiDAR 표면모델을 발자국 안에서 격자화) | IGN LiDAR HD MNS (WMS-R `IGNF_LIDAR-HD_MNS_…`), `npm run bake:dsm` → 청크 `dsm` 섹션 | Licence Ouverte / Etalab 2.0 |
 | 돔·양파돔·원뿔·배럴 볼트·방향 있는 박공 지붕, 구리·납·유리·도금 지붕 재질 | OSM `roof:shape`, `roof:height`, `roof:direction`, `roof:material`, `roof:colour` (+ `scripts/config.ts`의 `ROOF_OVERRIDES`: 앵발리드 돔 도금) | ODbL |
+| 자유의 여신상 (백조의 섬) | Sketchfab "Statue of Liberty" (Maurice Svay). 원작은 프레데리크 오귀스트 바르톨디의 1889년 1/4 축소 복제상. `public/models/statue_of_liberty.glb`를 `npm run bake:models`가 실측 높이 11.5 m로 맞춰 `statue-liberte.glb`(12만 삼각형)로 만듭니다 | CC BY 4.0 (화면 도움말에 자동 표기) |
 | 에펠탑 (기본) | Sketchfab "Eiffel Tower model 3D with best quality" (shatlykxfree). `public/models/eiffel_tower_model_3d_with_best_quality.glb`를 베이크가 실측 크기(다리 간격 기준)·OSM 발자국 방향으로 맞추고 메시를 합쳐 `eiffel.glb`(4 MB, 51만 삼각형)로 만듭니다. 도료는 런타임에서 높이별 3단 "에펠 브라운", 야간 호박색 발광 | CC-BY 4.0 (화면 도움말에 자동 표기) |
 | 에펠탑 (대체 1) | 절차 생성 투과 격자 철골(약 2만 인스턴스). URL에 `?tower=lattice` | 자체 제작 |
 | 에펠탑 (대체 2) | 다른 glb를 쓰려면 `scripts/config.ts`의 `EIFFEL_SOURCE_GLB` 또는 환경변수 `EIFFEL_SOURCE`로 파일명을 지정하고 `npm run bake:eiffel -- --force`. 사진 텍스처가 있는 스캔은 자동으로 주변 지물을 잘라내고, 텍스처 없는 CAD 모델은 그대로 씁니다 (Brian Trepanier 포토그래메트리 스캔, 3DMR #4 CC0 모델 모두 지원) | 각 모델의 라이선스 |

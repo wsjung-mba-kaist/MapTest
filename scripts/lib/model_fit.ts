@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
-import { NodeIO, getBounds, type Node } from '@gltf-transform/core';
+import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, join, meshopt, prune, quantize, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { clearNodeTransform, dedup, dequantize, flatten, join, meshopt, prune, quantize, simplify, textureCompress, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder, MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer';
 import { log } from './log.ts';
 import { writeJson } from './http.ts';
@@ -18,12 +18,6 @@ import type { MinRect } from './polygons.ts';
 export interface FitInput { rect: MinRect; centre: [number, number]; radius: number }
 export interface ModelResult { tris: number; height: number; scale: number; yawDeg: number; top: number; textured: boolean; author?: string; license?: string; source?: string; title?: string; centre: [number, number]; radius: number; kind: 'model' | 'scan' }
 
-function worldTransform(node: Node) {
-  const M = node.getWorldMatrix();
-  const mulP = (v: number[]) => [M[0] * v[0] + M[4] * v[1] + M[8] * v[2] + M[12], M[1] * v[0] + M[5] * v[1] + M[9] * v[2] + M[13], M[2] * v[0] + M[6] * v[1] + M[10] * v[2] + M[14]];
-  const mulN = (v: number[]) => { const n = [M[0] * v[0] + M[4] * v[1] + M[8] * v[2], M[1] * v[0] + M[5] * v[1] + M[9] * v[2], M[2] * v[0] + M[6] * v[1] + M[10] * v[2]]; const l = Math.hypot(...n) || 1; return [n[0] / l, n[1] / l, n[2] / l]; };
-  return { mulP, mulN };
-}
 const percentile = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
 export async function processModel(src: string, entry: LandmarkModel, fit: FitInput, out: string, lodOut: string, metaOut: string): Promise<ModelResult> {
@@ -36,27 +30,19 @@ export async function processModel(src: string, entry: LandmarkModel, fit: FitIn
   const scene = root.getDefaultScene() ?? root.listScenes()[0];
 
   // ---- 1. bake transforms, flatten under one node
+  //
+  // This used to walk the nodes by hand and skip any POSITION accessor whose (name, count, mesh name) triple had
+  // been seen before. Unnamed accessors of equal length collide under that key, so parts of a model silently kept
+  // their parent transform while the node that carried it was reset to identity — the Liberty scan came out with
+  // its arm floating beside the figure and its crown scattered into fragments. glTF-Transform's own `flatten`
+  // does this correctly, cloning a mesh that several nodes share before baking each node's transform into it.
+  await doc.transform(dequantize(), flatten());
   const holder = doc.createNode(`${entry.id}_model`);
   const meshNodes = root.listNodes().filter(n => n.getMesh());
-  const seen = new Set<string>();
   for (const node of meshNodes) {
-    const mesh = node.getMesh()!;
-    const { mulP, mulN } = worldTransform(node);
-    for (const prim of mesh.listPrimitives()) {
-      const pos = prim.getAttribute('POSITION')!;
-      const key = pos.getName() + pos.getCount() + mesh.getName();
-      if (seen.has(key)) continue; seen.add(key);
-      const arr = pos.getArray() as Float32Array;
-      const v = [0, 0, 0];
-      for (let i = 0; i < arr.length; i += 3) { v[0] = arr[i]; v[1] = arr[i + 1]; v[2] = arr[i + 2]; const w = mulP(v); arr[i] = w[0]; arr[i + 1] = w[1]; arr[i + 2] = w[2]; }
-      const nrm = prim.getAttribute('NORMAL');
-      if (nrm) { const na = nrm.getArray() as Float32Array; for (let i = 0; i < na.length; i += 3) { v[0] = na[i]; v[1] = na[i + 1]; v[2] = na[i + 2]; const w = mulN(v); na[i] = w[0]; na[i + 1] = w[1]; na[i + 2] = w[2]; } }
-    }
-  }
-  for (const node of meshNodes) {
+    clearNodeTransform(node);
     const parent = node.getParentNode();
     if (parent) parent.removeChild(node); else scene.removeChild(node);
-    node.setMatrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
     holder.addChild(node);
   }
   for (const child of scene.listChildren()) scene.removeChild(child);

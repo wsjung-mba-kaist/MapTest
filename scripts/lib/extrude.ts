@@ -11,6 +11,8 @@ export interface ChunkBuilders {
   /** LiDAR surface-model caps of the landmarks, and their analytic roofs for the ?dsm=0 / mobile fallback */
   dsm?: GeomBuilder; roofsAlt?: GeomBuilder; topsAlt?: GeomBuilder;
 }
+/** True when this spec's landmark group has a surface-model window, i.e. its outline will carry a cap. */
+export type DsmCovers = (b: BuildingSpec) => boolean;
 /** Hook for the DSM cap (scripts/lib/dsmroof.ts): returns null to fall back to the analytic roof. */
 export type DsmHook = (gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => { trisBefore: number; trisAfter: number; wallTop: (p: Pt) => number } | null;
 
@@ -308,9 +310,19 @@ function addProfileRoof(cb: ChunkBuilders, b: BuildingSpec, kind: RoofKind, yEav
 
 // ------------------------------------------------------------------------------------------------ building
 
-export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number, dsm?: DsmHook): { dsmTris?: [number, number] } {
+export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: number, dsm?: DsmHook, dsmCovers?: DsmCovers): { dsmTris?: [number, number] } {
   if (dsm && b.landmark && cb.dsm && cb.roofsAlt && cb.topsAlt) {
     const rmeta: Meta = [b.floorH, b.levels, b.roofMatId, packStyleSeed(b.style, b.seed)];
+    // Only the group's outline gets a surface-model cap. Every `building:part` of a landmark shares one DSM window,
+    // so capping each of them re-sampled the SAME roof once per part: the Grand Palais came out as nine coincident
+    // caps 9 cm apart and the Invalides dome as thirty-nine, which z-fought into grey and dark shards. The parts
+    // still need their walls, so they are extruded normally but their roof goes to the ?dsm=0 fallback sections,
+    // where it cannot fight the cap that already covers them.
+    if (b.group !== undefined && b.group !== b.id && dsmCovers?.(b)) {
+      const partScratch: ChunkBuilders = { walls: cb.walls, roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod, details: cb.details };
+      extrudeAnalytic(b, partScratch, ox, oz);
+      return {};
+    }
     const res = dsm(cb.dsm, b, ox, oz, rmeta, b.roofTint);
     if (res) {
       // walls follow the surface model's edge, LOD1 stays the analytic box, the analytic roof goes to the alt sections
