@@ -43,7 +43,7 @@ export class WallIndex {
     }
   }
 
-  /** True when (x, z) is within `d` of a footprint edge (`d` under half a cell, so one ring of bins is enough). */
+  /** True when (x, z) is within `d` of a footprint edge. */
   near(x: number, z: number, d: number): boolean {
     const c = WallIndex.CELL;
     const i0 = Math.floor((x - d) / c), i1 = Math.floor((x + d) / c);
@@ -65,8 +65,8 @@ export class DsmProvider {
 
   /** Tallest ridge among a group's members, filled by `noteGroupHeights`. */
   private readonly ridges = new Map<string, number>();
-  /** Footprint rings of a group's members: the walls it already models. */
-  private readonly walls = new Map<string, WallIndex>();
+  /** Footprint rings of a group's `building:part`s: the walls it models *inside* its outline. */
+  private readonly parts = new Map<string, WallIndex>();
   /**
    * Record how tall each landmark group actually is, and where its walls run. The group's own outline is squashed
    * to a plinth by its parts, so its ridge cannot bound the cap: the Invalides outline reports 13.1 m for a 107 m
@@ -77,13 +77,13 @@ export class DsmProvider {
       const g = s.group ?? s.id;
       const h = Math.max(s.ridge, s.eave);
       if (h > (this.ridges.get(g) ?? 0)) this.ridges.set(g, h);
-      if (!this.windows.has(g)) continue;
-      let w = this.walls.get(g); if (!w) { w = new WallIndex(); this.walls.set(g, w); }
+      if (!this.windows.has(g) || s.id === g) continue;   // the outline is not an interior wall
+      let w = this.parts.get(g); if (!w) { w = new WallIndex(); this.parts.set(g, w); }
       for (const r of s.rings) w.add(r);
     }
   }
   groupRidge(group: string): number | undefined { return this.ridges.get(group); }
-  groupWalls(group: string): WallIndex | undefined { return this.walls.get(group); }
+  groupParts(group: string): WallIndex | undefined { return this.parts.get(group); }
 
   static async load(): Promise<DsmProvider | null> {
     if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
@@ -322,12 +322,16 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
    * A LiDAR surface has cliffs in it — a tower through the middle of a roof, a set-back storey, the inner face of
    * a crown — and triangulating one as a continuous sheet hangs a curtain of *roof* material down what is really a
    * facade. The Maison de la Radio wore 24,000 m2 of that: grey shards over a modelled tower and over the inside
-   * of its 500 m crown. Cut a cliff only where the group already has a wall to close the gap, so the drape is
-   * replaced by the real facade and never by a hole.
+   * of its 500 m crown. Cut a cliff only where a `building:part` already stands there to close the gap, so the
+   * drape is replaced by the real facade and never by a hole — and never along the footprint itself, where the cap
+   * is *meant* to fall to meet the wall tops. Cutting there tore the rim off Le Passy Kennedy's roof.
    */
   const cliff = Math.max(2.5, g * 4);
-  const walls = dsm.groupWalls(group);
-  const isDrape = (ys: number[], x: number, z: number) => walls != null && Math.max(...ys) - Math.min(...ys) > cliff && walls.near(x, z, g + 1.5);
+  const parts = dsm.groupParts(group);
+  const seam = new WallIndex();
+  for (const r of rings) seam.add(r);
+  const isDrape = (ys: number[], x: number, z: number) =>
+    parts != null && Math.max(...ys) - Math.min(...ys) > cliff && parts.near(x, z, g + 1.5) && !seam.near(x, z, g + 1.5);
   for (let j = 0; j + 1 < nz; j++) for (let i = 0; i + 1 < nx; i++) {
     const c00 = ins(i, j), c10 = ins(i + 1, j), c01 = ins(i, j + 1), c11 = ins(i + 1, j + 1);
     const count = +c00 + +c10 + +c01 + +c11;
@@ -408,5 +412,10 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
   for (const v of keep) if (!remap.has(v)) { const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2]; remap.set(v, gb.vertex(x - ox, y, z - oz, x, z, meta, col)); }
   for (let k = 0; k < keep.length; k += 3) gb.tri(remap.get(keep[k])!, remap.get(keep[k + 1])!, remap.get(keep[k + 2])!);
   if (pits) log.info(`dsm: ${b.id}${b.name ? ` (${b.name})` : ''}: ${pits} pit cells lifted`);
-  return { trisBefore, trisAfter: idx.length / 3, wallTop };
+  // The cap's edge is where it is; the building's own wall is another matter. An outline squashed to a plinth has
+  // parts standing on it, and where one does it already carries the facade, so following the cap up would stand a
+  // blank stone cylinder in front of it. Where no part does, the wall has to reach the cap or the roof is left
+  // hanging over a gap: Le Passy Kennedy's parts cover 45 % of its outline and the other 55 % was open to the sky.
+  const ownTop = b.isPlinth && parts ? (p: Pt) => (parts.near(p[0], p[1], 1.5) ? Math.min(wallTop(p), b.groundY + b.eave) : wallTop(p)) : wallTop;
+  return { trisBefore, trisAfter: idx.length / 3, wallTop: ownTop };
 }

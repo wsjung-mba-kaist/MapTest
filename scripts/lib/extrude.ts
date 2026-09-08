@@ -362,11 +362,7 @@ export function extrudeBuilding(b: BuildingSpec, cb: ChunkBuilders, ox: number, 
       const y0 = b.minH > 0 ? b.groundY + b.minH : yBase;
       const meta: Meta = [b.floorH, b.levels, 0, packStyleSeed(b.style, b.seed)];
       const wallFlag = b.isPlinth ? SurfaceFlag.Plinth : SurfaceFlag.Wall;
-      // An outline squashed to a plinth has parts standing on it that already carry its facade — every metre of the
-      // Maison de la Radio's outer ring has a part wall within 1 m — so following the cap's edge up would stand a
-      // blank stone cylinder in front of them. The outline stops at the plinth; the parts close the gap.
-      const wallTop = b.isPlinth ? (p: Pt) => Math.min(res.wallTop(p), b.groundY + b.eave) : res.wallTop;
-      for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, wallTop, followSurface, ox, oz, meta, b.tint, wallFlag);
+      for (const r of b.rings) addWallsProfile(cb.walls, r, y0, b.groundY, res.wallTop, followSurface, ox, oz, meta, b.tint, wallFlag);
       const scratch: ChunkBuilders = { walls: new GeomBuilder(), roofs: cb.roofsAlt, tops: cb.topsAlt, lod: cb.lod };
       extrudeBuilding(b, scratch, ox, oz);
       return { dsmTris: [res.trisBefore, res.trisAfter] };
