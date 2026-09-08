@@ -78,8 +78,8 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
     if (Math.abs(w.x) > WORLD_HALF || Math.abs(w.z) > WORLD_HALF) continue;
     curated.push([w.x, w.z]);
     // scale 1 is a ~4.5 m figure on its plinth (see statue() in src/world/Furniture.ts)
-    const kind = st.kind === 'flame' ? FurnitureKind.Flame : FurnitureKind.Statue;
-    const unit = st.kind === 'flame' ? 3.5 : 4.5;   // the reference height each mesh is modelled at
+    const kind = st.kind === 'flame' ? FurnitureKind.Flame : st.kind === 'peacewall' ? FurnitureKind.PeaceWall : FurnitureKind.Statue;
+    const unit = st.kind === 'flame' ? 3.5 : st.kind === 'peacewall' ? 9 : 4.5;   // the reference height each mesh is modelled at
     if (place(w.x, w.z, (st.facing * Math.PI) / 180, kind, Math.max(0.5, st.height / unit))) statues++;
   }
   const nearCurated = (x: number, z: number) => curated.some(c => Math.hypot(c[0] - x, c[1] - z) < 12);

@@ -318,13 +318,32 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     lines.push({ pts, tags: t, id: `${f.properties.type}/${f.properties.id}` });
   }
 
-  const deckLevel = (ring: Ring): number => {
+  /**
+   * Height of a deck. The outline's own footprint is a poor guide on its own: at the Pont d'Iéna the outline
+   * touches the low riverside walkway, so the deck came out 3.5 m BELOW the quays it joins and traffic dropped
+   * off a step at each end. When the carriageway is known, sample the ground just beyond both of its ends — that
+   * is the road the deck has to meet — and never sit lower than that.
+   */
+  const deckLevel = (ring: Ring, centre?: Pt[]): number => {
     const ys = ring.map(p => hm.sample(p[0], p[1])).filter(y => y > waterLevelY + 1.0).sort((a, b) => a - b);
-    // A deck level inferred from one or two bank samples is a guess, and two paths over open water came out with
-    // their soffits below the surface. Fall back to a standard height unless several samples agree.
-    if (ys.length < 3) return waterLevelY + 8;
-    const top = ys.slice(Math.floor(ys.length * 0.5));
-    const level = top.reduce((s, v) => s + v, 0) / top.length + 0.15;
+    // A level inferred from one or two bank samples is a guess, and two paths over open water came out with their
+    // soffits below the surface. Fall back to a standard height unless several samples agree.
+    let level = ys.length < 3 ? waterLevelY + 8 : ys.slice(Math.floor(ys.length * 0.5)).reduce((s, v) => s + v, 0) / ys.slice(Math.floor(ys.length * 0.5)).length + 0.15;
+    if (centre && centre.length >= 2) {
+      const onLand: number[] = [];
+      for (const [end, prev] of [[centre[0], centre[1]], [centre[centre.length - 1], centre[centre.length - 2]]] as [Pt, Pt][]) {
+        const dx = end[0] - prev[0], dz = end[1] - prev[1], L = Math.hypot(dx, dz) || 1;
+        for (let d = 4; d <= 30; d += 3) {
+          const y = hm.sample(end[0] + (dx / L) * d, end[1] + (dz / L) * d);
+          if (y > waterLevelY + 1.0) onLand.push(y);
+        }
+      }
+      if (onLand.length >= 3) {
+        onLand.sort((a, b) => a - b);
+        // Only ever raise: an approach that runs down to a low quay must not drag the span under the water.
+        level = Math.max(level, onLand[Math.floor(onLand.length * 0.6)] + 0.15);
+      }
+    }
     // Keep a navigable soffit: Paris road bridges clear the water by about 6 m.
     return Math.max(level, waterLevelY + 0.3 + DECK_THICK + 3.5);
   };
@@ -339,7 +358,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
       const len = lineLength(l.pts);
       if (!best || len > best.len) best = { pts: l.pts, len };
     }
-    bridges.push({ id: o.id, poly: o.poly, deckTop: deckLevel(o.poly[0]), name: o.tags.name ?? o.id, rail, centre: best?.pts });
+    bridges.push({ id: o.id, poly: o.poly, deckTop: deckLevel(o.poly[0], best?.pts), name: o.tags.name ?? o.id, rail, centre: best?.pts });
   }
   // elevated métro: every railway bridge line rides VIADUCT_RISE above the road deck (inside an outline) or the ground,
   // on steel columns; the road outline below keeps its own deck
@@ -347,7 +366,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     if (!l.tags.railway) continue;
     const over = outlines.find(o => fractionInside(l.pts, o.poly) > 0.5);
     for (const poly of bufferLine(l.pts, roadWidth(l.tags))) {
-      const base = over ? bridges.find(b => b.id === over.id)?.deckTop ?? deckLevel(poly[0]) : deckLevel(poly[0]);
+      const base = over ? bridges.find(b => b.id === over.id)?.deckTop ?? deckLevel(poly[0], l.pts) : deckLevel(poly[0], l.pts);
       bridges.push({ id: l.id, poly, deckTop: base + VIADUCT_RISE, name: l.tags.name ?? l.id, rail: true, columnsTo: base, centre: l.pts });
     }
   }
@@ -362,7 +381,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     const len = l.pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - l.pts[i - 1][0], p[1] - l.pts[i - 1][1]) : 0, 0);
     if (len < 12) continue;
     const polys = bufferLine(l.pts, roadWidth(l.tags));
-    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0]), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
+    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0], l.pts), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
   }
   const piers: PierBox[] = [];
   for (const b of bridges) if (b.columnsTo === undefined) piers.push(...pierBoxes(b, hm, waterLevelY, flowAt));

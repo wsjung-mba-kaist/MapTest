@@ -110,6 +110,12 @@ export class Furniture {
     if (statues.length) place(statue(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 })), statues).layers.enable(REFLECT_LAYER);
     const flames = byKind.get(FurnitureKind.Flame) ?? [];
     if (flames.length) place(libertyFlame(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.55 })), flames).layers.enable(REFLECT_LAYER);
+    const peace = byKind.get(FurnitureKind.PeaceWall) ?? [];
+    if (peace.length) {
+      place(peaceWallFrame(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.6 })), peace).layers.enable(REFLECT_LAYER);
+      // The inscribed panes: translucent, barely reflective, and they do not cast a shadow the real glass would not.
+      place(peaceWallGlass(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.12, metalness: 0.1, transparent: true, opacity: 0.42, side: THREE.DoubleSide })), peace, { shadow: false });
+    }
     const poles = byKind.get(FurnitureKind.Flagpole) ?? [];
     if (poles.length) place(flagpole(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.2, side: THREE.DoubleSide })), poles, { shadow: false });
 
@@ -311,6 +317,54 @@ function libertyFlame(): THREE.BufferGeometry {
     parts.push(tint(g, GOLD));
   }
   parts.push(tint(new THREE.ConeGeometry(0.13, 1.5, 6).translate(0, 2.95, 0), GOLD));
+  return mergeGeometries(parts, false)!;
+}
+
+/**
+ * Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000): two glass walls carrying the word "peace" in
+ * 49 languages, standing either side of a walk-through passage under a flat canopy on slender steel posts, on the
+ * Champ de Mars axis. Modelled at its real 9 m height; the passage runs along the mesh's +x axis.
+ *
+ * The glass is a separate material from the frame, so it is built as two geometries and merged by the caller's
+ * vertex-colour material with a transparent flag in the tint — see peaceWallGlass below.
+ */
+const PEACE_STEEL = 0x8f9298, PEACE_STONE = 0xc9c4b8;
+
+function peaceWallFrame(): THREE.BufferGeometry {
+  const L = 16.0, W = 13.0, H = 9.0, GAP = 6.2;   // overall length, width, height, and the passage between the walls
+  const parts: THREE.BufferGeometry[] = [
+    // stone platform with a step
+    tint(new THREE.BoxGeometry(L + 2.4, 0.22, W + 2.4).translate(0, 0.11, 0), PEACE_STONE),
+    tint(new THREE.BoxGeometry(L + 1.2, 0.24, W + 1.2).translate(0, 0.34, 0), PEACE_STONE),
+    // canopy slab and its fascia
+    tint(new THREE.BoxGeometry(L, 0.42, W).translate(0, H - 0.21, 0), PEACE_STEEL),
+    tint(new THREE.BoxGeometry(L + 0.5, 0.14, W + 0.5).translate(0, H - 0.49, 0), PEACE_STEEL),
+  ];
+  // posts: a row down each side of the passage, and one at each corner of the canopy
+  for (let k = 0; k < 7; k++) {
+    const x = -L / 2 + 1.2 + (k * (L - 2.4)) / 6;
+    for (const side of [-1, 1]) {
+      parts.push(tint(new THREE.BoxGeometry(0.22, H - 0.9, 0.22).translate(x, 0.46 + (H - 0.9) / 2, side * (GAP / 2 + 0.35)), PEACE_STEEL));
+    }
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    parts.push(tint(new THREE.BoxGeometry(0.26, H - 0.9, 0.26).translate(sx * (L / 2 - 0.5), 0.46 + (H - 0.9) / 2, sz * (W / 2 - 0.5)), PEACE_STEEL));
+  }
+  return mergeGeometries(parts, false)!;
+}
+
+/** The two inscribed glass walls, drawn with a translucent material so you can see through the passage. */
+function peaceWallGlass(): THREE.BufferGeometry {
+  const L = 16.0, H = 9.0, GAP = 6.2;
+  const parts: THREE.BufferGeometry[] = [];
+  for (const side of [-1, 1]) {
+    // each wall is a run of panes with thin joints, from just above the platform to just under the canopy
+    for (let k = 0; k < 6; k++) {
+      const w = (L - 1.6) / 6 - 0.12;
+      const x = -L / 2 + 0.8 + w / 2 + k * ((L - 1.6) / 6);
+      parts.push(tint(new THREE.BoxGeometry(w, H - 1.9, 0.12).translate(x, 0.58 + (H - 1.9) / 2, side * GAP / 2), 0xbcd2d6));
+    }
+  }
   return mergeGeometries(parts, false)!;
 }
 

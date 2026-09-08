@@ -400,8 +400,16 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
         if (pointInPoly(cand.b.centroid[0], cand.b.centroid[1], b.rings)) inside.push(cand.b);
       }
     if (inside.length) {
-      const plinth = Math.max(2.5, Math.min(...inside.map(p => (p.minH > 0 ? p.minH : p.eave))));
-      b.isPlinth = true; b.eave = Math.min(b.eave, plinth); b.ridge = b.eave; b.roof = 'flat'; stats.plinths++;
+      // Only parts that actually carry the massing decide the plinth. A single small annex used to squash the whole
+      // outline: at the Palais de Chaillot a 41 m2 one-storey building (0.6 % of a 7507 m2 wing) pulled the wing's
+      // eave down to 4.3 m and threw away its tagged height of 30 m. That clipped 70 % of the LiDAR roof samples
+      // (8.6 m of roof, mean), left the west facade 7 m tall beside an 18 m east facade, and flagged every wall as
+      // plinth stone so the palace got no cornice, balustrade or pilaster at all.
+      const bulk = inside.filter(p => p.area >= b.area * 0.02);
+      if (bulk.length) {
+        const plinth = Math.max(2.5, Math.min(...bulk.map(p => (p.minH > 0 ? p.minH : p.eave))));
+        b.isPlinth = true; b.eave = Math.min(b.eave, plinth); b.ridge = b.eave; b.roof = 'flat'; stats.plinths++;
+      }
       // the parts of a landmark are the landmark: monument facades, its name and (unless they say otherwise) its stone
       if (b.landmark || b.style === Style.Monument) for (const p of inside) {
         p.style = Style.Monument; p.landmark = p.landmark || b.landmark;

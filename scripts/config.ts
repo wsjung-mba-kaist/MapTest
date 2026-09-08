@@ -103,10 +103,13 @@ export const ASSETS = {
  * with nothing under it is worse than no card. Anything the OSM themes bring in within 12 m of one of these is
  * dropped so the two sources cannot double up.
  */
-export const STATUES: { id: string; lon: number; lat: number; height: number; facing: number; kind?: 'statue' | 'flame' }[] = [
+export const STATUES: { id: string; lon: number; lat: number; height: number; facing: number; kind?: 'statue' | 'flame' | 'peacewall' }[] = [
   // The 1889 quarter-scale replica at the downstream tip of the Ile aux Cygnes, facing west toward New York.
   { id: 'statue-liberte', lon: 2.279701, lat: 48.850024, height: 11.5, facing: 270 },
   // Flamme de la Liberte: a full-size gilded copy of the torch the Liberty statue holds, on a stone plinth
   // above the Alma tunnel. Not a figure, so it gets its own shape.
   { id: 'flamme-liberte', lon: 2.301389, lat: 48.864167, height: 3.5, facing: 200, kind: 'flame' },
+  // Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000): two glass walls under a canopy on the
+  // Champ de Mars axis, which runs south-east from the tower, so the passage through it faces 135 degrees.
+  { id: 'mur-paix', lon: 2.30199, lat: 48.8534, height: 9, facing: 135, kind: 'peacewall' },
 ];

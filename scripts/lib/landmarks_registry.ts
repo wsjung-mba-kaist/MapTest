@@ -86,6 +86,8 @@ export const LANDMARKS: LandmarkSpec[] = [
     blurbKo: 'Y자형 본부 건물(1958). 브로이어·네르비·제르퓌스가 설계했다.' },
   { id: 'radio-france', wikidata: 'Q579087', category: 'institution', approx: [-1136, 664], radius: 120, short: '라디오 프랑스',
     blurbKo: '센강변의 원형 방송국 건물(1963). 중앙에 높이 68 m의 탑이 솟아 있다.' },
-  { id: 'mur-paix', wikidata: 'Q3327987', category: 'monument', approx: [625, 686], radius: 40, short: '평화의 벽',
+  // Wikidata puts it at world (551, 553) on the Champ de Mars axis, which is where config.STATUES builds it;
+  // the old approx was 160 m out. The viewpoint stands back along the axis so you see the passage end-on.
+  { id: 'mur-paix', wikidata: 'Q3327987', category: 'monument', approx: [551, 553], view: { x: 521, z: 523, yaw: 135 }, radius: 40, short: '평화의 벽',
     blurbKo: '49개 언어로 「평화」를 새긴 유리 벽(2000). 예루살렘 통곡의 벽에서 착안했다.' },
 ];

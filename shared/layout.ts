@@ -53,7 +53,7 @@ export enum TreeSpecies { Platanus = 0, Tilia = 1, Aesculus = 2, Sophora = 3, Ac
  * inside their ranges: parked cars occupy `Car + variant` for the eight entries of CAR_VARIANTS (10..17) and idle
  * people occupy `Person + variant` (20..23). Single kinds live below 10 or in the 18..19 gap.
  */
-export enum FurnitureKind { StreetLamp = 0, Bench = 1, Bollard = 2, MorrisColumn = 3, Fountain = 4, SubwayEntrance = 5, BusStop = 6, BikeRack = 7, WasteBasket = 8, Flagpole = 9, Car = 10, Statue = 18, Flame = 19, Person = 20 }
+export enum FurnitureKind { StreetLamp = 0, Bench = 1, Bollard = 2, MorrisColumn = 3, Fountain = 4, SubwayEntrance = 5, BusStop = 6, BikeRack = 7, WasteBasket = 8, Flagpole = 9, Car = 10, Statue = 18, Flame = 19, Person = 20, PeaceWall = 30 }
 
 /** Roof furniture rows in details/{i}_{j}.bin (Float32): x, y, z (world), yaw, kind, sx, sy, sz, seed */
 export const DETAIL_STRIDE = 9;
