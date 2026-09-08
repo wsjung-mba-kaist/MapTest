@@ -76,6 +76,19 @@ Bootstrap is `src/main.ts` → `App.boot()` in `src/core/App.ts`, in this order:
 - Renderer creation (`src/core/Renderer.ts`) first requests `high-performance` + `failIfMajorPerformanceCaveat` and only then falls back to a software context on a fresh canvas. `App.canvas` is the renderer's canvas, which may differ from the one in `index.html`.
 - Licences matter: every data/model/texture source is credited in the README table and in the HUD (`hud.addCredit`). New assets must be CC0/CC BY/ODbL-compatible or gated behind `ALLOW_NONFREE`.
 
+## Traps that have already cost a rebake
+
+- **`FurnitureKind` has two ranges, not just values.** Parked cars occupy `Car + variant` (10..17, one per `CAR_VARIANTS` entry) and idle people occupy `Person + variant` (20..23). A single kind placed inside either range is silently read back as a car or a person. `shared/layout.test.ts` pins this.
+- **`meta.w` packs style and seed** as `style * 256 + seed`. Decode with the helpers in `shared/layout.ts`; never round the quotient. `src/materials/shaders/facade.glsl` mirrors the same arithmetic and must be kept in step.
+- **Bridge supports assume the axis centre is the deck centre.** `principalAxis` in `scripts/lib/bridges.ts` returns a re-centred point for exactly that reason; piers and arch springings are laid out across `[-half, +half]` about it.
+- **Buildings with no height tag fall through to the Haussmann default** (18.5 m eave, mansard roof). Anything that is not a Paris apartment block — moored boats, pontoons, piers — needs an explicit branch, or it becomes a six-storey block. See the `floating` flag in `scripts/lib/buildings.ts`.
+- **Only some bake steps work offline.** `build`, `paths`, `markings`, `streets`, `masks`, `far` run entirely from `cache/`. `osm` and `landmarks` fetch from Overpass / Wikidata and produce degraded output if the network is unavailable — a forced `bake:landmarks` without a network rewrote `landmarks.json` with 25 of 33 entries empty. Check `git diff` on `public/data` after any forced bake.
+- **`public/data` is committed.** Keep the code commit and the regenerated-output commit separate.
+
+## Verifying a visual change
+
+There is no browser test setup, but Chrome can be driven over the DevTools protocol without extra dependencies (node has a global `WebSocket`): launch it with `--headless=new --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-port=9222`, navigate a page target, wait, then `Page.captureScreenshot`. Software rendering takes 1-2 minutes to stream all 144 chunks, so pass `&life=0&post=0&refl=0&ao=0` to cut the cost, and `&auto=1&gpu=0` to skip the overlay and the GPU panel. `Log.enable` plus `Runtime.enable` surface three.js shader compile errors, which a `vite build` cannot catch.
+
 ## Conventions
 
 - Dense single-line style with doc comments explaining *why* (real-world numbers, source quirks). Match it; do not reformat.
