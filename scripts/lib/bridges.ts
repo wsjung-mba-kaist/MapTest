@@ -17,6 +17,8 @@ const PARAPET_T = 0.45;
 const STONE: [number, number, number] = [196, 188, 172];
 const STEEL: [number, number, number] = [74, 84, 76];   // the line 6 viaduct's dark green ironwork
 const VIADUCT_RISE = 8.5;      // rail deck above the road deck / ground (Bir-Hakeim: ~9 m)
+/** Ways that ride a deck rather than carrying one of their own. */
+const FOOT_WAYS: ReadonlySet<string> = new Set(['footway', 'pedestrian', 'path', 'cycleway', 'steps']);
 const TWIN_DY = 1.2;                // m: decks closer than this in height are candidates for being one structure
 const TWIN_OVERLAP = 0.3;           // and one has to lie this far inside the other
 const VIADUCT_THICK = 1.4;
@@ -151,7 +153,7 @@ function deckMouths(b: Bridge): Mouth[] {
  * inside a mouth, or wherever the ground just outside has already climbed to the deck, which is a road on grade
  * and wants no parapet at all. Returns null when nothing is open, so the caller can use the plain closed ring.
  */
-function parapetRuns(ring: Ring, top: number, mouths: Mouth[], hm: Heightmap): Pt[][] | null {
+function parapetRuns(ring: Ring, top: number, mouths: Mouth[], hm: Heightmap, over: Poly[] = []): Pt[][] | null {
   const r = cleanRing(ring), n = r.length;
   if (n < 3) return [];
   const keep: boolean[] = [];
@@ -166,7 +168,11 @@ function parapetRuns(ring: Ring, top: number, mouths: Mouth[], hm: Heightmap): P
       return px * m.ux + pz * m.uz > -3 && Math.abs(pz * m.ux - px * m.uz) < m.half;
     });
     const onGrade = Math.max(hm.sample(mx + nx * 1.5, mz + nz * 1.5), hm.sample(mx + nx * 4, mz + nz * 4)) > top - 0.6;
-    keep.push(!inMouth && !onGrade);
+    // Nor across somebody else's roadway. The Allee des Cygnes footway is its own `man_made=bridge` a metre above
+    // the Pont de Grenelle and half of its ring lies on the bridge, so it walled the carriageway off with a 1.05 m
+    // partition right across the lanes.
+    const onOther = over.some(o => pointInPoly(mx, mz, o));
+    keep.push(!inMouth && !onGrade && !onOther);
   }
   if (keep.every(k => k)) return null;
   const runs: Pt[][] = [];
@@ -540,6 +546,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
   }
   // Lines not covered by an outline become simple decks (skip tiny spans, e.g. over a ditch).
   let fromLines = 0;
+  const onFoot = new Set<Bridge>();   // decks built from a footway: they ride a road deck rather than carrying one
   for (const l of lines) {
     if (l.tags.railway) continue;   // handled above
     // Test how much of the line lies inside an outline, not just its middle VERTEX: the offenders had two
@@ -549,10 +556,13 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     const len = l.pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - l.pts[i - 1][0], p[1] - l.pts[i - 1][1]) : 0, 0);
     if (len < 12) continue;
     const polys = bufferLine(l.pts, roadWidth(l.tags));
-    for (const poly of polys) { bridges.push({ id: l.id, poly, deckTop: deckLevel(poly[0], l.pts), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts }); fromLines++; }
+    for (const poly of polys) {
+      const deck: Bridge = { id: l.id, poly, deckTop: deckLevel(poly[0], l.pts), name: l.tags.name ?? l.id, rail: !!l.tags.railway, centre: l.pts };
+      if (FOOT_WAYS.has(l.tags.highway ?? '')) onFoot.add(deck);
+      bridges.push(deck);
+      fromLines++;
+    }
   }
-  bridges = mergeTwinDecks(bridges);
-
   // Reach the road. A `man_made=bridge` outline stops where the structure stops, which on the Seine bridges is
   // still inside the riverbank trench: the Pont d'Iena's outline ended 7.6 m short of ground at deck level, so
   // traffic met a 5.9 m drop at the abutment. Grow the deck along its centreline until the ground comes up to it.
@@ -586,6 +596,13 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     if (biggest && area(biggest[0]) > area(b.poly[0]) * 0.95) b.poly = biggest;
   }
 
+  // Now that every deck has its final outline: a footway that mostly lies on another deck rides it, it is not a
+  // second bridge stacked over it. The Allee des Cygnes crosses the Pont de Grenelle and came out as a 353 m2 slab
+  // a metre above the carriageway, its edge and its parapet walling the lanes off like a partition.
+  bridges = bridges.filter(b => !(onFoot.has(b) && bridges.some(o => o !== b && o.columnsTo === undefined
+    && area(o.poly[0]) > area(b.poly[0]) && Math.abs(o.deckTop - b.deckTop) < 1.5 && fractionInside(b.poly[0], o.poly) > 0.3)));
+  bridges = mergeTwinDecks(bridges);
+
   const piers: PierBox[] = [];
   for (const b of bridges) if (b.columnsTo === undefined) piers.push(...pierBoxes(b, hm, waterLevelY, flowAt));
   return { bridges, piers, outlines: outlines.length, fromLines };
@@ -614,7 +631,9 @@ export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>,
     // Parapets along the outer ring, but broken where traffic crosses it. The ring is a closed loop, so running a
     // parapet all the way round stood a 1.05 m wall square across the carriageway at both ends of the Pont d'Iena
     // and cars had to jump it to get on and off the bridge.
-    const runs = parapetRuns(outer, top, deckMouths(b), hm);
+    // Bigger decks at this level whose roadway this parapet must not cross.
+    const over = bridges.filter(o => o !== b && Math.abs(o.deckTop - top) < 1.5 && area(o.poly[0]) > area(b.poly[0])).map(o => o.poly);
+    const runs = parapetRuns(outer, top, deckMouths(b), hm, over);
     if (runs === null) {
       const inner = insetRing(outer, PARAPET_T, 0.2);
       if (inner) {
