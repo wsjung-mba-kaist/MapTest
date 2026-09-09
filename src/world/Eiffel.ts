@@ -5,12 +5,18 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { buildLattice } from './EiffelLattice';
 
+/** lighthouse beams: length rendered (m), half-width at the lamp and at the far end (m), elevation (deg), seconds per turn */
+const BEAM_LEN = 1600, BEAM_W0 = 3.0, BEAM_W1 = 64, BEAM_ELEV = 3, BEAM_PERIOD = 40;
+
 interface EiffelMeta { kind?: 'scan' | '3dmr'; textured?: boolean; top?: number; height?: number; centre?: [number, number]; author?: string; license?: string; source?: string; title?: string }
 
 /**
  * The tower: fitted glTF baked by scripts/lib/eiffel.ts. Photogrammetry scans keep their photo texture
  * (with a golden emissive wash after dusk); untextured models get a three-tone "Eiffel brown" paint.
- * Night extras: thousands of sparkle points sampled from the mesh and the rotating beacon on top.
+ * Night extras: thousands of sparkle points sampled from the mesh, the aviation beacon on top and the lighthouse:
+ * four 6000 W xenon "marine" projectors (31 Dec 1999) synchronised into a double beam that sweeps the sky through
+ * 360 degrees with an 80 km reach. One full turn every BEAM_PERIOD seconds (an estimate from footage; the operator
+ * does not publish it); on with the golden floodlights, so off after 23:45 like them.
  */
 export class Eiffel {
   readonly group = new THREE.Group();
@@ -20,7 +26,8 @@ export class Eiffel {
   private materials: THREE.MeshStandardMaterial[] = [];
   private sparkles?: THREE.Points;
   private beacon?: THREE.Sprite;
-  private readonly uniforms = { uNight: { value: 0 }, uTime: { value: 0 }, uTowerLit: { value: 0 }, uSparkle: { value: 0 }, uCentre: { value: new THREE.Vector3() } };
+  private beams?: THREE.Group;
+  private readonly uniforms = { uNight: { value: 0 }, uTime: { value: 0 }, uTowerLit: { value: 0 }, uSparkle: { value: 0 }, uCentre: { value: new THREE.Vector3() }, uBeam: { value: 0 } };
   /** floodlights on (0/1, from shared/nightlife towerLit) and the hourly sparkle (0/1); set by App every frame */
   lit = 1;
   sparkle = 0;
@@ -50,6 +57,7 @@ export class Eiffel {
       this.group.add(lat.mesh, lat.panels);
       this.addSparkles(lat.samples.map(p => p.clone().add(this.centre)));
       this.addBeacon();
+      this.addBeams();
       this.loaded = true;
       this.meta = { ...this.meta, author: undefined, license: undefined, title: 'procedural lattice' };
       return;
@@ -78,6 +86,7 @@ export class Eiffel {
       this.group.add(gltf.scene);
       this.addSparkles(positions);
       this.addBeacon();
+      this.addBeams();
       this.loaded = true;
     } catch (e) {
       console.warn('eiffel.glb missing, using procedural tower', e);
@@ -182,6 +191,50 @@ export class Eiffel {
     this.group.add(this.beacon);
   }
 
+  /**
+   * The lighthouse: two opposite beams from the summit, each a pair of crossed additive fans (vertical + horizontal)
+   * so the shaft reads from every direction, brightest and narrowest at the lamp, thinning out over BEAM_LEN metres.
+   * A few degrees above horizontal, as the real projectors are aimed over the rooftops.
+   */
+  private addBeams() {
+    const fan = (vertical: boolean) => {
+      const g = new THREE.BufferGeometry();
+      const N = 24, pos: number[] = [], st: number[] = [], idx: number[] = [];
+      for (let i = 0; i <= N; i++) {
+        const t = i / N, x = t * BEAM_LEN, w = BEAM_W0 + (BEAM_W1 - BEAM_W0) * t;
+        for (const sgn of [-1, 1]) { pos.push(x, vertical ? sgn * w : 0, vertical ? 0 : sgn * w); st.push(t, sgn); }
+        if (i) { const b = (i - 1) * 2; idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+      }
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('st', new THREE.Float32BufferAttribute(st, 2));
+      g.setIndex(idx);
+      return g;
+    };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uBeam: this.uniforms.uBeam }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+      vertexShader: /* glsl */`
+        attribute vec2 st; varying vec2 vSt;
+        void main() { vSt = st; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */`
+        uniform float uBeam; varying vec2 vSt;
+        void main() {
+          // a bright core with a soft haze halo, dimming with distance the way the scattered light does in photos
+          float along = pow(1.0 - vSt.x, 1.25), core = pow(1.0 - abs(vSt.y), 3.0), halo = pow(1.0 - abs(vSt.y), 1.2);
+          float a = uBeam * along * (0.55 * core + 0.35 * halo);
+          gl_FragColor = vec4(vec3(0.86, 0.93, 1.0) * a, a);
+        }`,
+    });
+    this.beams = new THREE.Group();
+    for (const dir of [0, Math.PI]) {
+      const beam = new THREE.Group();
+      beam.rotation.set(0, dir, THREE.MathUtils.degToRad(BEAM_ELEV), 'YZX');
+      for (const v of [true, false]) { const m = new THREE.Mesh(fan(v), mat); m.frustumCulled = false; beam.add(m); }
+      this.beams.add(beam);
+    }
+    this.beams.position.set(this.centre.x, this.top + 2.0, this.centre.z);
+    this.group.add(this.beams);
+  }
+
   /** The whole tower (mesh, sparkles, beacon) shows in the river. */
   enableReflection() { this.group.traverse(o => o.layers.enable(REFLECT_LAYER)); }
 
@@ -197,7 +250,9 @@ export class Eiffel {
       const k = m.emissiveMap ? 1.3 : (m.userData.latticePanel ? 0.22 : 0.38);
       m.emissive.setRGB(1.0, 0.52, 0.17).multiplyScalar(k * on);
     }
-    // the aviation beacon stays on all night, lights or not
+    // the lighthouse turns with the floodlights on; the aviation beacon stays on all night, lights or not
+    this.uniforms.uBeam.value = on;
+    if (this.beams) { this.beams.visible = on > 0.01; this.beams.rotation.y = -(time % BEAM_PERIOD) / BEAM_PERIOD * Math.PI * 2; }
     if (this.beacon) (this.beacon.material as THREE.SpriteMaterial).opacity = night * (0.5 + 0.5 * Math.abs(Math.sin(time * 1.6)));
   }
 

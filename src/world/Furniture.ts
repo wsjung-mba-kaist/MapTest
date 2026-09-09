@@ -336,17 +336,21 @@ function libertyFlame(): THREE.BufferGeometry {
 }
 
 /**
- * Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000): two glass walls carrying the word "peace" in
- * 49 languages, either side of a walk-through passage under a flat canopy on slender steel posts, on the Champ de
- * Mars axis. Modelled at its real 9 m height; the passage runs along the mesh's +x axis.
+ * Mur pour la Paix (Clara Halter and Jean-Michel Wilmotte, 2000-2020): 16.4 x 13.8 x 9 m, a steel frame clad in
+ * wood, stainless steel and glass on a wooden stepped deck ("emmarchement de bois"), two glass walls carrying the
+ * word "peace" in 49 languages either side of a walk-through passage under a flat canopy, on the Champ de Mars
+ * axis. "Trente-deux colonnes en acier inoxydable", engraved with the same word, complete it: two rows of eight
+ * slender columns on each flank, running with the axis toward the tree lines (photos show them a little lower than
+ * the canopy, ~7 m). Modelled at the real 9 m height; the passage runs along the mesh's +x axis.
  */
-const PEACE_STEEL = 0x8f9298, PEACE_STONE = 0xc9c4b8;
+const PEACE_STEEL = 0x8f9298, PEACE_INOX = 0xb9bcc2, PEACE_WOOD = 0x8c6f4e;
+const PEACE_COLS = { rows: [3.2, 6.8], n: 8, step: 4.0, h: 7.0, r: 0.16 };   // lateral offsets beyond the deck edge, count per row
 
 function peaceWallFrame(): THREE.BufferGeometry {
-  const L = 16.0, W = 13.0, H = 9.0, GAP = 6.2;
+  const L = 16.4, W = 13.8, H = 9.0, GAP = 6.2;
   const parts: THREE.BufferGeometry[] = [
-    tint(new THREE.BoxGeometry(L + 2.4, 0.22, W + 2.4).translate(0, 0.11, 0), PEACE_STONE),
-    tint(new THREE.BoxGeometry(L + 1.2, 0.24, W + 1.2).translate(0, 0.34, 0), PEACE_STONE),
+    tint(new THREE.BoxGeometry(L + 2.4, 0.22, W + 2.4).translate(0, 0.11, 0), PEACE_WOOD),
+    tint(new THREE.BoxGeometry(L + 1.2, 0.24, W + 1.2).translate(0, 0.34, 0), PEACE_WOOD),
     tint(new THREE.BoxGeometry(L, 0.42, W).translate(0, H - 0.21, 0), PEACE_STEEL),
     tint(new THREE.BoxGeometry(L + 0.5, 0.14, W + 0.5).translate(0, H - 0.49, 0), PEACE_STEEL),
   ];
@@ -357,12 +361,19 @@ function peaceWallFrame(): THREE.BufferGeometry {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     parts.push(tint(new THREE.BoxGeometry(0.26, H - 0.9, 0.26).translate(sx * (L / 2 - 0.5), 0.46 + (H - 0.9) / 2, sz * (W / 2 - 0.5)), PEACE_STEEL));
   }
+  // the 32 stainless steel columns: 2 rows x 8 on each flank, centred on the wall along the axis
+  const { rows, n, step, h, r } = PEACE_COLS;
+  for (const side of [-1, 1]) for (const off of rows) for (let k = 0; k < n; k++) {
+    const x = (k - (n - 1) / 2) * step, z = side * (W / 2 + 1.2 + off);
+    parts.push(tint(new THREE.CylinderGeometry(r, r, h, 12).translate(x, h / 2, z), PEACE_INOX));
+    parts.push(tint(new THREE.CylinderGeometry(r + 0.06, r + 0.06, 0.12, 12).translate(x, 0.06, z), PEACE_STEEL));
+  }
   return mergeGeometries(parts, false)!;
 }
 
 /** The two inscribed glass walls, translucent so the passage reads through. */
 function peaceWallGlass(): THREE.BufferGeometry {
-  const L = 16.0, H = 9.0, GAP = 6.2;
+  const L = 16.4, H = 9.0, GAP = 6.2;
   const parts: THREE.BufferGeometry[] = [];
   for (const side of [-1, 1]) for (let k = 0; k < 6; k++) {
     const w = (L - 1.6) / 6 - 0.12;
