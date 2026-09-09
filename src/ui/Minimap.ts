@@ -3,7 +3,7 @@
  * (category-coloured dots, short Korean labels, hotkey numbers) and a heading wedge. M cycles hidden -> 320 m ->
  * 1.5 km -> hidden. Redrawn at 10 Hz from a plain <img>, so it costs nothing on the GPU side.
  */
-export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number }
+export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number; /** site radius (m): bigger sites get their label first */ weight?: number }
 
 const WORLD = 3072;          // metres covered by overview.jpg
 const HALF = WORLD / 2;
@@ -58,24 +58,29 @@ export class Minimap {
       c.fillStyle = 'rgba(10, 14, 20, 0.18)'; c.fillRect(0, 0, S, S);
     }
     const toPx = (wx: number, wz: number) => [S / 2 + (wx - x) * k, S / 2 + (wz - z) * k] as const;
-    // landmarks: dots always, labels nearest-first with a simple overlap filter
-    const placed: [number, number][] = [];
-    const ordered = this.markers.map(m => ({ m, d: Math.hypot(m.x - x, m.z - z) })).sort((a, b) => a.d - b.d);
+    // landmarks: dots for every site on the map; labels for the important ones first (hotkeys, then the biggest
+    // sites), each measured so it never overprints another - the Trocadero's four museums used to pile up in one blot
     const r = wide ? 5 : 7;
     c.textAlign = 'center'; c.textBaseline = 'middle';
-    for (const { m } of ordered) {
-      const [mx, mz] = toPx(m.x, m.z);
-      if (mx < -20 || mz < -20 || mx > S + 20 || mz > S + 20) continue;
+    const onMap = this.markers.map(m => { const [mx, mz] = toPx(m.x, m.z); return { m, mx, mz, d: Math.hypot(m.x - x, m.z - z) }; })
+      .filter(e => e.mx > -20 && e.mz > -20 && e.mx < S + 20 && e.mz < S + 20);
+    for (const { m, mx, mz } of onMap) {
       const col = this.colors[m.category ?? ''] ?? '#ffd27a';
       c.fillStyle = 'rgba(0,0,0,0.55)'; c.beginPath(); c.arc(mx, mz, r + 3, 0, Math.PI * 2); c.fill();
       c.fillStyle = col; c.beginPath(); c.arc(mx, mz, r, 0, Math.PI * 2); c.fill();
       if (m.hotkey) { c.fillStyle = '#14171c'; c.font = `bold ${wide ? 9 : 11}px system-ui, sans-serif`; c.fillText(String(m.hotkey), mx, mz + 0.5); }
+    }
+    const placed: { x: number; z: number; w: number }[] = [];
+    const maxLabels = wide ? 8 : 6;
+    c.font = `bold ${wide ? 17 : 20}px system-ui, sans-serif`;
+    c.lineWidth = 4; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineJoin = 'round';
+    onMap.sort((a, b) => (b.m.hotkey ? 1 : 0) - (a.m.hotkey ? 1 : 0) || (b.m.weight ?? 0) - (a.m.weight ?? 0) || a.d - b.d);
+    for (const { m, mx, mz } of onMap) {
+      if (placed.length >= maxLabels) break;
       if (wide && !m.hotkey) continue;
-      if (placed.some(([px, pz]) => Math.abs(px - mx) < 70 && Math.abs(pz - mz) < 26)) continue;
-      placed.push([mx, mz - 22]);
-      c.font = `bold ${wide ? 17 : 20}px system-ui, sans-serif`;
-      c.lineWidth = 4; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineJoin = 'round';
-      const label = m.short ?? m.name;
+      const label = m.short ?? m.name, w = c.measureText(label).width + 10;
+      if (placed.some(p => Math.abs(p.x - mx) < (p.w + w) / 2 && Math.abs(p.z - mz) < 28)) continue;
+      placed.push({ x: mx, z: mz, w });
       c.strokeText(label, mx, mz - 22); c.fillStyle = '#fff'; c.fillText(label, mx, mz - 22);
     }
     {

@@ -3,43 +3,80 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="description" content="오픈데이터(OSM, IGN, Paris Data)로 만든 에펠탑 주변 1.5 km의 1인칭 산책" />
+  <meta name="theme-color" content="#0b0d12" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Paris · Tour Eiffel</title>
   <style>
-    :root { color-scheme: dark; }
+    :root { color-scheme: dark; --panel: rgba(8,10,16,.72); --gold: #e8c27a; }
     html, body { margin: 0; height: 100%; background: #0b0d12; color: #e8e6e1; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
     #app { display: block; width: 100vw; height: 100vh; height: 100dvh; outline: none; }
     #hud { position: fixed; inset: 0; pointer-events: none; }
     #crosshair { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
-    #help { position: absolute; left: 16px; bottom: 16px; font-size: 12px; line-height: 1.5; background: rgba(8,10,16,.55); padding: 10px 12px; border-radius: 8px; backdrop-filter: blur(6px); max-width: 360px; }
     kbd { display: inline-block; min-width: 14px; padding: 0 5px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; font: 11px/16px ui-monospace, monospace; text-align: center; }
-    #overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: radial-gradient(ellipse at center, rgba(20,24,34,.92), rgba(8,10,16,.98)); pointer-events: auto; cursor: pointer; transition: opacity .35s; }
+    /* HUD zones: top-left landmark chip/card, top-right clock chip + time panel, bottom-left hint bar (+ diagnostics above it),
+       bottom-centre prompt/toast/streaming, bottom-right minimap, centre modals. Nothing shares a corner, so nothing overlaps. */
+    #help { position: absolute; left: 16px; bottom: 16px; font-size: 12px; line-height: 1.6; background: var(--panel); padding: 6px 10px; border-radius: 8px; backdrop-filter: blur(6px); max-width: min(560px, calc(100vw - 260px)); transition: opacity .8s; }
+    #help.faded { opacity: 0; }
+    #help[hidden] { display: none; }
+    #status { position: absolute; left: 16px; bottom: 56px; font: 11px/1.4 ui-monospace, monospace; opacity: .7; white-space: pre; display: none; max-width: calc(100vw - 260px); overflow: hidden; }
+    html.debug #status { display: block; }
+    /* start screen (dark, above every HUD element) and, once started, the pause menu over the visible scene */
+    #overlay { position: absolute; inset: 0; z-index: 35; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: radial-gradient(ellipse at center, rgba(20,24,34,.92), rgba(8,10,16,.98)); pointer-events: auto; cursor: pointer; transition: opacity .35s; }
     #overlay.hidden { opacity: 0; pointer-events: none; }
+    /* the start screen hides the HUD chips it does not fully cover (they show through the gradient) */
+    #hud:has(#overlay:not(.hidden):not(.pause)) :is(#place, #clock, #stream, #help, #timepanel) { visibility: hidden; }
     #overlay h1 { font-weight: 500; letter-spacing: .04em; margin: 0; font-size: 28px; }
     #overlay p { margin: 0; opacity: .75; font-size: 14px; }
-    /* While the time panel is open the pause overlay becomes a bottom hint so the scene stays visible and the panel clickable. */
+    #overlay .intro { max-width: 540px; text-align: center; line-height: 1.6; padding: 0 20px; }
+    #overlay .keys { display: grid; grid-template-columns: auto auto; gap: 5px 14px; font-size: 13px; opacity: .85; align-items: baseline; }
+    #overlay .keys span:nth-child(odd) { text-align: right; }
+    #overlay .keys kbd { font-size: 12px; margin-left: 2px; }
+    #overlay .src { font-size: 11px; opacity: .5; max-width: 540px; text-align: center; padding: 0 20px; }
+    #startbtn { display: none; padding: 10px 40px; font-size: 16px; border-radius: 8px; border: 1px solid var(--gold); background: rgba(232,194,122,.18); color: #fff; cursor: pointer; font-family: inherit; }
+    #startbtn:hover { background: rgba(232,194,122,.35); }
+    #overlay.ready #startbtn { display: block; }
+    #overlay.ready #progress { display: none; }
+    #overlay.pause { z-index: 10; background: rgba(8,10,16,.35); gap: 10px; }
+    #overlay.pause h1, #overlay.pause .intro, #overlay.pause .keys, #overlay.pause #progress, #overlay.pause .src, #overlay.pause #startbtn { display: none; }
+    #overlay .menu { display: none; flex-direction: column; gap: 6px; width: 260px; }
+    #overlay.pause .menu { display: flex; }
+    #overlay .menu button { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(8,10,16,.78); color: inherit; font-size: 14px; font-family: inherit; cursor: pointer; backdrop-filter: blur(6px); }
+    #overlay .menu button:hover { background: rgba(232,194,122,.3); }
+    #overlay .menu button[hidden] { display: none; }
+    #overlay .menu button kbd { opacity: .7; }
+    #overlay .menu .sep { height: 1px; background: rgba(255,255,255,.12); margin: 2px 6px; }
+    /* While a panel is open the overlay becomes a bottom hint so the scene stays visible and the panel clickable. */
     #overlay.peek { background: none; justify-content: flex-end; padding-bottom: 56px; box-sizing: border-box; }
-    #overlay.peek h1, #overlay.peek #progress { display: none; }
+    #overlay.peek h1, #overlay.peek #progress, #overlay.peek .menu, #overlay.peek .intro, #overlay.peek .keys, #overlay.peek .src, #overlay.peek #startbtn { display: none; }
     #overlay.peek p { background: rgba(8,10,16,.6); padding: 8px 14px; border-radius: 8px; opacity: 1; backdrop-filter: blur(6px); }
+    #overlay .retry { display: none; padding: 6px 18px; border-radius: 6px; border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.08); color: inherit; font-family: inherit; cursor: pointer; }
+    #overlay.failed .retry { display: block; }
+    #overlay.failed #startbtn { display: none; }
     #progress { width: 260px; height: 3px; background: rgba(255,255,255,.12); border-radius: 2px; overflow: hidden; }
-    #progress > i { display: block; height: 100%; width: 0%; background: #e8c27a; transition: width .2s; }
-    #timepanel { position: absolute; right: 16px; top: 80px; z-index: 20; width: 264px; background: rgba(8,10,16,.72); padding: 10px 12px; border-radius: 8px; font-size: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 8px; backdrop-filter: blur(6px); }
+    #progress > i { display: block; height: 100%; width: 0%; background: var(--gold); transition: width .2s; }
+    /* top-right: the clock chip is always there; T / a click unfolds the time panel under it */
+    #clock { position: absolute; right: 16px; top: 16px; z-index: 21; padding: 6px 12px; background: var(--panel); border-radius: 8px; border-right: 2px solid var(--gold); font: 13px ui-monospace, monospace; pointer-events: auto; cursor: pointer; backdrop-filter: blur(6px); white-space: nowrap; }
+    #clock:hover { background: rgba(232,194,122,.22); }
+    #timepanel { position: absolute; right: 16px; top: 56px; z-index: 21; width: 264px; background: var(--panel); padding: 10px 12px; border-radius: 8px; font-size: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 8px; backdrop-filter: blur(6px); }
     #timepanel[hidden] { display: none; }
     #timepanel .row { display: flex; justify-content: space-between; align-items: baseline; }
-    #timepanel #timeval { font: 13px ui-monospace, monospace; color: #e8c27a; }
-    #timepanel input { width: 100%; margin: 0; cursor: pointer; accent-color: #e8c27a; }
+    #timepanel #timeval { font: 13px ui-monospace, monospace; color: var(--gold); }
+    #timepanel input { width: 100%; margin: 0; cursor: pointer; accent-color: var(--gold); }
     #timepanel .presets { display: flex; gap: 4px; }
-    #timepanel button { flex: 1 1 0; padding: 3px 0; border: 1px solid rgba(255,255,255,.18); border-radius: 5px; background: rgba(255,255,255,.06); color: inherit; font-size: 11px; cursor: pointer; }
+    #timepanel button { flex: 1 1 0; padding: 3px 0; border: 1px solid rgba(255,255,255,.18); border-radius: 5px; background: rgba(255,255,255,.06); color: inherit; font-size: 11px; font-family: inherit; cursor: pointer; }
     #timepanel button:hover { background: rgba(232,194,122,.28); }
     #timepanel .hint { opacity: .55; font-size: 11px; line-height: 1.6; }
-    #toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.8); padding: 8px 14px; border-radius: 8px; font-size: 13px; pointer-events: none; }
+    /* bottom centre: lift prompt, toast, streaming counter */
+    #toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.8); padding: 8px 14px; border-radius: 8px; font-size: 13px; pointer-events: none; white-space: nowrap; }
     #toast[hidden] { display: none; }
-    #prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.72); padding: 8px 14px; border-radius: 8px; font-size: 14px; pointer-events: none; border: 1px solid rgba(232,194,122,.45); }
+    #prompt { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); z-index: 25; background: var(--panel); padding: 8px 14px; border-radius: 8px; font-size: 14px; pointer-events: none; border: 1px solid rgba(232,194,122,.45); }
     #prompt kbd { display: inline-block; min-width: 18px; padding: 1px 6px; margin-right: 6px; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; background: rgba(255,255,255,.12); font: 12px ui-monospace, monospace; text-align: center; }
     #prompt[hidden] { display: none; }
-    #status { position: absolute; right: 16px; top: 16px; font: 12px/1.4 ui-monospace, monospace; opacity: .7; text-align: right; white-space: pre; }
+    #stream { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 24; font: 12px ui-monospace, monospace; opacity: .75; background: var(--panel); padding: 4px 10px; border-radius: 6px; pointer-events: none; white-space: nowrap; }
+    #stream[hidden] { display: none; }
     #minimap { position: absolute; right: 16px; bottom: 16px; width: 200px; height: 200px; border-radius: 10px; border: 1px solid rgba(255,255,255,.28); box-shadow: 0 2px 12px rgba(0,0,0,.4); z-index: 20; }
     #minimap[hidden] { display: none; }
     #touch { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
@@ -47,57 +84,72 @@
     #touch .stick-base[hidden] { display: none; }
     #touch .stick-knob { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.55); }
     #touch .touch-row { position: absolute; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 58vw; pointer-events: auto; }
-    #touch .touch-row button { min-width: 48px; min-height: 44px; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(8,10,16,.62); color: #fff; font-size: 14px; touch-action: none; }
-    /* phones and tablets: hide the keyboard help and the debug status line, shrink the panels, keep the thumb zones clear */
-    html.touch:not(.debug) #status { display: none; }
+    #touch .touch-row button { min-width: 48px; min-height: 44px; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(8,10,16,.62); color: #fff; font-size: 14px; font-family: inherit; touch-action: none; }
+    /* phones and tablets: no keyboard hint bar, smaller panels, thumb zones clear */
     html.touch #help { display: none; }
-    html.touch #help.shown { display: block; left: 10px; bottom: auto; top: 10px; max-width: min(360px, 70vw); font-size: 11px; }
-    html.touch #timepanel { width: 220px; top: calc(10px + env(safe-area-inset-top)); right: 10px; font-size: 11px; box-sizing: border-box; }
+    html.touch #clock { right: 10px; top: calc(10px + env(safe-area-inset-top)); font-size: 12px; padding: 5px 10px; }
+    html.touch #timepanel { width: 220px; top: calc(46px + env(safe-area-inset-top)); right: 10px; font-size: 11px; box-sizing: border-box; }
     html.touch #timepanel .hint:last-child { display: none; }
     html.touch.debug #status { top: auto; bottom: calc(120px + env(safe-area-inset-bottom)); left: 10px; right: auto; text-align: left; font-size: 10px; }
     @media (max-width: 520px) { html.touch #timepanel { left: 10px; right: 10px; width: auto; } }
     html.touch #minimap { width: 140px; height: 140px; right: 10px; bottom: calc(118px + env(safe-area-inset-bottom)); }
     html.touch #overlay p { padding: 0 24px; text-align: center; }
+    html.touch #overlay .keys { display: none; }
     html.touch #crosshair { display: none; }
     #touch .touch-row button.on { background: rgba(232,194,122,.55); }
     /* landmark card (arrival / proximity) and the landmark list */
-    #place { position: absolute; left: 16px; top: 96px; z-index: 20; width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box; font-size: 12px; line-height: 1.5; pointer-events: auto; }
+    #place { position: absolute; left: 16px; top: 16px; z-index: 20; width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box; font-size: 12px; line-height: 1.5; pointer-events: auto; }
     #place[hidden] { display: none; }
-    #place .chip, #place .card { background: rgba(8,10,16,.72); backdrop-filter: blur(6px); border-radius: 8px; border-left: 2px solid #e8c27a; }
+    #place .chip, #place .card { background: var(--panel); backdrop-filter: blur(6px); border-radius: 8px; border-left: 2px solid var(--gold); }
     #place .chip { display: inline-block; padding: 6px 12px; white-space: nowrap; font-size: 12px; cursor: pointer; }
-    #place .card { padding: 10px 12px 8px; }
+    #place .card { padding: 10px 12px 8px; max-height: calc(100vh - 120px); overflow: auto; box-sizing: border-box; }
     #place[data-mode="card"] .chip { display: none; }
     #place[data-mode="chip"] .card { display: none; }
     #place img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: 6px; margin-bottom: 2px; background: rgba(255,255,255,.06); }
-    #place img[hidden], #place .cap[hidden], #place .facts[hidden], #place .desc[hidden], #place .wiki[hidden] { display: none; }
+    #place img[hidden], #place .cap[hidden], #place .facts[hidden], #place .desc[hidden], #place .wiki[hidden], #place .tip[hidden], #place .go[hidden] { display: none; }
     #place .cap { font-size: 10px; opacity: .55; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #place .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
-    #place .cat { font-size: 10px; padding: 0 6px; border: 1px solid #e8c27a; border-radius: 4px; color: #e8c27a; line-height: 16px; }
+    #place .cat { font-size: 10px; padding: 0 6px; border: 1px solid var(--gold); border-radius: 4px; color: var(--gold); line-height: 16px; }
     #place .ko { font-size: 16px; font-weight: 600; }
     #place .fr { opacity: .7; font-size: 12px; }
     #place .facts { opacity: .75; font-size: 11px; }
     #place .desc { margin: 6px 0 4px; }
-    #place .pos { color: #e8c27a; font-size: 11px; }
-    #place .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; }
-    #place .foot .hint { opacity: .5; }
-    #place a.wiki { color: #8fd3ff; text-decoration: none; padding: 2px 8px; border: 1px solid rgba(143,211,255,.4); border-radius: 5px; }
+    #place .tip { font-size: 11px; opacity: .8; margin: 2px 0 4px; }
+    #place .pos { color: var(--gold); font-size: 11px; }
+    #place .foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; }
+    #place .foot .hint { opacity: .5; margin-left: auto; }
+    #place a.wiki, #place button.go { color: #8fd3ff; text-decoration: none; padding: 2px 8px; border: 1px solid rgba(143,211,255,.4); border-radius: 5px; background: none; font: inherit; cursor: pointer; }
+    #place button.go { color: var(--gold); border-color: rgba(232,194,122,.5); }
     #place a.wiki:hover { background: rgba(143,211,255,.2); }
-    #places { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 22; width: min(380px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; box-sizing: border-box; background: rgba(8,10,16,.9); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 10px 12px; font-size: 13px; pointer-events: auto; backdrop-filter: blur(8px); }
-    #places[hidden] { display: none; }
-    #places .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
-    #places .head b { font-size: 15px; }
-    #places .head .hint { flex: 1; opacity: .55; font-size: 11px; }
-    #places .close { border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; padding: 1px 8px; cursor: pointer; }
+    #place button.go:hover { background: rgba(232,194,122,.25); }
+    /* centred modal panels: landmark list, help, info, settings */
+    .modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 22; width: min(380px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; box-sizing: border-box; background: rgba(8,10,16,.9); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 10px 12px; font-size: 13px; pointer-events: auto; backdrop-filter: blur(8px); }
+    .modal[hidden] { display: none; }
+    .modal .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .modal .head b { font-size: 15px; }
+    .modal .head .hint { flex: 1; opacity: .55; font-size: 11px; }
+    .modal .close { border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; padding: 1px 8px; cursor: pointer; font-family: inherit; }
+    .modal .body { overflow: auto; -webkit-user-select: text; user-select: text; }
+    .modal.wide { width: min(560px, calc(100vw - 32px)); }
     #places .rows { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
     #places .row { display: grid; grid-template-columns: 22px 10px 1fr auto 18px; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-    #places .row:hover { background: rgba(232,194,122,.2); }
-    #places .row .key { font: 11px/16px ui-monospace, monospace; color: #e8c27a; text-align: center; border: 1px solid rgba(232,194,122,.4); border-radius: 4px; }
+    #places .row:hover, #places .row:focus-visible { background: rgba(232,194,122,.2); outline: none; }
+    #places .row .key { font: 11px/16px ui-monospace, monospace; color: var(--gold); text-align: center; border: 1px solid rgba(232,194,122,.4); border-radius: 4px; }
     #places .row .key:empty { border-color: transparent; }
     #places .row i { display: block; width: 8px; height: 8px; border-radius: 50%; }
     #places .row .name { display: flex; flex-direction: column; line-height: 1.25; }
     #places .row .name small { opacity: .6; font-size: 11px; }
     #places .row .dist { font: 12px ui-monospace, monospace; opacity: .8; }
     #places .row .arrow { display: inline-block; font-size: 12px; opacity: .7; transform-origin: 50% 50%; }
+    /* help: shortcut table grouped by topic; info: sources and credits */
+    #helppanel table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    #helppanel th { text-align: left; padding: 8px 0 3px; font-size: 11px; color: var(--gold); font-weight: 600; letter-spacing: .04em; }
+    #helppanel td { padding: 2px 0; vertical-align: top; line-height: 1.6; }
+    #helppanel td:first-child { white-space: nowrap; padding-right: 12px; }
+    #helppanel .foot, #infopanel .foot { margin-top: 8px; font-size: 11px; opacity: .55; line-height: 1.6; }
+    #infopanel p { margin: 0 0 8px; line-height: 1.6; }
+    #infopanel ul { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 12px; }
+    #infopanel .credits div { margin-top: 6px; opacity: .7; font-size: 11px; line-height: 1.5; }
     html.touch #place { left: 10px; top: calc(10px + env(safe-area-inset-top)); width: min(300px, 62vw); font-size: 11px; }
     html.touch #place img { height: 90px; }
     #gpupanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 40; width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; background: rgba(8,10,16,.93); border: 1px solid rgba(232,194,122,.45); border-radius: 10px; padding: 16px 18px; font-size: 13px; line-height: 1.6; pointer-events: auto; backdrop-filter: blur(8px); -webkit-user-select: text; user-select: text; }
@@ -109,9 +161,9 @@
     #gpupanel .verdict { margin: 6px 0; }
     #gpupanel .warn { color: #f3c0a6; }
     #gpupanel .method { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.05); }
-    #gpupanel .method b { display: block; margin-bottom: 3px; color: #e8c27a; }
+    #gpupanel .method b { display: block; margin-bottom: 3px; color: var(--gold); }
     #gpupanel code { font: 12px ui-monospace, monospace; background: rgba(255,255,255,.09); padding: 1px 5px; border-radius: 4px; }
-    #gpupanel button, #gpupanel a.btn { display: inline-block; padding: 2px 9px; margin: 0 4px; border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; font-size: 12px; line-height: 18px; cursor: pointer; text-decoration: none; }
+    #gpupanel button, #gpupanel a.btn { display: inline-block; padding: 2px 9px; margin: 0 4px; border: 1px solid rgba(255,255,255,.25); border-radius: 5px; background: rgba(255,255,255,.08); color: inherit; font-size: 12px; line-height: 18px; cursor: pointer; text-decoration: none; font-family: inherit; }
     #gpupanel button:hover, #gpupanel a.btn:hover { background: rgba(232,194,122,.3); }
     #gpupanel .foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
   </style>
@@ -123,23 +175,33 @@
     <div id="status"></div>
     <div id="toast" hidden></div>
     <div id="prompt" hidden></div>
+    <div id="stream" hidden></div>
     <div id="gpupanel" hidden></div>
-    <div id="timepanel">
+    <div id="clock" role="button" title="시간 · 날씨 (T)">17:30</div>
+    <div id="timepanel" hidden>
       <div class="row"><label for="timeslider">시간 <span id="timeval">17:30</span></label><span class="hint" id="datelabel">오늘 · 파리</span></div>
       <input id="timeslider" type="range" min="0" max="24" step="0.1" value="17.5" />
       <div class="presets"></div>
       <div class="hint"><kbd>,</kbd> <kbd>.</kbd> ±15분 · <kbd>Shift</kbd> ±1시간 · <kbd>N</kbd> 순환</div>
     </div>
     <div id="help">
-      <b>Paris · Champ de Mars</b><br/>
-      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · <kbd>Shift</kbd> 달리기 · 마우스 시점<br/>
-      <kbd>1</kbd>–<kbd>8</kbd> 명소 이동 · <kbd>L</kbd> 명소 목록 · <kbd>I</kbd> 명소 정보 · <kbd>F</kbd> 비행 · <kbd>T</kbd> 시간 패널 · <kbd>N</kbd> 야경 · <kbd>H</kbd> 도움말 · <kbd>Esc</kbd> 마우스 해제<br/>
-      <kbd>P</kbd> 링크 복사 · <kbd>O</kbd> 스크린샷 저장 · <kbd>M</kbd> 미니맵 (320 m → 1.5 km) · <kbd>V</kbd> 소리 끄기/켜기 · <kbd>G</kbd> GPU 선택 · 게임패드 지원
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · 마우스 시점 · <kbd>Shift</kbd> 달리기 · <kbd>1</kbd>–<kbd>8</kbd> 명소 · <kbd>Esc</kbd> 메뉴 · <kbd>H</kbd> 도움말
     </div>
     <div id="overlay">
       <h1>Tour Eiffel</h1>
+      <p class="intro">오픈데이터로 만든 에펠탑 주변 1.5 km를 1인칭으로 걷습니다. 트로카데로에서 앵발리드까지 실제 배치와 높이 그대로, 낮과 밤·계절·날씨가 바뀝니다.</p>
+      <div class="keys">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>이동 · 마우스로 시점 · <kbd>Shift</kbd> 달리기</span>
+        <span><kbd>1</kbd>–<kbd>8</kbd> <kbd>L</kbd></span><span>명소로 이동 · 명소 목록</span>
+        <span><kbd>T</kbd> <kbd>N</kbd> <kbd>R</kbd></span><span>시간 패널 · 시간대 순환 · 날씨</span>
+        <span><kbd>Esc</kbd> <kbd>H</kbd></span><span>메뉴 · 도움말</span>
+      </div>
       <p id="overlay-msg">불러오는 중…</p>
       <div id="progress"><i></i></div>
+      <button id="startbtn" type="button">시작</button>
+      <button class="retry" type="button">다시 시도</button>
+      <div class="menu" role="menu"></div>
+      <p class="src">OpenStreetMap · IGN BD TOPO / BD ORTHO / RGE ALTI / LiDAR HD · Ville de Paris · Wikidata</p>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>

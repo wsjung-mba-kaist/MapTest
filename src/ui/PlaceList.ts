@@ -9,10 +9,11 @@ export class PlaceList {
   open = false;
 
   constructor(parent: HTMLElement, private readonly onPick: (lm: Landmark) => void, private readonly onClose: () => void) {
-    this.root.id = 'places'; this.root.hidden = true;
+    this.root.id = 'places'; this.root.className = 'modal'; this.root.hidden = true;
+    this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', '명소 목록');
     const head = document.createElement('div'); head.className = 'head';
     head.innerHTML = '<b>명소</b><span class="hint"><kbd>1</kbd>–<kbd>8</kbd> 바로 이동 · <kbd>L</kbd> 닫기</span>';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close';
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close'; close.setAttribute('aria-label', '닫기');
     close.addEventListener('click', () => this.onClose());
     head.appendChild(close);
     this.rows.className = 'rows';
@@ -40,6 +41,7 @@ export class PlaceList {
       this.rows.appendChild(row);
     }
     this.root.hidden = false; this.open = true;
+    (this.rows.firstElementChild as HTMLElement | null)?.focus();
   }
 
   hide() { this.root.hidden = true; this.open = false; }

@@ -61,16 +61,16 @@ export class World {
   lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
 
   async load(onProgress: (frac: number, msg: string) => void) {
-    onProgress(0.05, 'Loading manifest...');
+    onProgress(0.05, '지도 정보 읽는 중…');
     this.manifest = await loadManifest();
-    onProgress(0.15, 'Loading terrain...');
+    onProgress(0.15, '지형 만드는 중…');
     this.heightmap = await loadHeightmap();
     if (this.streetsEnabled) { try { this.surface = SurfaceGrid.fromBuffer(await fetchBuffer(`${DATA_URL}/surface.bin`)); } catch { this.surface = null; } }
     this.terrain = new Terrain(this.heightmap);
     this.terrain.setWaterLevel(this.manifest.waterLevelY);
     this.terrain.build();
     this.group.add(this.terrain.group);
-    onProgress(0.4, 'Loading buildings...');
+    onProgress(0.4, '건물 불러오는 중…');
     this.buildings = new Buildings();
     this.buildings.dsmEnabled = this.dsmEnabled;
     this.buildings.textureProvider = (i, j) => this.terrain.textureOf(i, j);
@@ -79,11 +79,11 @@ export class World {
     this.terrain.onOverview = tex => { this.buildings.setOverview(tex); this.bridges?.setOverview(tex); };
     this.buildings.start();
     this.group.add(this.buildings.group);
-    onProgress(0.6, 'Loading water...');
+    onProgress(0.6, '센강과 다리 놓는 중…');
     try { const w = new Water(); await w.load(); this.water = w; this.group.add(w.group); } catch (e) { console.warn('water layer missing', e); }
     try { const f = new Fountains(); await f.load(); this.fountains = f; this.group.add(f.group); } catch (e) { console.warn('fountains missing', e); }
     try { const b = new Bridges(); await b.load(); this.bridges = b; b.setOverview(this.terrain.overview); b.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(b.group); } catch (e) { console.warn('bridges missing', e); }
-    onProgress(0.7, 'Loading the tower...');
+    onProgress(0.7, '에펠탑 세우는 중…');
     this.eiffel = new Eiffel();
     this.eiffel.kind = this.towerKind;
     await this.eiffel.load();
@@ -92,7 +92,7 @@ export class World {
     this.heroModels = await LandmarkModel.loadAll('/models/landmarks.json', (x, z) => this.heightmap.sample(x, z), this.heroLodOnly);
     for (const m of this.heroModels) this.models.group.add(m.group);
     this.group.add(this.models.group);
-    onProgress(0.75, 'Planting trees...');
+    onProgress(0.75, '가로수와 시설물 심는 중…');
     try { const t = new Trees(); await t.load(this.surface, (x, z) => this.heightmap.meshY(x, z)); this.trees = t; this.group.add(t.group); } catch (e) { console.warn('trees missing', e); }
     try { const fu = new Furniture(); await fu.load(this.surface); this.furniture = fu; this.group.add(fu.group); } catch (e) { console.warn('furniture missing', e); }
     try { const far = new FarRing(); await far.load(); this.far = far; this.group.add(far.group); } catch (e) { console.warn('far ring missing', e); }
@@ -105,10 +105,10 @@ export class World {
       this.group.add(this.labels.group);
     }
     if (this.lifeOptions) {
-      onProgress(0.78, 'Waking up the city...');
+      onProgress(0.78, '도시 깨우는 중…');
       try { const l = new Life(); await l.load(this.lifeOptions, this.surface); this.life = l; this.group.add(l.group); } catch (e) { console.warn('paths.bin missing: the city stays still', e); }
     }
-    onProgress(0.8, 'Streaming...');
+    onProgress(0.8, '거의 다 됐습니다…');
   }
 
   update(x: number, z: number, time = 0, night = 0, dt = 0, camDir: THREE.Vector3 = DEFAULT_DIR, hour = 12) {

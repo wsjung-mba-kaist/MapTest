@@ -47,8 +47,6 @@ export class TouchControls {
     this.root.appendChild(row);
     parent.appendChild(this.root);
     this.hideStick();
-    const help = document.getElementById('help');
-    if (help) { const line = document.createElement('div'); line.textContent = '터치: 왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 버튼 열(달리기 · 비행 · ▲▼ 고도 · E 승강기 · 명소 · ⓘ 정보 · 지도 · 시간 · 야경)'; line.style.marginBottom = '6px'; help.prepend(line); }
 
     const surface = document.getElementById('app') as HTMLCanvasElement;
     surface.style.touchAction = 'none';

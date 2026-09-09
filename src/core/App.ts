@@ -9,14 +9,15 @@ import { setWet } from '../materials/GroundMaterial';
 import { seasonState } from '../../shared/season';
 import { Rain } from '../render/Rain';
 import { XRMode } from './XR';
-import type { Weather } from '../render/Environment';
+import { todayParis, type Weather } from '../render/Environment';
 import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
 import { AudioEngine } from '../audio/Audio';
 import { TowerAccess, type Hotspot } from '../world/TowerAccess';
 import { createRenderer, gpuInfo, hpAdapter, probeHighPerfAdapter } from './Renderer';
 import { GpuPanel } from '../ui/GpuPanel';
-import { Hud, formatHour } from '../ui/Hud';
+import { Hud, formatHour, type MenuAction } from '../ui/Hud';
+import { HelpPanel, InfoPanel } from '../ui/Menu';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
 import { buildingUniforms } from '../materials/FacadeMaterial';
@@ -45,7 +46,7 @@ export class App {
   readonly hud = new Hud();
   readonly input: Input;
   readonly world = new World();
-  readonly stats: Stats;
+  private stats?: Stats;
   readonly fly: FlyControls;
   readonly collision = new Collision();
   readonly env: Environment;
@@ -91,10 +92,11 @@ export class App {
     this.scene.add(this.world.group);
     this.env = new Environment(this.scene, this.renderer);
     this.post = new Post(this.renderer, this.scene, this.camera);
-    this.stats = new Stats({ trackGPU: false, horizontal: true });
-    this.stats.dom.style.cssText = 'position:fixed;left:8px;top:8px;opacity:.8;z-index:10';
-    document.body.appendChild(this.stats.dom);
-    this.stats.init(this.renderer);
+    // diagnostics (FPS panel + status readout) are opt-in: ?status=1, H twice, or the settings switch
+    this.hud.onDiagnostics = on => {
+      if (on && !this.stats) { this.stats = new Stats({ trackGPU: false, horizontal: true }); this.stats.dom.style.cssText = 'position:fixed;left:16px;bottom:190px;opacity:.8;z-index:10'; document.body.appendChild(this.stats.dom); this.stats.init(this.renderer); }
+      if (this.stats) this.stats.dom.style.display = on ? '' : 'none';
+    };
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -178,11 +180,16 @@ export class App {
     const q = new URLSearchParams(location.search);
     const touchUi = q.get('touch') === '1' || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
     this.placePanel = new PlacePanel(hudEl, touchUi);
-    this.placeList = new PlaceList(hudEl, lm => { this.togglePlaceList(false); this.goTo(lm); }, () => this.togglePlaceList(false));
+    this.placeList = new PlaceList(hudEl, lm => { this.closeModal(false); this.goTo(lm); if (!this.input.touchMode) this.input.lock(); }, () => this.closeModal());
+    this.helpPanel = new HelpPanel(hudEl, () => this.closeModal(), touchUi);
+    this.infoPanel = new InfoPanel(hudEl, () => this.closeModal());
+    this.hud.onCredit = t => this.infoPanel.addCredit(t);
+    this.hud.onMenu = a => this.menuAction(a);
+    this.hud.onClock = () => this.toggleTimePanel();
     { const first = this.world.landmarks.byHotkey(1) ?? this.world.landmarks.list[0]; if (first) this.goTo(first, { instant: true, quiet: true }); }
 
     // ---- Phase D: minimap, soundscape, touch / gamepad
-    this.minimap = new Minimap(hudEl, this.world.landmarks.visible.filter(l => l.id !== 'eiffel').map(l => ({ x: l.x, z: l.z, name: l.name.fr, short: l.short, category: l.category, hotkey: l.hotkey })));
+    this.minimap = new Minimap(hudEl, this.world.landmarks.visible.filter(l => l.id !== 'eiffel').map(l => ({ x: l.x, z: l.z, name: l.name.fr, short: l.short, category: l.category, hotkey: l.hotkey, weight: l.radius })));
     this.minimap.colors = CATEGORY_COLOR;
     if (q.get('minimap') === '1') this.minimap.toggle(true);
     this.audio = new AudioEngine(q.get('audio'));
@@ -205,7 +212,9 @@ export class App {
       if (this.world.trees) this.world.trees.lodDistance = 160;
       localLights.setBudget(16, 8);   // half the lamp slots: the per-fragment loop is the main mobile cost
     }
-    if (q.get('status') === '1') document.documentElement.classList.add('debug');
+    if (q.get('status') === '1') this.hud.setDiagnostics(true);
+    if (this.noGlide) this.player.headBob = false;   // prefers-reduced-motion (or ?glide=0): no head bob either
+    this.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.loop.stop(); this.hud.fail('그래픽 장치 연결이 끊겼습니다. 다른 탭을 닫고 다시 시도해 보세요.', true); });
     if (q.get('drive') === '1') this.input.touchF = 1;   // headless self-test: hold the virtual stick forward
 
     this.loop.add(dt => {
@@ -240,7 +249,7 @@ export class App {
       const feet = this.player.position;
       this.hotspot = !this.flying && !this.player.riding && !this.glide.active && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
       this.hud.prompt(this.hotspot ? `E · ${this.hotspot.label}` : null);
-      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); }
+      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); this.hud.streaming(this.world.buildings.loadedCount, this.world.buildings.chunks.size); }
       this.world.labels?.update(p.x, p.z, this.currentLandmark?.id ?? null);
     });
     const camDir = new THREE.Vector3();
@@ -266,14 +275,18 @@ export class App {
       if (this.captureRequested) { // same task as the render: the drawing buffer is still valid
         this.captureRequested = false;
         const p = this.camera.position;
-        saveCanvas(this.canvas, `paris-eiffel_${formatHour(this.env.hour).replace(':', '-')}_${Math.round(p.x)}_${Math.round(p.z)}.png`);
+        const name = `paris-eiffel_${formatHour(this.env.hour).replace(':', '-')}_${Math.round(p.x)}_${Math.round(p.z)}.png`;
+        saveCanvas(this.canvas, name);
+        this.hud.toast(`스크린샷 저장 · ${name}`, 3000);
       }
-      this.stats.update();
+      if (this.hud.diagnostics) this.stats?.update();
     };
     this.loop.start(cb => this.renderer.setAnimationLoop(cb));
 
     this.input.onKey((code, e) => {
-      if (code === 'KeyH') this.hud.toggleHelp();
+      // Esc reaches the page only while the pointer is free (locked, the browser eats it): close the top modal first
+      if (code === 'Escape') { if (this.gpuPanel.open) this.gpuPanel.hide(); else if (this.modal) this.closeModal(false); }
+      if (code === 'KeyH') this.toggleHelp();
       if (code === 'KeyG') this.toggleGpuPanel();
       if (code === 'KeyF') this.toggleFly();
       if (code === 'KeyT') this.toggleTimePanel();
@@ -281,16 +294,16 @@ export class App {
       if (code === 'KeyR') this.cycleWeather();
       if (code === 'KeyP') void this.share();
       if (code === 'KeyO') this.captureRequested = true;
-      if (code === 'KeyM') this.minimap.toggle();
-      if (code === 'KeyL') this.togglePlaceList();
+      if (code === 'KeyM') this.toggleMinimap();
+      if (code === 'KeyL') this.toggleModal('places');
       if (code === 'KeyI') this.placePanel.toggle();
       if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); }
       if (code === 'KeyV') this.hud.toast(this.audio.toggleMute() ? '소리 끔' : '소리 켬');
-      if (code === 'Comma' || code === 'Period') this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25));
+      if (code === 'Comma' || code === 'Period') { this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25)); this.hud.toast(formatHour(this.env.hour), 1200); }
       const digit = /^Digit([1-8])$/.exec(code);
       if (digit) { const lm = this.world.landmarks.byHotkey(Number(digit[1])); if (lm) this.goTo(lm); }
     });
-    this.hud.onTimeChange = h => this.env.setHour(h);
+    this.hud.onTimeChange = h => { this.env.setHour(h); this.refreshClock(); };
     this.applyDayPresets();
     this.applyWeather(false);
     if (this.world.life?.traffic) this.world.life.traffic.lightFx = this.carLights;
@@ -307,14 +320,16 @@ export class App {
     this.hud.addCredit('Map data © OpenStreetMap contributors · IGN BD TOPO / BD ORTHO / RGE ALTI · Ville de Paris');
     if (this.world.landmarks.baked) this.hud.addCredit('명소 설명: Wikipedia · Wikidata (CC BY-SA 4.0) · 사진: Wikimedia Commons (저작자·라이선스는 카드에 표시)');
     this.hud.setTimeDisplay(this.env.hour);
+    this.refreshClock();
     document.addEventListener('pointerlockchange', () => { if (!this.input.touchMode) this.hud.showOverlay(!this.input.locked); });
     this.hud.onStart = () => {
       this.gpuNotice();
       this.audio.ensure();
+      this.hud.markStarted(this.touch.enabled ? '탭하면 계속 걷습니다' : undefined);
       if (this.touch.enabled) { this.input.touchMode = true; this.hud.showOverlay(false); }   // phones: no pointer lock
       else this.input.lock();
     };
-    this.hud.setReady(this.touch.enabled ? '탭하면 시작합니다 · 왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 오른쪽 아래 버튼' : undefined);
+    this.hud.setReady(this.touch.enabled ? '왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 오른쪽 아래 버튼' : undefined);
     this.applyUrlParams();
   }
 
@@ -324,18 +339,54 @@ export class App {
     if (open) this.input.unlock();
     else if (!this.input.locked) this.input.lock();
   }
-  /** L: the landmark list, same pointer-lock contract as the time panel. */
-  togglePlaceList(open = this.input.locked || !this.placeList.open) {
-    if (open) {
+  helpPanel!: HelpPanel;
+  infoPanel!: InfoPanel;
+  /** the one centred modal that may be open (landmark list, help, info); same pointer-lock contract as the time panel */
+  modal: 'places' | 'help' | 'info' | null = null;
+  openModal(kind: NonNullable<App['modal']>) {
+    if (this.modal) this.closeModal(false);
+    if (kind === 'places') {
       const p = this.flying ? this.camera.position : this.player.position;
       this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw);
-      this.hud.setPlacesOpen(true);
-      this.input.unlock();
-    } else {
-      this.placeList.hide();
-      this.hud.setPlacesOpen(false);
-      if (!this.input.locked && !this.input.touchMode) this.input.lock();
-    }
+    } else if (kind === 'help') this.helpPanel.show(); else this.infoPanel.show();
+    this.modal = kind;
+    this.hud.setModal(true, { places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', info: '닫으면 계속 걷습니다' }[kind]);
+    this.input.unlock();
+  }
+  /** close the open modal; `relock` grabs the pointer back (false when another panel or the menu takes over) */
+  closeModal(relock = true) {
+    if (this.modal === 'places') this.placeList.hide(); else if (this.modal === 'help') this.helpPanel.hide(); else if (this.modal === 'info') this.infoPanel.hide();
+    this.modal = null;
+    this.hud.setModal(false);
+    if (relock && !this.input.locked && !this.input.touchMode) this.input.lock();
+  }
+  /** L / H / menu: open while walking or closed, close when it is the open one */
+  toggleModal(kind: NonNullable<App['modal']>) { if (this.modal === kind && !this.input.locked) this.closeModal(); else this.openModal(kind); }
+  /** H: the help panel; H again while it is open flips the diagnostics readout ("H twice") and closes it. */
+  toggleHelp() {
+    if (this.modal === 'help') { const on = !this.hud.diagnostics; this.hud.setDiagnostics(on); this.closeModal(); this.hud.toast(on ? '진단 정보 표시 (H 두 번: 숨김)' : '진단 정보 숨김'); }
+    else this.openModal('help');
+  }
+  toggleMinimap() {
+    this.minimap.toggle();
+    this.hud.toast(this.minimap.visible ? `미니맵 ${this.minimap.spanM >= 1000 ? `${(this.minimap.spanM / 1000).toFixed(1)} km` : `${this.minimap.spanM} m`}` : '미니맵 숨김', 1500);
+  }
+  /** pause-menu buttons run the same code as their shortcuts */
+  private menuAction(a: MenuAction) {
+    if (a === 'continue') this.hud.onStart();
+    else if (a === 'places') this.openModal('places');
+    else if (a === 'time') this.toggleTimePanel(true);
+    else if (a === 'share') void this.share();
+    else if (a === 'shot') { this.captureRequested = true; }
+    else if (a === 'help') this.openModal('help');
+    else if (a === 'info') this.openModal('info');
+  }
+  private static readonly WEATHER_LABEL: Record<Weather, string> = { clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' };
+  /** the top-right chip: time · weather (· date when it is not today) */
+  refreshClock() {
+    const [y, m, d] = this.env.ymd, t = todayParis();
+    const today = y === t[0] && m === t[1] && d === t[2];
+    this.hud.setClock(`${formatHour(this.env.hour)} · ${App.WEATHER_LABEL[this.weather]}${today ? '' : ` · ${this.env.dateLabel()}`}`);
   }
 
   /** 4 Hz: which site the feet are in (with hysteresis + a 0.5 s dwell), the chip text, and a card on entering a new one. */
@@ -382,7 +433,7 @@ export class App {
     });
   }
 
-  setHour(h: number) { this.env.setHour(h); this.hud.setTimeDisplay(this.env.hour); }
+  setHour(h: number) { this.env.setHour(h); this.hud.setTimeDisplay(this.env.hour); this.refreshClock(); }
   /** Preset hours follow the day's real sunrise / sunset (a June sunset is 21:58, a December one 16:56). */
   applyDayPresets() {
     const { sunrise, sunset } = this.env.sunTimes();
@@ -392,6 +443,7 @@ export class App {
       { label: '노을', hour: r(sunset - 0.35) }, { label: '야경', hour: Math.ceil(sunset + 1.4) % 24 + 0.02 }, { label: '심야', hour: 1 },
     ]);
     this.hud.setDateLabel(`${this.env.dateLabel()} · 파리`);
+    this.refreshClock();
   }
   /** P: copy a link that reproduces this view. */
   async share() {
@@ -410,7 +462,8 @@ export class App {
     this.world.trees?.setWind(w === 'rain' ? 1.6 : w === 'overcast' ? 1.1 : 0.7);
     if (this.rain) this.rain.on = w === 'rain';
     this.audio.setRain(w === 'rain' ? 1 : 0);
-    if (toast) this.hud.toast({ clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' }[w]);
+    if (toast) this.hud.toast(App.WEATHER_LABEL[w]);
+    this.refreshClock();
   }
   cycleWeather() {
     const order: Weather[] = ['clear', 'overcast', 'rain', 'fog'];
@@ -421,7 +474,9 @@ export class App {
   cycleTime() {
     const sorted = [...this.hud.presets].sort((a, b) => a.hour - b.hour);
     const h = this.env.hour;
-    this.setHour((sorted.find(p => p.hour > h + 0.05) ?? sorted[0]).hour);
+    const next = sorted.find(p => p.hour > h + 0.05) ?? sorted[0];
+    this.setHour(next.hour);
+    this.hud.toast(`${next.label} · ${formatHour(next.hour)}`, 1500);
   }
 
   /** Debug helpers: ?auto=1 skips the overlay; ?fly=1&x=..&y=..&z=..&yaw=deg&pitch=deg places the camera; ?hour=19.5 sets the time. */
@@ -516,6 +571,7 @@ export class App {
 
   toggleFly() {
     this.flying = !this.flying;
+    this.hud.toast(this.flying ? '비행 모드 · Q/E 하강·상승 · F 걷기' : '걷기 모드', 1800);
     if (this.flying) { this.fly.position.copy(this.camera.position); this.fly.speed = 15; }
     // Landing from flight has to find bridge decks and tower floors too: over the river the raw terrain is the
     // sunken river bed, so groundY alone drops the player through the deck into the water.
@@ -523,6 +579,7 @@ export class App {
   }
 
   private updateStatus() {
+    if (!this.hud.diagnostics) return;
     const p = this.camera.position;
     const yawDeg = ((THREE.MathUtils.radToDeg(this.input.yaw) % 360) + 360) % 360;
     const w = this.world;
