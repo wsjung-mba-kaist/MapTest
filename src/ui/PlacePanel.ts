@@ -31,7 +31,7 @@ export class PlacePanel {
   private readonly desc = document.createElement('p');
   private readonly pos = document.createElement('div');
   private readonly wiki = document.createElement('a');
-  private readonly hint = document.createElement('span');
+  private readonly hint = document.createElement('button');
   private readonly tip = document.createElement('div');
   private readonly go = document.createElement('button');
   /** '여기로 이동' on a card for a place the player is not standing in */
@@ -55,7 +55,10 @@ export class PlacePanel {
     const foot = document.createElement('div'); foot.className = 'foot';
     this.wiki.className = 'wiki'; this.wiki.target = '_blank'; this.wiki.rel = 'noopener'; this.wiki.textContent = 'W 위키백과';
     this.wiki.addEventListener('click', e => e.stopPropagation());
-    this.hint.className = 'hint'; this.hint.innerHTML = touch ? '탭하여 접기' : '<kbd>I</kbd> 접기';
+    // the fold control is a real button: with the pointer free (Esc) it is clickable, and I still works while walking
+    this.hint.type = 'button'; this.hint.className = 'hint'; this.hint.innerHTML = touch ? '접기' : '접기 <kbd>I</kbd>'; this.hint.setAttribute('aria-label', '카드 접기');
+    this.hint.addEventListener('click', e => { e.stopPropagation(); this.setMode('chip', true); });
+    this.hint.addEventListener('pointerdown', e => e.stopPropagation());
     this.go.type = 'button'; this.go.className = 'go'; this.go.textContent = '여기로 이동'; this.go.hidden = true;
     this.go.addEventListener('click', e => { e.stopPropagation(); if (this.current) this.onGo(this.current); });
     this.go.addEventListener('pointerdown', e => e.stopPropagation());
