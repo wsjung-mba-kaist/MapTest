@@ -37,6 +37,7 @@ import { Post } from '../render/Post';
 import { Glide } from '../player/Glide';
 import { PlacePanel, CATEGORY_COLOR } from '../ui/PlacePanel';
 import { PlaceList } from '../ui/PlaceList';
+import { Compass } from '../ui/Compass';
 import { hasNum, queryNum, type Landmark } from '../../shared/layout';
 
 /** yaw so that the camera at (x,z) faces (tx,tz); yaw 0 = north (-z), clockwise positive. */
@@ -208,7 +209,11 @@ export class App {
     // ---- Phase D: minimap, soundscape, touch / gamepad
     this.minimap = new Minimap(hudEl, this.world.landmarks.visible.filter(l => l.id !== 'eiffel').map(l => ({ x: l.x, z: l.z, name: l.name.fr, short: l.short, category: l.category, hotkey: l.hotkey, weight: l.radius })));
     this.minimap.colors = CATEGORY_COLOR;
-    if (q.get('minimap') === '1') this.minimap.toggle(true);
+    this.minimap.onPick = (x, z) => this.goToPoint(x, z);
+    window.addEventListener('wheel', e => { if (this.input.locked && this.minimap.visible) this.minimap.cycleSpan(e.deltaY > 0 ? 1 : -1); }, { passive: true });
+    this.compass = new Compass(hudEl, this.world.landmarks.visible);
+    this.compass.colors = CATEGORY_COLOR;
+    this.placePanel.onGo = lm => { this.goTo(lm); if (!this.input.touchMode) this.input.lock(); };
     this.audio = new AudioEngine(q.get('audio'));
     const wake = () => this.audio.ensure();
     window.addEventListener('pointerdown', wake); window.addEventListener('keydown', wake);
@@ -232,6 +237,7 @@ export class App {
     this.hud.enableMenu('settings', true);
     this.applyPrefs(this.prefs);
     this.settingsPanel.set(this.prefs);
+    if (q.get('minimap') === '1' && !this.minimap.visible) this.minimap.toggle(true);   // URL wins over the stored default
     if (q.get('status') === '1') this.hud.setDiagnostics(true);
     if (this.noGlide) this.player.headBob = false;   // prefers-reduced-motion (or ?glide=0): no head bob either
     this.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.loop.stop(); this.hud.fail('그래픽 장치 연결이 끊겼습니다. 다른 탭을 닫고 다시 시도해 보세요.', true); });
@@ -248,6 +254,7 @@ export class App {
     this.loop.add((dt, t) => {
       const p = this.camera.position;
       this.minimap.update(p.x, p.z, this.input.yaw, performance.now());
+      this.compass.update(p.x, p.z, this.input.yaw, this.currentLandmark?.id ?? null, performance.now());
       // positional sources: nearest cars / boats, open café terraces (17-01h)
       const src: SpatialSource[] = [];
       const life = this.world.life;
@@ -269,7 +276,7 @@ export class App {
       const feet = this.player.position;
       this.hotspot = !this.flying && !this.player.riding && !this.glide.active && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
       this.hud.prompt(this.hotspot ? `E · ${this.hotspot.label}` : null);
-      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); this.hud.streaming(this.world.buildings.loadedCount, this.world.buildings.chunks.size); }
+      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); this.hud.streaming(this.world.buildings.loadedCount, this.world.buildings.chunks.size); if (this.modal === 'places') { const f = this.flying ? this.camera.position : this.player.position; this.placeList.update(f.x, f.z, this.input.yaw); } }
       this.world.labels?.update(p.x, p.z, this.currentLandmark?.id ?? null);
     });
     const camDir = new THREE.Vector3();
@@ -380,6 +387,7 @@ export class App {
   /** the one centred modal that may be open (landmark list, help, info); same pointer-lock contract as the time panel */
   modal: 'places' | 'help' | 'info' | 'settings' | null = null;
   settingsPanel!: SettingsPanel;
+  compass!: Compass;
   prefs!: Prefs;
   private reflection?: WaterReflection;
   private readonly frameSamples: number[] = [];
@@ -390,7 +398,7 @@ export class App {
     if (this.modal) this.closeModal(false);
     if (kind === 'places') {
       const p = this.flying ? this.camera.position : this.player.position;
-      this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw);
+      this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw, this.currentLandmark?.id ?? null);
     } else if (kind === 'help') this.helpPanel.show(); else if (kind === 'settings') this.settingsPanel.show(); else this.infoPanel.show();
     this.modal = kind;
     this.hud.setModal(true, { places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', info: '닫으면 계속 걷습니다', settings: '바뀐 설정은 바로 적용되고 저장됩니다 · 닫으면 계속 걷습니다' }[kind]);
@@ -443,6 +451,7 @@ export class App {
       else if (k === 'volume') this.audio?.setVolume(p.volume);
       else if (k === 'minimap') { if (this.minimap && this.minimap.visible !== p.minimap) this.minimap.toggle(p.minimap); }
       else if (k === 'labels') this.world.setLabels(p.labels);
+      else if (k === 'compass') this.compass?.setVisible(p.compass);
       else if (k === 'diagnostics') this.hud.setDiagnostics(p.diagnostics);
     }
   }
@@ -608,6 +617,23 @@ export class App {
       else if (w[name]?.group) w[name]!.group!.visible = false;
     }
     const quality = q.get('quality'); if (quality === 'low' || quality === 'medium' || quality === 'high') this.post.setQuality(quality);
+  }
+
+  /** Minimap click: glide to that point (walking: onto the ground / a deck there; flying: same height), keep the heading. */
+  goToPoint(x: number, z: number) {
+    x = Math.max(-1536, Math.min(1536, x)); z = Math.max(-1536, Math.min(1536, z));
+    const yaw = this.input.yaw;
+    let target: THREE.Vector3, land: () => void;
+    if (this.flying) {
+      const y = Math.max(this.camera.position.y, this.world.groundY(x, z) + 1.7);
+      target = new THREE.Vector3(x, y, z); land = () => { this.fly.position.set(x, y, z); this.fly.apply(); };
+    } else {
+      const feetY = this.landingY(x, z);
+      target = new THREE.Vector3(x, feetY + 1.7, z); land = () => { this.player.place(x, z, yaw, feetY + 1); this.input.pitch = 0.02; this.player.apply(); };
+    }
+    this.hud.prompt(null);
+    if (this.noGlide) { this.glide.cancel(); land(); } else this.glide.start(target, yaw, this.flying ? this.input.pitch : 0.02, land);
+    if (!this.input.touchMode) this.input.lock();
   }
 
   /** Feet height for a landing at (x,z): a bridge deck over the river when there is one, else the terrain / nearby deck. */

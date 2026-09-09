@@ -7,6 +7,12 @@ export const CATEGORY_COLOR: Record<string, string> = {
   military: '#f0b48a', theatre: '#ff9ec4', institution: '#c9c9d6',
 };
 
+/** one-line hints for places with something to do there */
+const TIPS: Record<string, string> = {
+  eiffel: '기둥 발치에서 E · 승강기로 1층 → 2층 → 꼭대기 (각 층에서 걸어 다닐 수 있음)',
+  'eiffel-deck': '난간을 따라 걸으며 사방을 볼 수 있음 · 승강장에서 E · 꼭대기 또는 지상으로',
+};
+
 /**
  * Landmark card (#place): photo, Korean + French name, facts, a two-sentence description and where the place is
  * relative to the player. Shown on arrival, then folds into a one-line chip ("현재 위치 · 앵발리드"); `I` toggles.
@@ -26,6 +32,10 @@ export class PlacePanel {
   private readonly pos = document.createElement('div');
   private readonly wiki = document.createElement('a');
   private readonly hint = document.createElement('span');
+  private readonly tip = document.createElement('div');
+  private readonly go = document.createElement('button');
+  /** '여기로 이동' on a card for a place the player is not standing in */
+  onGo: (lm: Landmark) => void = () => {};
   private current: Landmark | null = null;
   private timer = 0;
   private manual = false;
@@ -41,13 +51,16 @@ export class PlacePanel {
     const head = document.createElement('div'); head.className = 'head';
     this.cat.className = 'cat'; this.ko.className = 'ko'; this.fr.className = 'fr';
     head.append(this.cat, this.ko, this.fr);
-    this.facts.className = 'facts'; this.desc.className = 'desc'; this.pos.className = 'pos';
+    this.facts.className = 'facts'; this.desc.className = 'desc'; this.pos.className = 'pos'; this.tip.className = 'tip';
     const foot = document.createElement('div'); foot.className = 'foot';
     this.wiki.className = 'wiki'; this.wiki.target = '_blank'; this.wiki.rel = 'noopener'; this.wiki.textContent = 'W 위키백과';
     this.wiki.addEventListener('click', e => e.stopPropagation());
     this.hint.className = 'hint'; this.hint.innerHTML = touch ? '탭하여 접기' : '<kbd>I</kbd> 접기';
-    foot.append(this.wiki, this.hint);
-    this.card.append(this.img, this.cap, head, this.facts, this.desc, this.pos, foot);
+    this.go.type = 'button'; this.go.className = 'go'; this.go.textContent = '여기로 이동'; this.go.hidden = true;
+    this.go.addEventListener('click', e => { e.stopPropagation(); if (this.current) this.onGo(this.current); });
+    this.go.addEventListener('pointerdown', e => e.stopPropagation());
+    foot.append(this.wiki, this.go, this.hint);
+    this.card.append(this.img, this.cap, head, this.facts, this.desc, this.tip, this.pos, foot);
     r.append(this.chip, this.card);
     // touch: the chip expands to the card and the card (outside the link) folds back
     this.chip.addEventListener('pointerdown', e => { e.stopPropagation(); this.setMode('card', true); });
@@ -80,6 +93,7 @@ export class PlacePanel {
         this.cap.textContent = `사진: ${lm.image.artist ?? 'Wikimedia Commons'}${lm.image.license ? ` · ${lm.image.license}` : ''}`; this.cap.hidden = false;
       } else { this.img.removeAttribute('src'); this.img.hidden = true; this.cap.hidden = true; }
       if (lm.links.wiki) { this.wiki.href = lm.links.wiki.url; this.wiki.hidden = false; } else this.wiki.hidden = true;
+      const tip = TIPS[lm.id]; this.tip.textContent = tip ?? ''; this.tip.hidden = !tip;
     }
     this.root.hidden = false;
     this.manual = reason === 'manual';
@@ -99,6 +113,7 @@ export class PlacePanel {
       const cd = this.current === lm ? dist : Math.hypot(this.current.x - px, this.current.z - pz);
       const cdir = this.current === lm ? dir : relativeDir(yaw, bearingDeg(px, pz, this.current.x, this.current.z));
       this.pos.textContent = inside && this.current === lm && cd < 25 ? '이곳에 있습니다' : `여기서 ${fmtDistance(cd)} · ${cdir}`;
+      this.go.hidden = inside && this.current === lm;
     }
     if (this.root.hidden) { this.root.hidden = false; this.setMode('chip'); }
     // while folded, the chip follows the live landmark; an open card keeps what was opened

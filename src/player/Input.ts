@@ -31,6 +31,9 @@ export class Input {
       const t = e.target as HTMLElement | null;
       const inField = !!t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA');
       if (!inField) this.keys.add(e.code); // a focused slider/button keeps its arrow keys; shortcuts still fire
+      // typing in a text box (the landmark search) must not fire single-letter shortcuts; Esc still closes the panel
+      const typing = !!t && ((t.tagName === 'INPUT' && !['range', 'checkbox', 'button'].includes((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+      if (typing && e.code !== 'Escape') return;
       for (const h of this.onKeyHandlers) h(e.code, e);
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
