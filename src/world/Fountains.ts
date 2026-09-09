@@ -8,7 +8,8 @@ export interface FountainSite { name: string; x: number; y: number; z: number; j
 /**
  * Fountain jets as parabolic particle streams (one Points draw call): each droplet is launched from its nozzle with a
  * small spread, follows gravity for its flight time and respawns in phase. Bigger toward the top of the arc where the
- * water breaks up; floodlit-bright at night like the Trocadéro fountains.
+ * water breaks up. At night the basins' underwater floodlights light the spray from below - warm white at the
+ * nozzle, dim mist at the top of the arc - instead of the flat white that read as snow under the night exposure.
  */
 export class Fountains {
   readonly group = new THREE.Group();
@@ -50,7 +51,7 @@ export class Fountains {
       uniforms: { uTime: buildingUniforms.uTime, uNight: buildingUniforms.uNight },
       transparent: true, depthWrite: false,
       vertexShader: /* glsl */`
-        attribute vec3 aVel; attribute vec2 aPh; uniform float uTime; uniform float uNight; varying float vA; varying float vT;
+        attribute vec3 aVel; attribute vec2 aPh; uniform float uTime; uniform float uNight; varying float vA; varying float vT; varying float vH; varying float vS;
         void main() {
           float T = max(0.2, aPh.y);
           float t = fract(uTime / T + aPh.x) * T;
@@ -58,18 +59,24 @@ export class Fountains {
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           float d = max(1.0, -mv.z);
           vT = t / T;
+          vH = clamp((p.y - position.y) / max(0.3, aVel.y * aVel.y / 19.62), 0.0, 1.0);   // height along the arc, 0 nozzle .. 1 apex
+          vS = fract(aPh.x * 7.31);
           gl_PointSize = clamp(220.0 / d, 1.5, 9.0) * (0.6 + 0.9 * vT);
           vA = (0.55 - 0.3 * vT) * (1.0 - smoothstep(250.0, 600.0, d));
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: /* glsl */`
-        uniform float uNight; varying float vA; varying float vT;
+        uniform float uNight; varying float vA; varying float vT; varying float vH; varying float vS;
         void main() {
           float r = length(gl_PointCoord - 0.5) * 2.0; if (r > 1.0 || vA <= 0.002) discard;
-          float a = vA * (1.0 - r * r);
-          // white water, a touch of sky blue in the column, floodlit at night
-          vec3 col = mix(vec3(0.78, 0.88, 1.0), vec3(1.0), vT) * (1.0 + 0.6 * uNight);
-          gl_FragColor = vec4(col, a);
+          // day: white water with a touch of sky blue in the column, only as bright as the daylight on it (twilight
+          // spray is grey, not the same white as at noon)
+          vec3 day = mix(vec3(0.78, 0.88, 1.0), vec3(1.0), vT) * (0.22 + 0.78 * pow(1.0 - uNight, 1.6));
+          // night: lit from the basin floodlights, falling off with height, each drop catching the light differently
+          float lit = 0.3 + 0.7 * exp(-vH * 1.6);
+          vec3 night = vec3(1.0, 0.92, 0.76) * lit * (0.7 + 0.5 * vS);
+          float a = vA * pow(1.0 - r * r, 1.5) * mix(1.0, 0.5 + 0.5 * lit, uNight);
+          gl_FragColor = vec4(mix(day, night, uNight), a);
         }`,
     });
     const pts = new THREE.Points(g, mat);
