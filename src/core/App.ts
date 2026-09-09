@@ -201,7 +201,7 @@ export class App {
     this.hud.onClock = () => this.toggleTimePanel();
     this.timePanel = new TimePanel(document.getElementById('timepanel')!);
     this.timePanel.onNow = () => { const t = todayParis(); this.timePanel.stop(); this.env.setDate(t); this.applyDayPresets(); this.setHour(localHour(new Date(), t)); this.hud.toast(`지금 · ${formatHour(this.env.hour)}`, 1500); };
-    this.timePanel.onPlay = rate => { this.timeRate = rate; };
+    this.timePanel.onPlay = rate => { this.timeRate = rate; this.audio.chime = rate === 0; };
     this.timePanel.onWeather = w => this.setWeather(w);
     this.timePanel.onSeason = s => { const t = todayParis(); this.env.setDate(s ? [t[0], s.month, s.day] : t); this.applyDayPresets(); this.hud.toast(s ? `${s.label} · ${s.month}월 ${s.day}일` : '오늘', 1500); };
     { const first = this.world.landmarks.byHotkey(1) ?? this.world.landmarks.list[0]; if (first) this.goTo(first, { instant: true, quiet: true }); }

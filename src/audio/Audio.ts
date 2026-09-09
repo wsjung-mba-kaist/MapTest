@@ -31,6 +31,8 @@ export class AudioEngine {
   private lastKind: StepKind = 'concrete';
   private lastStep = 0;
   muted = false;
+  /** hourly bell allowed (App turns it off during time-lapse playback) */
+  chime = true;
   readonly enabled: boolean;
   readonly debug: boolean;
 
@@ -142,7 +144,8 @@ export class AudioEngine {
     }
     this.sirenClock -= dt * (0.5 + road) * (0.5 + 0.5 * day);
     if (this.sirenClock <= 0 && this.spatial && !this.muted) { this.sirenClock = 180 + Math.random() * 360; this.spatial.siren(x, 0, z); }
-    if (Number.isFinite(this.lastHour) && Math.abs(hour - this.lastHour) < 0.05 && Math.floor(hour) !== Math.floor(this.lastHour) && hour >= 7 && hour < 22.5 && this.spatial && !this.muted) {
+    // the hourly church bell (7-22h, strikes the hour) - not while the clock is being fast-forwarded, or it never stops
+    if (this.chime && Number.isFinite(this.lastHour) && Math.abs(hour - this.lastHour) < 0.05 && Math.floor(hour) !== Math.floor(this.lastHour) && hour >= 7 && hour < 22.5 && this.spatial && !this.muted) {
       const h = Math.floor(hour) % 12 || 12; this.spatial.bell(h, x, 0, z);
     }
     this.lastHour = hour;
