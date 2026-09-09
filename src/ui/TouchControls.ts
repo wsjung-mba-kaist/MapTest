@@ -71,7 +71,7 @@ export class TouchControls {
       } else if (e.pointerId === this.lookId) {
         const dx = e.clientX - this.lookX, dy = e.clientY - this.lookY;
         this.lookX = e.clientX; this.lookY = e.clientY;
-        this.input.look(dx * 0.0045, dy * 0.0045);
+        this.input.look(dx * 0.0045 * this.input.lookScale, dy * 0.0045 * this.input.lookScale);
       }
     });
     const end = (e: PointerEvent) => {

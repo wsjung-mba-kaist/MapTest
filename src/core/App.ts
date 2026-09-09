@@ -18,6 +18,10 @@ import { createRenderer, gpuInfo, hpAdapter, probeHighPerfAdapter } from './Rend
 import { GpuPanel } from '../ui/GpuPanel';
 import { Hud, formatHour, type MenuAction } from '../ui/Hud';
 import { HelpPanel, InfoPanel } from '../ui/Menu';
+import { SettingsPanel } from '../ui/SettingsPanel';
+import { clearPrefs, devicePrefs, loadPrefs, savePrefs } from '../ui/Prefs';
+import { type Prefs } from '../../shared/prefs';
+import { pickQuality, type QualityLevel } from '../../shared/quality';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
 import { buildingUniforms } from '../materials/FacadeMaterial';
@@ -150,6 +154,9 @@ export class App {
       this.world.dsmEnabled = q.get('dsm') === '1' ? true : q.get('dsm') === '0' ? false : !coarse;
       this.world.heroLodOnly = coarse;
       this.noGlide = q.get('glide') === '0' || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+      this.prefs = loadPrefs(coarse);
+      if (!this.prefs.life && !life) this.world.lifeOptions = null;
+      if (q.get('labels') !== '1') this.world.labelsEnabled = this.prefs.labels;
     }
     void this.env.loadHdri('/textures/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr');
     await this.world.load((f, m) => this.hud.progress(f, m));
@@ -157,6 +164,7 @@ export class App {
     this.world.eiffel.enableReflection();
     if (this.world.water) {
       const refl = new WaterReflection(this.renderer, this.world.manifest.waterLevelY + 0.3, window.innerWidth, window.innerHeight);
+      this.reflection = refl;
       this.post.reflection = refl;
       this.world.water.setReflection(refl.target.texture, refl.textureMatrix);
     }
@@ -201,17 +209,20 @@ export class App {
     };
     this.touch = new TouchControls(this.input, hudEl, q.get('touch') === '1');
     if (this.touch.enabled) {
-      // mobile preset: native resolution capped at 1x, no ambient occlusion, no planar reflection, smaller shadow map,
-      // facade details only nearby
-      this.renderer.setPixelRatio(1);
-      this.post.setAo(false);
-      if (this.post.reflection) { this.post.reflection = undefined; this.world.water?.setReflection(null, null, 0); }
+      // mobile preset (the 1x / no AO / no reflection part lives in the device defaults of shared/prefs.ts): smaller
+      // shadow map, facade details only nearby, half the lamp slots
       this.env.sun.shadow.mapSize.set(2048, 2048);
       if (this.env.sun.shadow.map) { this.env.sun.shadow.map.dispose(); this.env.sun.shadow.map = null; }
       this.world.buildings.detailDistance = 320;
       if (this.world.trees) this.world.trees.lodDistance = 160;
       localLights.setBudget(16, 8);   // half the lamp slots: the per-fragment loop is the main mobile cost
     }
+    this.settingsPanel = new SettingsPanel(hudEl, () => this.closeModal(),
+      (p, key) => { this.prefs = p; savePrefs(p); this.applyPrefs(p, [key]); if (key === 'life') this.hud.toast('움직이는 도시: 다음 시작부터 적용됩니다'); },
+      () => { clearPrefs(); this.prefs = devicePrefs(this.touch.enabled); this.applyPrefs(this.prefs); this.settingsPanel.set(this.prefs); this.hud.toast('설정을 기본값으로 되돌렸습니다'); });
+    this.hud.enableMenu('settings', true);
+    this.applyPrefs(this.prefs);
+    this.settingsPanel.set(this.prefs);
     if (q.get('status') === '1') this.hud.setDiagnostics(true);
     if (this.noGlide) this.player.headBob = false;   // prefers-reduced-motion (or ?glide=0): no head bob either
     this.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.loop.stop(); this.hud.fail('그래픽 장치 연결이 끊겼습니다. 다른 탭을 닫고 다시 시도해 보세요.', true); });
@@ -269,6 +280,21 @@ export class App {
       localLights.update(p.x, p.z, n);
     });
     this.loop.add(() => this.updateStatus());
+    this.loop.add((dt, t) => {
+      if (this.autoQualityDone || this.prefs.quality !== 'auto' || !this.post.enabled || !this.input.active) return;
+      if (!this.autoQualityAt) { this.autoQualityAt = t; return; }
+      const settled = this.world.pending === 0 || t - this.autoQualityAt > 25;
+      if (!settled || t - this.autoQualityAt < 3) return;
+      this.frameSamples.push(dt * 1000);
+      if (this.frameSamples.length < 30 || t - this.autoQualityAt < 8) return;
+      const d = pickQuality(this.frameSamples, this.autoLevel, { minSamples: 30 });
+      this.autoQualityDone = true;
+      if (!d.changed) return;
+      this.autoLevel = d.quality;
+      this.post.setQuality(d.quality);
+      if (d.pixelRatio) { this.renderer.setPixelRatio(this.renderer.getPixelRatio() * d.pixelRatio); this.resize(); }
+      this.hud.toast(`화면이 느려 품질을 '${{ high: '높음', medium: '보통', low: '낮음' }[d.quality]}'${d.pixelRatio ? ' · 해상도 0.75×' : ''}으로 낮췄습니다 · 설정에서 변경`, 5000);
+    });
     this.loop.onRender = () => {
       if (this.xr?.presenting) { this.xr.render(); return; }
       this.post.render(1 / 60);
@@ -342,20 +368,27 @@ export class App {
   helpPanel!: HelpPanel;
   infoPanel!: InfoPanel;
   /** the one centred modal that may be open (landmark list, help, info); same pointer-lock contract as the time panel */
-  modal: 'places' | 'help' | 'info' | null = null;
+  modal: 'places' | 'help' | 'info' | 'settings' | null = null;
+  settingsPanel!: SettingsPanel;
+  prefs!: Prefs;
+  private reflection?: WaterReflection;
+  private readonly frameSamples: number[] = [];
+  private autoQualityAt = 0;
+  private autoQualityDone = false;
+  private autoLevel: QualityLevel = 'high';
   openModal(kind: NonNullable<App['modal']>) {
     if (this.modal) this.closeModal(false);
     if (kind === 'places') {
       const p = this.flying ? this.camera.position : this.player.position;
       this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw);
-    } else if (kind === 'help') this.helpPanel.show(); else this.infoPanel.show();
+    } else if (kind === 'help') this.helpPanel.show(); else if (kind === 'settings') this.settingsPanel.show(); else this.infoPanel.show();
     this.modal = kind;
-    this.hud.setModal(true, { places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', info: '닫으면 계속 걷습니다' }[kind]);
+    this.hud.setModal(true, { places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', info: '닫으면 계속 걷습니다', settings: '바뀐 설정은 바로 적용되고 저장됩니다 · 닫으면 계속 걷습니다' }[kind]);
     this.input.unlock();
   }
   /** close the open modal; `relock` grabs the pointer back (false when another panel or the menu takes over) */
   closeModal(relock = true) {
-    if (this.modal === 'places') this.placeList.hide(); else if (this.modal === 'help') this.helpPanel.hide(); else if (this.modal === 'info') this.infoPanel.hide();
+    if (this.modal === 'places') this.placeList.hide(); else if (this.modal === 'help') this.helpPanel.hide(); else if (this.modal === 'info') this.infoPanel.hide(); else if (this.modal === 'settings') this.settingsPanel.hide();
     this.modal = null;
     this.hud.setModal(false);
     if (relock && !this.input.locked && !this.input.touchMode) this.input.lock();
@@ -364,7 +397,7 @@ export class App {
   toggleModal(kind: NonNullable<App['modal']>) { if (this.modal === kind && !this.input.locked) this.closeModal(); else this.openModal(kind); }
   /** H: the help panel; H again while it is open flips the diagnostics readout ("H twice") and closes it. */
   toggleHelp() {
-    if (this.modal === 'help') { const on = !this.hud.diagnostics; this.hud.setDiagnostics(on); this.closeModal(); this.hud.toast(on ? '진단 정보 표시 (H 두 번: 숨김)' : '진단 정보 숨김'); }
+    if (this.modal === 'help') { const on = !this.hud.diagnostics; this.hud.setDiagnostics(on); this.settingsPanel.set({ ...this.prefs, diagnostics: on }); this.closeModal(); this.hud.toast(on ? '진단 정보 표시 (H 두 번: 숨김)' : '진단 정보 숨김'); }
     else this.openModal('help');
   }
   toggleMinimap() {
@@ -380,6 +413,28 @@ export class App {
     else if (a === 'shot') { this.captureRequested = true; }
     else if (a === 'help') this.openModal('help');
     else if (a === 'info') this.openModal('info');
+    else if (a === 'settings') this.openModal('settings');
+  }
+  /** Push preferences into the runtime; `keys` limits it to what changed (a panel edit) — default: everything. */
+  applyPrefs(p: Prefs, keys: (keyof Prefs)[] = Object.keys(p) as (keyof Prefs)[]) {
+    const touch = this.touch?.enabled ?? false;
+    for (const k of keys) {
+      if (k === 'quality') { if (p.quality !== 'auto') this.post.setQuality(p.quality); else if (this.autoQualityDone) { this.autoQualityDone = false; this.autoQualityAt = 0; this.frameSamples.length = 0; } }
+      else if (k === 'ao') this.post.setAo(p.ao);
+      else if (k === 'shadows') { this.renderer.shadowMap.enabled = p.shadows; this.renderer.shadowMap.needsUpdate = true; }
+      else if (k === 'reflection') {
+        const r = this.reflection;
+        if (r) { r.enabled = p.reflection; this.post.reflection = p.reflection ? r : undefined; if (p.reflection) this.world.water?.setReflection(r.target.texture, r.textureMatrix); else this.world.water?.setReflection(null, null, 0); }
+      }
+      else if (k === 'pixelRatio') { this.renderer.setPixelRatio(p.pixelRatio === 'auto' ? Math.min(window.devicePixelRatio || 1, touch ? 1 : 2) : p.pixelRatio); this.resize(); }
+      else if (k === 'sensitivity') this.input.lookScale = p.sensitivity;
+      else if (k === 'fov') { this.camera.fov = p.fov; this.camera.updateProjectionMatrix(); }
+      else if (k === 'headBob') this.player.headBob = p.headBob && !this.noGlide;
+      else if (k === 'volume') this.audio?.setVolume(p.volume);
+      else if (k === 'minimap') { if (this.minimap && this.minimap.visible !== p.minimap) this.minimap.toggle(p.minimap); }
+      else if (k === 'labels') this.world.setLabels(p.labels);
+      else if (k === 'diagnostics') this.hud.setDiagnostics(p.diagnostics);
+    }
   }
   private static readonly WEATHER_LABEL: Record<Weather, string> = { clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' };
   /** the top-right chip: time · weather (· date when it is not today) */

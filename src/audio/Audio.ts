@@ -50,7 +50,7 @@ export class AudioEngine {
     if (!this.ctx) {
       const ctx = new AudioContext();
       this.ctx = ctx;
-      this.master = ctx.createGain(); this.master.gain.value = this.muted ? 0 : 1;
+      this.master = ctx.createGain(); this.master.gain.value = this.muted ? 0 : this.volume;
       const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3; comp.knee.value = 12;
       this.master.connect(comp).connect(ctx.destination);
       this.busAmb = ctx.createGain(); this.busAmb.gain.value = 0.9; this.busAmb.connect(this.master);
@@ -70,8 +70,11 @@ export class AudioEngine {
   setMuted(m: boolean) {
     this.muted = m;
     try { localStorage.setItem(MUTE_KEY, m ? '1' : '0'); } catch { /* no storage */ }
-    if (this.ctx) { this.master.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.05); if (!m) void this.ctx.resume(); }
+    if (this.ctx) { this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.05); if (!m) void this.ctx.resume(); }
   }
+  /** master volume 0..1 (settings); mute stays a separate switch */
+  volume = 1;
+  setVolume(v: number) { this.volume = Math.max(0, Math.min(1, v)); if (this.ctx && !this.muted) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05); }
   toggleMute() { this.setMuted(!this.muted); return this.muted; }
 
   /** 0..1 rain amount (weather). */

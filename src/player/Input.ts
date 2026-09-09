@@ -9,6 +9,8 @@ export class Input {
   yaw = 0;    // radians, 0 = looking toward -z (north); positive turns right
   pitch = 0;  // radians, positive looks up
   sensitivity = 0.0022;
+  /** settings multiplier on every look source (mouse, touch drag, gamepad stick) */
+  lookScale = 1;
   locked = false;
   /** touch UI in charge (no pointer lock on phones) */
   touchMode = false;
@@ -46,7 +48,8 @@ export class Input {
       const dx = e.movementX, dy = e.movementY, m = Math.max(Math.abs(dx), Math.abs(dy));
       if (m > this.maxDelta) this.maxDelta = m;
       if (m > 300) { this.spikes++; return; }
-      this.look(Math.max(-120, Math.min(120, dx)) * this.sensitivity, Math.max(-120, Math.min(120, dy)) * this.sensitivity);
+      const k = this.sensitivity * this.lookScale;
+      this.look(Math.max(-120, Math.min(120, dx)) * k, Math.max(-120, Math.min(120, dy)) * k);
     });
   }
 
@@ -86,7 +89,7 @@ export class Input {
     const dz = (v: number) => { const a = Math.abs(v); if (a < 0.15) return 0; const n = (a - 0.15) / 0.85; return Math.sign(v) * n * n; };
     const lx = dz(gp.axes[0] ?? 0), ly = dz(gp.axes[1] ?? 0), rx = dz(gp.axes[2] ?? 0), ry = dz(gp.axes[3] ?? 0);
     this.gpF = -ly; this.gpS = lx;
-    if (rx || ry) this.look(rx * 2.6 * dt, ry * 1.8 * dt);
+    if (rx || ry) this.look(rx * 2.6 * dt * this.lookScale, ry * 1.8 * dt * this.lookScale);
     this.gpSprint = (gp.buttons[7]?.value ?? 0) > 0.4 || !!gp.buttons[10]?.pressed;
     const map: Record<number, string> = { 0: 'KeyE', 3: 'KeyF', 8: 'KeyM', 9: 'KeyT', 2: 'KeyN', 1: 'KeyH', 4: 'KeyL', 5: 'KeyI' };
     for (const [idxS, code] of Object.entries(map)) {

@@ -126,5 +126,12 @@ export class World {
 
   groundY(x: number, z: number) { return this.heightmap.sample(x, z); }
 
+  /** Floating landmark name tags on / off after the load (settings); the layer is built on first use. */
+  setLabels(on: boolean) {
+    if (on && !this.labels && this.landmarks.baked) { this.labels = new LandmarkLabels(this.landmarks.visible.filter(l => l.id !== 'eiffel'), (x, z) => this.heightmap.sample(x, z)); this.group.add(this.labels.group); }
+    if (this.labels) this.labels.group.visible = on;
+    this.labelsEnabled = on;
+  }
+
   get pending() { return this.terrain.pending + this.buildings.pending; }
 }
