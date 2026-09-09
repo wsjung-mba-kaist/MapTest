@@ -210,7 +210,10 @@ export function buildSlabMesh(polys: Poly[], ox: number, oz: number, groundY: (x
 /**
  * Staircases: every highway=steps way whose midpoint lies in the chunk becomes a flight of boxes from its low end to
  * its high end (risers 16.5 cm, treads >= 26 cm), appended to the slab mesh: treads are slab tops (walkable, paving),
- * risers and flanks are kerb faces (granite). The terrain under the flight stays a ramp, so nothing shows beneath.
+ * risers and flanks are kerb faces (granite). The flight is not a straight ramp between its two ends: the 2 m DTM
+ * bulges and dips under it (the Trocadero slopes buried whole runs of treads and left others floating), so each
+ * tread is lifted onto the rendered ground where the ground is higher than the line, the profile stays monotonic,
+ * and every riser / flank is dropped to the lowest ground under its tread so no daylight shows beneath.
  */
 export function addSteps(out: SlabMesh, steps: StepsWay[], ox: number, oz: number, groundY: (x: number, z: number) => number): number {
   const vert = (x: number, z: number, y: number, flag: number) => { out.pos.push(x - ox, y, z - oz); out.flag.push(flag); return out.pos.length / 3 - 1; };
@@ -223,7 +226,7 @@ export function addSteps(out: SlabMesh, steps: StepsWay[], ox: number, oz: numbe
     if (flip) out.idx.push(ia, ic, ib, ia, id, ic); else out.idx.push(ia, ib, ic, ia, ic, id);
     out.tris += 2;
   };
-  let flights = 0;
+  let flights = 0, lifted = 0, liftMax = 0;
   for (const sw of steps) {
     const pts = sw.pts;
     const mid = pts[Math.floor(pts.length / 2)];
@@ -245,10 +248,23 @@ export function addSteps(out: SlabMesh, steps: StepsWay[], ox: number, oz: numbe
       const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
       return [a[0] + dx * t, a[1] + dz * t, dx / l, dz / l];
     };
+    // ground under each tread: highest and lowest of five samples (centre, both flanks, both ends)
+    const under = (k: number) => {
+      const [cx, cz, ux, uz] = at((k + 0.5) * tread), nx = -uz, nz = ux, hh = Math.max(0.1, h - 0.1);
+      const ys = [groundY(cx, cz), groundY(cx + nx * hh, cz + nz * hh), groundY(cx - nx * hh, cz - nz * hh), groundY(cx - ux * tread * 0.45, cz - uz * tread * 0.45), groundY(cx + ux * tread * 0.45, cz + uz * tread * 0.45)];
+      return [Math.max(...ys), Math.min(...ys)] as const;
+    };
+    const tops: number[] = [], lows: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const [hi, lo] = under(k);
+      const lift = Math.max(yLow + (k + 1) * riser, hi + 0.03);
+      tops.push(Math.max(lift, k ? tops[k - 1] : -Infinity)); lows.push(lo);
+      if (hi + 0.03 > yLow + (k + 1) * riser + 0.02) { lifted++; liftMax = Math.max(liftMax, hi + 0.03 - (yLow + (k + 1) * riser)); }
+    }
     for (let k = 0; k < n; k++) {
       const [x0, z0, ux, uz] = at(k * tread), [x1, z1] = at((k + 1) * tread);
       const nx = -uz, nz = ux;   // right of travel
-      const yT = yLow + (k + 1) * riser, yB = yT - riser - 0.06;
+      const yT = tops[k], yB = Math.min((k ? tops[k - 1] : yLow) - 0.06, lows[k] - 0.1);
       const A: [number, number, number] = [x0 + nx * h, yT, z0 + nz * h], B: [number, number, number] = [x0 - nx * h, yT, z0 - nz * h];
       const C: [number, number, number] = [x1 - nx * h, yT, z1 - nz * h], D: [number, number, number] = [x1 + nx * h, yT, z1 + nz * h];
       quad(A, B, C, D, 0, 1, 0, StreetFlag.Top);                                                        // tread
@@ -259,8 +275,11 @@ export function addSteps(out: SlabMesh, steps: StepsWay[], ox: number, oz: numbe
     }
     flights++;
   }
+  if (lifted) stepStats.lifted += lifted; if (liftMax > stepStats.liftMax) stepStats.liftMax = liftMax;
   return flights;
 }
+/** treads lifted onto the ground and the largest lift, summed over the run (logged by `run`) */
+export const stepStats = { lifted: 0, liftMax: 0 };
 
 /** Insert points along edges longer than maxLen (ring stays closed-by-convention, no repeated last point). */
 export function densify(ring: Ring, maxLen: number): Ring {
@@ -347,7 +366,7 @@ export async function run(_ctx: BakeContext) {
   }
   await fs.writeFile(path.join(OUT_DIR, 'surface.bin'), grid);
   const counts: Record<number, number> = {}; for (const v of grid) counts[v] = (counts[v] ?? 0) + 1;
-  log.info(`streets: ${polys} slabs, ${flights} staircases (of ${input.steps.length} steps ways), ${tris} slab tris, ${kerbs} kerb quads, ${(bytes / 1e6).toFixed(1)} MB, ${empty} empty chunks; surface cells ${JSON.stringify(counts)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  log.info(`streets: ${polys} slabs, ${flights} staircases (of ${input.steps.length} steps ways, ${stepStats.lifted} treads lifted onto the ground, max ${stepStats.liftMax.toFixed(2)} m), ${tris} slab tris, ${kerbs} kerb quads, ${(bytes / 1e6).toFixed(1)} MB, ${empty} empty chunks; surface cells ${JSON.stringify(counts)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   manifest.files.streets = 'streets/{i}_{j}.bin';
   manifest.files.surface = 'surface.bin';
   manifest.counts.sidewalkSlabs = polys; manifest.counts.sidewalkTris = tris;
