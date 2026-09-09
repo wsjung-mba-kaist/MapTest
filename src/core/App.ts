@@ -235,6 +235,7 @@ export class App {
       (p, key) => { this.prefs = p; savePrefs(p); this.applyPrefs(p, [key]); if (key === 'life') this.hud.toast('움직이는 도시: 다음 시작부터 적용됩니다'); },
       () => { clearPrefs(); this.prefs = devicePrefs(this.touch.enabled); this.applyPrefs(this.prefs); this.settingsPanel.set(this.prefs); this.hud.toast('설정을 기본값으로 되돌렸습니다'); });
     this.hud.enableMenu('settings', true);
+    this.hud.enableMenu('night', this.touch.enabled);
     this.applyPrefs(this.prefs);
     this.settingsPanel.set(this.prefs);
     if (q.get('minimap') === '1' && !this.minimap.visible) this.minimap.toggle(true);   // URL wins over the stored default
@@ -330,6 +331,7 @@ export class App {
       // Esc reaches the page only while the pointer is free (locked, the browser eats it): close the top modal first
       if (code === 'Escape') { if (this.gpuPanel.open) this.gpuPanel.hide(); else if (this.modal) this.closeModal(false); }
       if (code === 'KeyH') this.toggleHelp();
+      if (code === 'Menu') this.hud.showOverlay(true);   // touch "...": the pause menu (no pointer lock to release)
       if (code === 'KeyG') this.toggleGpuPanel();
       if (code === 'KeyF') this.toggleFly();
       if (code === 'KeyT') this.toggleTimePanel();
@@ -369,7 +371,10 @@ export class App {
       this.gpuNotice();
       this.audio.ensure();
       this.hud.markStarted(this.touch.enabled ? '탭하면 계속 걷습니다' : undefined);
-      if (this.touch.enabled) { this.input.touchMode = true; this.hud.showOverlay(false); }   // phones: no pointer lock
+      if (this.touch.enabled) {   // phones: no pointer lock
+        this.input.touchMode = true; this.hud.showOverlay(false);
+        try { if (!localStorage.getItem('paris.touchHint')) { localStorage.setItem('paris.touchHint', '1'); this.hud.toast('왼쪽을 눌러 이동 · 끝까지 밀면 달리기 · 오른쪽을 끌어 시점 · ⋯ 메뉴', 7000); } } catch { /* no storage */ }
+      }
       else this.input.lock();
     };
     this.hud.setReady(this.touch.enabled ? '왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 오른쪽 아래 버튼' : undefined);
@@ -379,6 +384,7 @@ export class App {
   /** T while walking: release the pointer (and show the panel) so the slider can be dragged; T again hides it and grabs the pointer back. */
   toggleTimePanel(open = this.input.locked || !this.hud.timePanelOpen) {
     this.hud.toggleTimePanel(open);
+    if (open && this.touch?.enabled) this.placePanel.fold();   // phones: one bottom sheet at a time
     if (open) this.input.unlock();
     else if (!this.input.locked) this.input.lock();
   }
@@ -409,6 +415,7 @@ export class App {
     if (this.modal === 'places') this.placeList.hide(); else if (this.modal === 'help') this.helpPanel.hide(); else if (this.modal === 'info') this.infoPanel.hide(); else if (this.modal === 'settings') this.settingsPanel.hide();
     this.modal = null;
     this.hud.setModal(false);
+    this.canvas.focus();   // keyboard focus leaves the closed panel
     if (relock && !this.input.locked && !this.input.touchMode) this.input.lock();
   }
   /** L / H / menu: open while walking or closed, close when it is the open one */
@@ -432,6 +439,7 @@ export class App {
     else if (a === 'help') this.openModal('help');
     else if (a === 'info') this.openModal('info');
     else if (a === 'settings') this.openModal('settings');
+    else if (a === 'night') this.cycleTime();
   }
   /** Push preferences into the runtime; `keys` limits it to what changed (a panel edit) — default: everything. */
   applyPrefs(p: Prefs, keys: (keyof Prefs)[] = Object.keys(p) as (keyof Prefs)[]) {
@@ -673,6 +681,7 @@ export class App {
 
   toggleFly() {
     this.flying = !this.flying;
+    this.touch?.setFlying(this.flying);
     this.hud.toast(this.flying ? '비행 모드 · Q/E 하강·상승 · F 걷기' : '걷기 모드', 1800);
     if (this.flying) { this.fly.position.copy(this.camera.position); this.fly.speed = 15; }
     // Landing from flight has to find bridge decks and tower floors too: over the river the raw terrain is the

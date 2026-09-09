@@ -107,6 +107,26 @@
     html.touch #overlay .keys { display: none; }
     html.touch #crosshair { display: none; }
     #touch .touch-row button.on { background: rgba(232,194,122,.55); }
+    #touch .touch-row button[hidden] { display: none; }
+    #touch .stick-base.run { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(232,194,122,.25); }
+    /* phones held upright: the landmark card and the time panel become bottom sheets above the button row */
+    @media (orientation: portrait) {
+      html.touch #touch .touch-row { max-width: 84vw; }
+      html.touch #place { z-index: 22; }
+      html.touch #place[data-mode="card"] { left: 10px; right: 10px; top: auto; bottom: calc(66px + env(safe-area-inset-bottom)); width: auto; }
+      html.touch #place .card { max-height: 42vh; }
+      html.touch #place img { height: 110px; }
+      html.touch #timepanel { top: auto; bottom: calc(66px + env(safe-area-inset-bottom)); left: 10px; right: 10px; width: auto; z-index: 23; }
+    }
+    /* short screens (phones held sideways): the pause menu as a two-column grid, and the card / map step aside for it */
+    @media (max-height: 520px) {
+      #overlay .menu { flex-direction: row; flex-wrap: wrap; justify-content: center; width: min(600px, 94vw); gap: 6px; }
+      #overlay .menu button { width: 180px; padding: 7px 12px; font-size: 13px; }
+      #overlay .menu .sep { display: none; }
+      #overlay.pause { gap: 6px; }
+    }
+    html.touch #overlay.pause { background: rgba(8,10,16,.5); }
+    html.touch #hud:has(#overlay.pause:not(.hidden):not(.peek)) :is(#place, #stream, #minimap, #compass) { visibility: hidden; }
     /* landmark card (arrival / proximity) and the landmark list */
     #place { position: absolute; left: 16px; top: 16px; z-index: 20; width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box; font-size: 12px; line-height: 1.5; pointer-events: auto; }
     #place[hidden] { display: none; }

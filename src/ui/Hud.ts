@@ -15,11 +15,12 @@ export function formatHour(hour: number): string {
 }
 
 /** Pause-menu entries (Esc after the start); App maps each action to the same code the shortcut runs. */
-export type MenuAction = 'continue' | 'places' | 'time' | 'settings' | 'share' | 'shot' | 'help' | 'info';
+export type MenuAction = 'continue' | 'places' | 'time' | 'night' | 'settings' | 'share' | 'shot' | 'help' | 'info';
 const MENU: { action: MenuAction; label: string; key: string; sep?: boolean }[] = [
   { action: 'continue', label: '계속 걷기', key: 'Esc' },
   { action: 'places', label: '명소 목록', key: 'L' },
   { action: 'time', label: '시간 · 날씨', key: 'T' },
+  { action: 'night', label: '시간대 순환', key: 'N' },
   { action: 'settings', label: '설정', key: '' },
   { action: 'share', label: '링크 복사', key: 'P', sep: true },
   { action: 'shot', label: '스크린샷 저장', key: 'O' },
@@ -76,7 +77,7 @@ export class Hud {
       const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
       b.append(m.label); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
       b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
-      if (m.action === 'settings') b.hidden = true;   // shown once the settings panel exists
+      if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
       menu.appendChild(b); this.menuButtons.set(m.action, b);
     }
     this.clock?.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });

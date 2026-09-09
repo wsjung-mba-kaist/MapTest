@@ -120,6 +120,8 @@ export class PlacePanel {
     if (this.root.dataset.mode === 'chip' && this.current !== lm && !this.manual) { this.show(lm, 'enter'); this.setMode('chip'); }
   }
 
+  /** fold to the chip (a bottom sheet on phones must give way to the time panel) */
+  fold() { if (!this.root.hidden) this.setMode('chip', true); }
   /** I: card <-> chip (manual card stays until toggled again) */
   toggle() {
     if (!this.current) return;
