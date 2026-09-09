@@ -9,7 +9,7 @@ import { setWet } from '../materials/GroundMaterial';
 import { seasonState } from '../../shared/season';
 import { Rain } from '../render/Rain';
 import { XRMode } from './XR';
-import { todayParis, type Weather } from '../render/Environment';
+import { localHour, todayParis, type Weather } from '../render/Environment';
 import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
 import { AudioEngine } from '../audio/Audio';
@@ -18,6 +18,7 @@ import { createRenderer, gpuInfo, hpAdapter, probeHighPerfAdapter } from './Rend
 import { GpuPanel } from '../ui/GpuPanel';
 import { Hud, formatHour, type MenuAction } from '../ui/Hud';
 import { HelpPanel, InfoPanel } from '../ui/Menu';
+import { TimePanel, WEATHER_LABEL } from '../ui/TimePanel';
 import { SettingsPanel } from '../ui/SettingsPanel';
 import { clearPrefs, devicePrefs, loadPrefs, savePrefs } from '../ui/Prefs';
 import { type Prefs } from '../../shared/prefs';
@@ -61,7 +62,10 @@ export class App {
   touch!: TouchControls;
   readonly tower = new TowerAccess();
   private headlights = true;
-  private weather: Weather = 'clear';
+  weather: Weather = 'clear';
+  timePanel!: TimePanel;
+  /** time-lapse rate (sim seconds per real second), 0 = off */
+  private timeRate = 0;
   private carLights = true;
   private wetFlag = false;
   private rain?: Rain;
@@ -194,6 +198,11 @@ export class App {
     this.hud.onCredit = t => this.infoPanel.addCredit(t);
     this.hud.onMenu = a => this.menuAction(a);
     this.hud.onClock = () => this.toggleTimePanel();
+    this.timePanel = new TimePanel(document.getElementById('timepanel')!);
+    this.timePanel.onNow = () => { const t = todayParis(); this.timePanel.stop(); this.env.setDate(t); this.applyDayPresets(); this.setHour(localHour(new Date(), t)); this.hud.toast(`지금 · ${formatHour(this.env.hour)}`, 1500); };
+    this.timePanel.onPlay = rate => { this.timeRate = rate; };
+    this.timePanel.onWeather = w => this.setWeather(w);
+    this.timePanel.onSeason = s => { const t = todayParis(); this.env.setDate(s ? [t[0], s.month, s.day] : t); this.applyDayPresets(); this.hud.toast(s ? `${s.label} · ${s.month}월 ${s.day}일` : '오늘', 1500); };
     { const first = this.world.landmarks.byHotkey(1) ?? this.world.landmarks.list[0]; if (first) this.goTo(first, { instant: true, quiet: true }); }
 
     // ---- Phase D: minimap, soundscape, touch / gamepad
@@ -279,6 +288,7 @@ export class App {
       localLights.setDynamic(n > 0.05 ? (this.world.life?.dynamicLights(p.x, p.z, this.headlights ? 5 : 0) ?? []) : []);
       localLights.update(p.x, p.z, n);
     });
+    this.loop.add(dt => { if (this.timeRate) { this.env.setHour((this.env.hour + this.timeRate * dt / 3600) % 24); this.hud.setTimeDisplay(this.env.hour); this.refreshClock(); } });
     this.loop.add(() => this.updateStatus());
     this.loop.add((dt, t) => {
       if (this.autoQualityDone || this.prefs.quality !== 'auto' || !this.post.enabled || !this.input.active) return;
@@ -329,7 +339,7 @@ export class App {
       const digit = /^Digit([1-8])$/.exec(code);
       if (digit) { const lm = this.world.landmarks.byHotkey(Number(digit[1])); if (lm) this.goTo(lm); }
     });
-    this.hud.onTimeChange = h => { this.env.setHour(h); this.refreshClock(); };
+    this.hud.onTimeChange = h => { this.timePanel.stop(); this.env.setHour(h); this.refreshClock(); };
     this.applyDayPresets();
     this.applyWeather(false);
     if (this.world.life?.traffic) this.world.life.traffic.lightFx = this.carLights;
@@ -436,12 +446,20 @@ export class App {
       else if (k === 'diagnostics') this.hud.setDiagnostics(p.diagnostics);
     }
   }
-  private static readonly WEATHER_LABEL: Record<Weather, string> = { clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' };
   /** the top-right chip: time · weather (· date when it is not today) */
   refreshClock() {
     const [y, m, d] = this.env.ymd, t = todayParis();
     const today = y === t[0] && m === t[1] && d === t[2];
-    this.hud.setClock(`${formatHour(this.env.hour)} · ${App.WEATHER_LABEL[this.weather]}${today ? '' : ` · ${this.env.dateLabel()}`}`);
+    this.hud.setClock(`${formatHour(this.env.hour)} · ${WEATHER_LABEL[this.weather]}${today ? '' : ` · ${this.env.dateLabel()}`}`);
+  }
+  /** sunrise / sunset ticks, the highlighted weather and season buttons */
+  private refreshTimePanel() {
+    if (!this.timePanel) return;
+    const { sunrise, sunset } = this.env.sunTimes();
+    this.timePanel.setSun(sunrise, sunset);
+    this.timePanel.setWeather(this.weather);
+    const [y, m, d] = this.env.ymd, t = todayParis();
+    this.timePanel.setDate(m, d, y === t[0] && m === t[1] && d === t[2]);
   }
 
   /** 4 Hz: which site the feet are in (with hysteresis + a 0.5 s dwell), the chip text, and a card on entering a new one. */
@@ -499,6 +517,7 @@ export class App {
     ]);
     this.hud.setDateLabel(`${this.env.dateLabel()} · 파리`);
     this.refreshClock();
+    this.refreshTimePanel();
   }
   /** P: copy a link that reproduces this view. */
   async share() {
@@ -507,7 +526,7 @@ export class App {
     this.hud.toast(ok ? '링크를 복사했습니다' : '복사 실패 · 콘솔에 링크를 출력했습니다');
     if (!ok) console.log(url);
   }
-  stepTime(dh: number) { this.setHour(this.env.hour + dh); }
+  stepTime(dh: number) { this.timePanel.stop(); this.setHour(this.env.hour + dh); }
   /** N: jump to the next preset after the current time (dawn, noon, afternoon, sunset, night, late night). */
   /** Weather: sky/sun/fog in Environment, plus wet streets, rain and wind here. */
   applyWeather(toast = true) {
@@ -517,19 +536,21 @@ export class App {
     this.world.trees?.setWind(w === 'rain' ? 1.6 : w === 'overcast' ? 1.1 : 0.7);
     if (this.rain) this.rain.on = w === 'rain';
     this.audio.setRain(w === 'rain' ? 1 : 0);
-    if (toast) this.hud.toast(App.WEATHER_LABEL[w]);
+    if (toast) this.hud.toast(WEATHER_LABEL[w]);
     this.refreshClock();
+    this.timePanel?.setWeather(w);
   }
+  setWeather(w: Weather, toast = true) { this.weather = w; this.applyWeather(toast); }
   cycleWeather() {
     const order: Weather[] = ['clear', 'overcast', 'rain', 'fog'];
-    this.weather = order[(order.indexOf(this.weather) + 1) % order.length];
-    this.applyWeather();
+    this.setWeather(order[(order.indexOf(this.weather) + 1) % order.length]);
   }
 
   cycleTime() {
     const sorted = [...this.hud.presets].sort((a, b) => a.hour - b.hour);
     const h = this.env.hour;
     const next = sorted.find(p => p.hour > h + 0.05) ?? sorted[0];
+    this.timePanel.stop();
     this.setHour(next.hour);
     this.hud.toast(`${next.label} · ${formatHour(next.hour)}`, 1500);
   }

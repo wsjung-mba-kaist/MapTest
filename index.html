@@ -69,6 +69,12 @@
     #timepanel button { flex: 1 1 0; padding: 3px 0; border: 1px solid rgba(255,255,255,.18); border-radius: 5px; background: rgba(255,255,255,.06); color: inherit; font-size: 11px; font-family: inherit; cursor: pointer; }
     #timepanel button:hover { background: rgba(232,194,122,.28); }
     #timepanel .hint { opacity: .55; font-size: 11px; line-height: 1.6; }
+    #timepanel .ticks { position: relative; height: 6px; margin-top: -3px; }
+    #timepanel .ticks i { position: absolute; top: 0; width: 2px; height: 6px; margin-left: -1px; background: var(--gold); opacity: .8; }
+    #timepanel .row.sub { align-items: center; gap: 6px; }
+    #timepanel .row.sub .lbl { flex: none; width: 26px; font-size: 11px; opacity: .6; }
+    #timepanel .row.sub .presets { flex: 1; }
+    #timepanel button.on { background: rgba(232,194,122,.45); border-color: var(--gold); }
     /* bottom centre: lift prompt, toast, streaming counter */
     #toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 25; background: rgba(8,10,16,.8); padding: 8px 14px; border-radius: 8px; font-size: 13px; pointer-events: none; white-space: nowrap; }
     #toast[hidden] { display: none; }
@@ -191,7 +197,7 @@
       <div class="row"><label for="timeslider">시간 <span id="timeval">17:30</span></label><span class="hint" id="datelabel">오늘 · 파리</span></div>
       <input id="timeslider" type="range" min="0" max="24" step="0.1" value="17.5" />
       <div class="presets"></div>
-      <div class="hint"><kbd>,</kbd> <kbd>.</kbd> ±15분 · <kbd>Shift</kbd> ±1시간 · <kbd>N</kbd> 순환</div>
+      <div class="hint"><kbd>,</kbd> <kbd>.</kbd> ±15분 · <kbd>Shift</kbd> ±1시간 · <kbd>N</kbd> 시간대 · <kbd>R</kbd> 날씨</div>
     </div>
     <div id="help">
       <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · 마우스 시점 · <kbd>Shift</kbd> 달리기 · <kbd>1</kbd>–<kbd>8</kbd> 명소 · <kbd>Esc</kbd> 메뉴 · <kbd>H</kbd> 도움말

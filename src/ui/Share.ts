@@ -14,6 +14,7 @@ export function shareUrl(app: App): string {
   q.set('hour', app.env.hour.toFixed(2));
   { const [y, m, d] = app.env.ymd, t = todayParis(); if (y !== t[0] || m !== t[1] || d !== t[2]) q.set('date', `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`); }
   if (app.world.towerKind === 'lattice') q.set('tower', 'lattice');
+  if (app.weather !== 'clear') q.set('weather', app.weather);
   if (app.currentLandmark) q.set('at', app.currentLandmark.id);   // re-opens the landmark card (position params still win)
   return `${location.origin}${location.pathname}?${q.toString()}`;
 }
