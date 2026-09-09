@@ -111,13 +111,13 @@ export class World {
     onProgress(0.8, '거의 다 됐습니다…');
   }
 
-  update(x: number, z: number, time = 0, night = 0, dt = 0, camDir: THREE.Vector3 = DEFAULT_DIR, hour = 12) {
+  update(x: number, z: number, time = 0, night = 0, dt = 0, camDir: THREE.Vector3 = DEFAULT_DIR, hour = 12, camY = 60) {
     this.terrain.update(x, z);
     this.life?.update(dt, x, z, camDir, night, hour);
     this.marks?.update(x, z);
     this.streets?.update(x, z);
     this.furniture?.update(night, time);
-    this.eiffel?.update(night, time);
+    this.eiffel?.update(night, time, x, camY, z);
     for (const m of this.heroModels) m.update(night, x, z);
     this.buildings.update(x, z, time);
     this.trees?.update(x, z, time);

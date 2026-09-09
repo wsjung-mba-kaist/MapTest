@@ -26,6 +26,7 @@ export class Eiffel {
   private materials: THREE.MeshStandardMaterial[] = [];
   private sparkles?: THREE.Points;
   private beacon?: THREE.Sprite;
+  private glare?: THREE.Sprite;
   private beams?: THREE.Group;
   private readonly uniforms = { uNight: { value: 0 }, uTime: { value: 0 }, uTowerLit: { value: 0 }, uSparkle: { value: 0 }, uCentre: { value: new THREE.Vector3() }, uBeam: { value: 0 } };
   /** floodlights on (0/1, from shared/nightlife towerLit) and the hourly sparkle (0/1); set by App every frame */
@@ -177,18 +178,26 @@ export class Eiffel {
     this.group.add(this.sparkles);
   }
 
+  /**
+   * Two point lights at the summit: the red aviation obstruction light (a small flashing dot, on all night) and
+   * the lighthouse lamp head, a blue-white glare that flares only while one of the beams sweeps toward the viewer.
+   * Both are tiny sprites - the old 14 m white ball read as a moon stuck on the antenna.
+   */
   private addBeacon() {
-    const c = document.createElement('canvas'); c.width = c.height = 64;
-    const ctx = c.getContext('2d')!;
-    const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.25, 'rgba(255,245,220,0.8)'); grd.addColorStop(1, 'rgba(255,240,200,0)');
-    ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 64);
-    const tex = new THREE.CanvasTexture(c);
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
-    this.beacon = new THREE.Sprite(mat);
-    this.beacon.position.set(this.centre.x, this.top + 1.5, this.centre.z);
-    this.beacon.scale.setScalar(14);
-    this.group.add(this.beacon);
+    const glow = (r: number, g: number, b: number) => {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const ctx = c.getContext('2d')!;
+      const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grd.addColorStop(0, `rgba(255,255,255,1)`); grd.addColorStop(0.18, `rgba(${r},${g},${b},0.9)`); grd.addColorStop(0.5, `rgba(${r},${g},${b},0.25)`); grd.addColorStop(1, `rgba(${r},${g},${b},0)`);
+      ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(c);
+    };
+    const sprite = (tex: THREE.Texture, size: number, y: number) => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
+      s.position.set(this.centre.x, y, this.centre.z); s.scale.setScalar(size); this.group.add(s); return s;
+    };
+    this.beacon = sprite(glow(255, 40, 30), 3.2, this.top + 1.2);
+    this.glare = sprite(glow(190, 215, 255), 7, this.top + 2.0);
   }
 
   /**
@@ -251,7 +260,7 @@ export class Eiffel {
   /** The whole tower (mesh, sparkles, beacon) shows in the river. */
   enableReflection() { this.group.traverse(o => o.layers.enable(REFLECT_LAYER)); }
 
-  update(night: number, time: number) {
+  update(night: number, time: number, camX = 0, camY = 60, camZ = 0) {
     const on = night * this.lit;
     this.uniforms.uNight.value = night; this.uniforms.uTime.value = time;
     this.uniforms.uTowerLit.value = on; this.uniforms.uSparkle.value = this.sparkle * this.lit;
@@ -266,7 +275,16 @@ export class Eiffel {
     // the lighthouse turns with the floodlights on; the aviation beacon stays on all night, lights or not
     this.uniforms.uBeam.value = on;
     if (this.beams) { this.beams.visible = on > 0.01; this.beams.rotation.y = -(time % BEAM_PERIOD) / BEAM_PERIOD * Math.PI * 2; }
-    if (this.beacon) (this.beacon.material as THREE.SpriteMaterial).opacity = night * (0.5 + 0.5 * Math.abs(Math.sin(time * 1.6)));
+    // red obstruction light: a short flash every 1.5 s, faint in between (the lamp never goes fully dark)
+    if (this.beacon) (this.beacon.material as THREE.SpriteMaterial).opacity = night * ((time % 1.5) < 0.22 ? 1 : 0.18);
+    // lamp-head glare: how squarely either beam is aimed at the camera
+    if (this.glare && this.beams) {
+      const dx = camX - this.centre.x, dy = camY - (this.top + 2), dz = camZ - this.centre.z, l = Math.hypot(dx, dy, dz) || 1;
+      const yaw = this.beams.rotation.y, cosE = Math.cos(THREE.MathUtils.degToRad(BEAM_ELEV)), sinE = Math.sin(THREE.MathUtils.degToRad(BEAM_ELEV));
+      let best = 0;
+      for (const d of [0, Math.PI]) { const bx = Math.cos(yaw + d) * cosE, bz = -Math.sin(yaw + d) * cosE; best = Math.max(best, (bx * dx + sinE * dy + bz * dz) / l); }
+      (this.glare.material as THREE.SpriteMaterial).opacity = on * (0.12 + 0.88 * Math.pow(Math.max(0, best), 24));
+    }
   }
 
   /** Coarse parametric lattice tower used only when the baked model is missing. */

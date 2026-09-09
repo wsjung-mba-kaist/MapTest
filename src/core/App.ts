@@ -281,7 +281,7 @@ export class App {
       this.world.labels?.update(p.x, p.z, this.currentLandmark?.id ?? null);
     });
     const camDir = new THREE.Vector3();
-    this.loop.add((dt, t) => { this.camera.getWorldDirection(camDir); this.world.update(this.camera.position.x, this.camera.position.z, t, this.env.night, dt, camDir, this.env.hour); });
+    this.loop.add((dt, t) => { this.camera.getWorldDirection(camDir); this.world.update(this.camera.position.x, this.camera.position.z, t, this.env.night, dt, camDir, this.env.hour, this.camera.position.y); });
     this.rain = new Rain(); this.scene.add(this.rain.points);
     this.loop.add((dt, t) => { this.rain?.update(t, this.camera.position, this.env.night, dt); this.world.trees?.setSeason(seasonState(this.env.dayOfYear())); });
     this.loop.add((_dt, t) => { this.env.follow(this.camera.position); this.env.tick(t, this.camera.position); this.post.setNight(this.env.night, this.env.sunElev); buildingUniforms.uHour.value = this.env.hour; });
