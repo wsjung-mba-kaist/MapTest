@@ -321,13 +321,17 @@ function computeParisOffset(ymd: [number, number, number]): number {
   } catch { /* fall through */ }
   return 2;
 }
-/** Date for a local (Paris) hour on a calendar day. */
+/**
+ * Date for a local (Paris) hour on a calendar day. Millisecond precision: this used to round to the minute, and the
+ * time-lapse (x60 = one sim second per frame) added less than half a minute per frame, so every frame rounded back
+ * to the same minute and the clock stood still on any machine faster than ~5 fps.
+ */
 export function localDate(ymd: [number, number, number], hour: number): Date {
   const h = ((hour % 24) + 24) % 24;
-  return new Date(Date.UTC(ymd[0], ymd[1] - 1, ymd[2]) + Math.round((h - parisOffset(ymd)) * 60) * 60000);
+  return new Date(Date.UTC(ymd[0], ymd[1] - 1, ymd[2]) + Math.round((h - parisOffset(ymd)) * 3600000));
 }
-/** Local (Paris) hour of a Date, 0..24. */
+/** Local (Paris) hour of a Date, 0..24 (milliseconds included, for the same reason). */
 export function localHour(date: Date, ymd: [number, number, number]): number {
-  const h = date.getUTCHours() + parisOffset(ymd) + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const h = date.getUTCHours() + parisOffset(ymd) + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600 + date.getUTCMilliseconds() / 3600000;
   return ((h % 24) + 24) % 24;
 }
