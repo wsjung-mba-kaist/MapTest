@@ -369,6 +369,7 @@ export class App {
     document.addEventListener('pointerlockchange', () => { if (!this.input.touchMode) this.hud.showOverlay(!this.input.locked); });
     this.hud.onStart = () => {
       this.gpuNotice();
+      if (this.modal) this.closeModal(false);   // clicking the scene means "continue": whatever panel was open goes
       this.audio.ensure();
       this.hud.markStarted(this.touch.enabled ? '탭하면 계속 걷습니다' : undefined);
       if (this.touch.enabled) {   // phones: no pointer lock

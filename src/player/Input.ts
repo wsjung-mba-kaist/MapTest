@@ -29,10 +29,13 @@ export class Input {
     window.addEventListener('keydown', e => {
       if (e.repeat) return;
       const t = e.target as HTMLElement | null;
-      const inField = !!t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA');
-      if (!inField) this.keys.add(e.code); // a focused slider/button keeps its arrow keys; shortcuts still fire
+      // A focused slider / button / checkbox keeps its arrow keys while the pointer is free; once the pointer is locked
+      // nothing in the HUD is being edited, so every key is movement again (a checkbox left focused in the settings
+      // panel used to swallow WASD until something else was clicked).
+      const inField = !this.locked && !!t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+      if (!inField) this.keys.add(e.code);
       // typing in a text box (the landmark search) must not fire single-letter shortcuts; Esc still closes the panel
-      const typing = !!t && ((t.tagName === 'INPUT' && !['range', 'checkbox', 'button'].includes((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+      const typing = !this.locked && !!t && ((t.tagName === 'INPUT' && !['range', 'checkbox', 'button'].includes((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
       if (typing && e.code !== 'Escape') return;
       for (const h of this.onKeyHandlers) h(e.code, e);
     });
@@ -40,7 +43,7 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.el;
-      if (this.locked) { this.lockedAt = performance.now(); this.maxDelta = 0; this.spikes = 0; }
+      if (this.locked) { this.lockedAt = performance.now(); this.maxDelta = 0; this.spikes = 0; (document.activeElement as HTMLElement | null)?.blur?.(); }
       if (!this.locked) this.keys.clear();
     });
     document.addEventListener('mousemove', e => {
