@@ -6,7 +6,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { buildLattice } from './EiffelLattice';
 
 /** lighthouse beams: length rendered (m), half-width at the lamp and at the far end (m), elevation (deg), seconds per turn */
-const BEAM_LEN = 1600, BEAM_W0 = 3.0, BEAM_W1 = 64, BEAM_ELEV = 3, BEAM_PERIOD = 40;
+const BEAM_LEN = 1600, BEAM_W0 = 2.2, BEAM_W1 = 70, BEAM_ELEV = 3, BEAM_PERIOD = 40;
 
 interface EiffelMeta { kind?: 'scan' | '3dmr'; textured?: boolean; top?: number; height?: number; centre?: [number, number]; author?: string; license?: string; source?: string; title?: string }
 
@@ -210,18 +210,31 @@ export class Eiffel {
       g.setIndex(idx);
       return g;
     };
+    // What the eye sees is haze lit by the lamp, so the shaft is a pale blue-white, soft-edged, and much brighter
+    // when the beam is coming toward the viewer (forward scattering) than when it is going away; the intensity
+    // stays low so additive blending never saturates to white - the photos show a translucent veil, not a bar.
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uBeam: this.uniforms.uBeam }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+      uniforms: { uBeam: this.uniforms.uBeam, uTime: this.uniforms.uTime }, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
       vertexShader: /* glsl */`
-        attribute vec2 st; varying vec2 vSt;
-        void main() { vSt = st; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */`
-        uniform float uBeam; varying vec2 vSt;
+        attribute vec2 st; varying vec2 vSt; varying vec3 vWorld; varying vec3 vDir;
         void main() {
-          // a bright core with a soft haze halo, dimming with distance the way the scattered light does in photos
-          float along = pow(1.0 - vSt.x, 1.25), core = pow(1.0 - abs(vSt.y), 3.0), halo = pow(1.0 - abs(vSt.y), 1.2);
-          float a = uBeam * along * (0.55 * core + 0.35 * halo);
-          gl_FragColor = vec4(vec3(0.86, 0.93, 1.0) * a, a);
+          vSt = st;
+          vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz;
+          vDir = normalize((modelMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+          gl_Position = projectionMatrix * viewMatrix * w;
+        }`,
+      fragmentShader: /* glsl */`
+        uniform float uBeam; uniform float uTime; varying vec2 vSt; varying vec3 vWorld; varying vec3 vDir;
+        void main() {
+          vec3 toCam = normalize(cameraPosition - vWorld);
+          float fwd = dot(vDir, toCam) * 0.5 + 0.5;                     // 1 = the beam is heading at the viewer
+          float scatter = mix(0.18, 1.0, pow(fwd, 3.0));
+          float along = pow(1.0 - vSt.x, 1.6);
+          float core = pow(1.0 - abs(vSt.y), 4.0), halo = pow(1.0 - abs(vSt.y), 1.4);
+          // slow drifting unevenness, as if the haze it lights were patchy
+          float haze = 0.82 + 0.18 * sin(vSt.x * 41.0 - uTime * 0.35) * sin(vSt.x * 9.0 + uTime * 0.11);
+          float a = uBeam * scatter * along * haze * (0.30 * core + 0.22 * halo);
+          gl_FragColor = vec4(vec3(0.70, 0.80, 1.0) * a, a);
         }`,
     });
     this.beams = new THREE.Group();
