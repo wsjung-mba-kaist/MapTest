@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RADII } from '../radii';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { PathGraph } from './PathGraph';
 import type { SimClock } from './SimClock';
@@ -7,19 +6,21 @@ import type { SurfaceGrid } from '../../../shared/surfacegrid';
 import { EdgeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { CLOTH_PALETTE, makePeopleMaterial, walkerGeometry } from './PersonMesh';
+import { AgentPool } from './AgentPool';
 
 const CAP = 48;
 const SPEED_MIN = 4.2, SPEED_MAX = 6.5;
 const PEDESTRIAN_CLASSES = new Set([8, 9, 10, 12]);   // pedestrian, footway, path, cycleway (ROAD_CLASSES order)
+const NO_SPAWN_NEAR = 8;      // never appear this close to the camera (a bike is bigger than a walker, smaller than a car)
+const NO_SPAWN_VIEW = 120;    // ...or within view in front of the camera closer than this
 
 /**
  * Cyclists on the wide car-free ways: park alleys, the Berges de Seine quays, the Champ-de-Mars paths (the driveable
  * graph is left to the cars, whose lane logic does not see bikes). A rider (the walker mesh, idle pose, standing on the
  * pedals) sits on a procedural bicycle; one InstancedMesh with the crowd's material. Deterministic per edge and time.
  */
-export class Cyclists {
+export class Cyclists extends AgentPool {
   readonly group = new THREE.Group();
-  count = 0;
   private readonly mesh: THREE.InstancedMesh;
   private readonly anim: THREE.InstancedBufferAttribute;
   private readonly look: THREE.InstancedBufferAttribute;
@@ -27,15 +28,14 @@ export class Cyclists {
   private readonly edge = new Int32Array(CAP); private readonly dir = new Int8Array(CAP); private readonly seg = new Int32Array(CAP);
   private readonly s = new Float32Array(CAP); private readonly v = new Float32Array(CAP); private readonly lat = new Float32Array(CAP);
   private readonly hx = new Float32Array(CAP); private readonly hz = new Float32Array(CAP); private readonly seed = new Uint32Array(CAP); private readonly hop = new Uint16Array(CAP);
-  readonly px = new Float32Array(CAP); readonly pz = new Float32Array(CAP);
-  private readonly ident = new Array<string>(CAP);
-  private readonly alive = new Set<string>();
-  private readonly seeded = new Set<number>();
+  protected readonly px = new Float32Array(CAP); protected readonly pz = new Float32Array(CAP);
   private readonly tmp = { x: 0, y: 0, z: 0, ux: 0, uz: -1, seg: 0 };
   private readonly M = new THREE.Matrix4(); private readonly color = new THREE.Color();
   private camX = 0; private camZ = 0;
 
   constructor(private readonly graph: PathGraph, private readonly clock: SimClock, private readonly surface: SurfaceGrid | null) {
+    super(CAP, NO_SPAWN_NEAR, NO_SPAWN_VIEW);
+    this.columns(this.edge, this.dir, this.seg, this.s, this.v, this.lat, this.hx, this.hz, this.seed, this.hop, this.px, this.pz);
     this.group.name = 'cyclists';
     const geom = riderGeometry();
     this.anim = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 4), 4); this.anim.setUsage(THREE.DynamicDrawUsage);
@@ -58,10 +58,8 @@ export class Cyclists {
   setActive(edges: number[], x: number, z: number, radius: number) {
     this.camX = x; this.camZ = z;
     const next = new Set(edges.filter(e => this.rideable(e)));
-    const far2 = (radius + RADII.lifeDespawn) ** 2;
-    for (let i = this.count - 1; i >= 0; i--) { const dx = this.px[i] - x, dz = this.pz[i] - z; if (dx * dx + dz * dz > far2) this.remove(i); }
-    for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
-    for (const e of next) if (!this.seeded.has(e)) { this.seedEdge(e); this.seeded.add(e); }
+    this.despawnFar(x, z, radius);
+    this.seedNew(next, e => this.seedEdge(e));
     this.mesh.count = this.count;
   }
 
@@ -79,35 +77,28 @@ export class Cyclists {
       if (this.alive.has(id) || this.count >= CAP) continue;
       const sPos = dir > 0 ? u - lap * L : L - (u - lap * L);
       const seed = (hash32(e, k, lap, 65) * 4294967295) >>> 0;
+      const lat = (hash32(seed, 66) - 0.5) * Math.min(2.0, g.eWidth[e] * 0.4);
+      const p = g.edgePoint(e, sPos, lat, 0, this.tmp);
+      if (this.vetoSpawn(p.x, p.z, this.camX, this.camZ)) continue;   // too close, or in front of the viewer (bikes used to pop in on screen)
       const i = this.count++;
-      this.edge[i] = e; this.dir[i] = dir; this.s[i] = sPos; this.v[i] = speed; this.seg[i] = 0; this.seed[i] = seed; this.hop[i] = 0;
-      this.lat[i] = (hash32(seed, 66) - 0.5) * Math.min(2.0, g.eWidth[e] * 0.4);
+      this.edge[i] = e; this.dir[i] = dir; this.s[i] = sPos; this.v[i] = speed; this.seg[i] = 0; this.seed[i] = seed; this.hop[i] = 0; this.lat[i] = lat;
       this.ident[i] = id; this.alive.add(id);
       this.color.setHex(CLOTH_PALETTE[Math.floor(hash32(seed, 67) * CLOTH_PALETTE.length)]);
       this.mesh.setColorAt(i, this.color);
       this.anim.setXYZW(i, 0, 0, hash32(seed, 68), 0);
       this.look.setXYZW(i, hash32(seed, 40), hash32(seed, 41), hash32(seed, 42), 0);
-      const p = g.edgePoint(e, sPos, this.lat[i], 0, this.tmp);
       this.px[i] = p.x; this.pz[i] = p.z; this.hx[i] = dir * p.ux; this.hz[i] = dir * p.uz;
     }
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     this.anim.needsUpdate = true; this.look.needsUpdate = true;
   }
 
-  private remove(i: number) {
-    const last = this.count - 1;
-    this.alive.delete(this.ident[i]);
-    if (i !== last) {
-      for (const a of [this.edge, this.seg] as Int32Array[]) a[i] = a[last];
-      this.dir[i] = this.dir[last];
-      for (const a of [this.s, this.v, this.lat, this.hx, this.hz, this.px, this.pz] as Float32Array[]) a[i] = a[last];
-      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last];
-      this.mesh.getMatrixAt(last, this.M); this.mesh.setMatrixAt(i, this.M);
-      if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
-      this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
-      this.look.setXYZW(i, this.look.getX(last), this.look.getY(last), this.look.getZ(last), this.look.getW(last));
-    }
-    this.count = last; this.mesh.count = last;
+  protected override remove(i: number) { super.remove(i); this.mesh.count = this.count; }
+  protected override swapInstance(i: number, last: number) {
+    this.mesh.getMatrixAt(last, this.M); this.mesh.setMatrixAt(i, this.M);
+    if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
+    this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
+    this.look.setXYZW(i, this.look.getX(last), this.look.getY(last), this.look.getZ(last), this.look.getW(last));
   }
 
   /** Nearest rider to (x, z) for the debug readout. */
@@ -123,7 +114,8 @@ export class Cyclists {
     for (let i = 0; i < this.count; i++) { const dx = x - this.px[i], dz = z - this.pz[i], d = Math.hypot(dx, dz); if (d < cr && d > 1e-4) { const push = cr - d; out.dx += dx / d * push; out.dz += dz / d * push; } }
   }
 
-  update(dt: number) {
+  update(dt: number, camDir: THREE.Vector3) {
+    this.camDir.copy(camDir);
     this.uniforms.uTime.value = this.clock.time;
     const g = this.graph, a = this.mesh.instanceMatrix.array as Float32Array;
     for (let i = 0; i < this.count; i++) {
@@ -150,7 +142,6 @@ export class Cyclists {
     }
     this.mesh.instanceMatrix.needsUpdate = true;
     this.mesh.count = this.count;
-    void this.camX; void this.camZ;
   }
 }
 

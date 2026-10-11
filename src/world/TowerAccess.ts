@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MODELS_URL } from './DataLoader';
+import { MODELS_URL, fetchJson } from './DataLoader';
 import type { Heightmap } from '../../shared/heightmap';
 
 /**
@@ -24,7 +24,7 @@ export class TowerAccess {
 
   async load(heightmap: Heightmap, sink: CollisionSink) {
     let data: TowerWalkData;
-    try { data = await (await fetch(`${MODELS_URL}/eiffel_walk.json`)).json(); } catch { return; }
+    try { data = await fetchJson<TowerWalkData>(`${MODELS_URL}/eiffel_walk.json`); } catch { return; }
     if (!data.floors?.length || data.pillars?.length < 4) return;
     this.floors = data.floors;
     this.pillars = data.pillars;

@@ -10,7 +10,8 @@ import type { SimClock } from './SimClock';
  * bridge piers). Procedural hulls; cabin windows glow after dusk. Boats face -z at yaw 0.
  */
 interface Loop { pts: Float32Array; cum: Float32Array; length: number }
-interface Boat { hx?: number; hz?: number; mesh: THREE.Group; loop: number; s0: number; speed: number; glass: THREE.MeshStandardMaterial; seed: number }
+/** `hx/hz`: unit heading, set every update; a boat starts facing -z like its hull */
+interface Boat { hx: number; hz: number; mesh: THREE.Group; loop: number; s0: number; speed: number; glass: THREE.MeshStandardMaterial; seed: number }
 
 export class Boats {
   readonly group = new THREE.Group();
@@ -36,7 +37,7 @@ export class Boats {
       for (let k = 0; k < lm.boats; k++) {
         const { mesh, glass } = lm.kind === 'barge' ? barge() : mouche(k);
         this.group.add(mesh);
-        this.boats.push({ mesh, loop: li, s0: (k + 0.37) * loop.length / lm.boats, speed: lm.kind === 'barge' ? 2.2 : 3.0, glass, seed: k * 7 + li * 13 });
+        this.boats.push({ hx: 0, hz: -1, mesh, loop: li, s0: (k + 0.37) * loop.length / lm.boats, speed: lm.kind === 'barge' ? 2.2 : 3.0, glass, seed: k * 7 + li * 13 });
       }
     }
     this.count = this.boats.length;
@@ -57,7 +58,7 @@ export class Boats {
   /** The n nearest boats (engine at the stern). */
   nearest(x: number, z: number, n: number): { x: number; y: number; z: number }[] {
     return this.boats.map(b => ({ b, d2: (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2 })).sort((p, q) => p.d2 - q.d2).slice(0, n)
-      .map(({ b }) => ({ x: b.mesh.position.x - (b.hx ?? 0) * 12, y: b.mesh.position.y + 1, z: b.mesh.position.z - (b.hz ?? -1) * 12 }));
+      .map(({ b }) => ({ x: b.mesh.position.x - b.hx * 12, y: b.mesh.position.y + 1, z: b.mesh.position.z - b.hz * 12 }));
   }
 
   /** Debug readout: position of the first boat. */
@@ -67,7 +68,7 @@ export class Boats {
   dynamicLights(out: LocalLight[], camX: number, camZ: number, maxBoats: number) {
     const order = this.boats.map(b => ({ b, d2: (b.mesh.position.x - camX) ** 2 + (b.mesh.position.z - camZ) ** 2 })).sort((p, q) => p.d2 - q.d2);
     for (const { b } of order.slice(0, maxBoats)) {
-      const hx = b.hx ?? 0, hz = b.hz ?? -1, rx = -hz, rz = hx;   // heading and its right normal
+      const hx = b.hx, hz = b.hz, rx = -hz, rz = hx;   // heading and its right normal
       const p = b.mesh.position;
       for (const side of [-1, 1]) {
         // on the roof at the bow tip, so the cone never touches the boat's own hull

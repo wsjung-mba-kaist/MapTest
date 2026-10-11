@@ -131,8 +131,7 @@ export class PathGraph {
       const e = this.adj[s + k];
       if (e === fromEdge) continue;
       const dir: 1 | -1 = this.eA[e] === node ? 1 : -1;
-      if (dir < 0 && this.isOneway(e) && allowed === this.driveAllowed) continue;
-      if (!allowed(e, dir)) continue;
+      if (!allowed(e, dir)) continue;   // driveAllowed already refuses the wrong way down a one-way street
       // heading of the candidate's first segment
       const v0 = this.eV0[e], nv = this.eNv[e];
       const i = dir > 0 ? v0 : v0 + nv - 1, j = dir > 0 ? v0 + 1 : v0 + nv - 2;

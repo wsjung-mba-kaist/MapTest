@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { assertAnchors } from '../../materials/patch';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SimClock } from './SimClock';
-import { DATA_URL } from '../DataLoader';
+import { DATA_URL, fetchJson } from '../DataLoader';
 import { withLamps } from '../../render/LocalLights';
 
 interface RailLine { name: string; pts: [number, number, number][] }
@@ -26,9 +26,7 @@ export class Metro {
   constructor(private readonly clock: SimClock) { this.group.name = 'metro'; }
 
   async load() {
-    const res = await fetch(`${DATA_URL}/rail.json`);
-    if (!res.ok) throw new Error(`rail.json ${res.status}`);
-    const data = await res.json() as { lines: RailLine[] };
+    const data = await fetchJson<{ lines: RailLine[] }>(`${DATA_URL}/rail.json`);
     const geom = carGeometry();
     // Headlight discs glow through `aEmit` (1 on the discs, 0 elsewhere): the emissive term is white × emissiveIntensity
     // (= night) × the vertex colour, so the body never glows and the discs fade in with dusk.
@@ -91,9 +89,7 @@ export class Metro {
       const { s, v } = this.headAt(tr.len, time + tr.offset);
       const sign = v >= 0 ? 1 : -1;
       for (let c = 0; c < CARS; c++) {
-        const sc = s - sign * c * (CAR_LEN + CAR_GAP) * (v >= 0 ? 1 : -1) * 1;   // cars trail the head
-        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);
-        void sc;
+        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);   // cars trail the head
         // the car faces -z at yaw 0: yaw = atan2(-hx, -hz); when running backwards flip the heading so headlights lead
         const hx = dir.x * sign, hz = dir.z * sign;
         this.Q.setFromAxisAngle(this.up, Math.atan2(-hx, -hz));
