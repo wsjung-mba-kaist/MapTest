@@ -9,7 +9,7 @@ import { triangulateCap } from './extrude.ts';
 import { frame } from '../../shared/geo.ts';
 import { SurfaceFlag, WORLD_HALF } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
-import { area, centroid, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, bufferLine, centroid, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
 
 const DECK_THICK = 2.2;
 const PARAPET_H = 1.05;
@@ -46,24 +46,6 @@ function toWorldPolys(geom: Polygon | MultiPolygon): Poly[] {
   const push = (c: number[][][]) => { const rings = c.map(toWorldRing).filter(r => r.length >= 3); if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]); };
   if (geom.type === 'Polygon') push(geom.coordinates); else geom.coordinates.forEach(push);
   return out;
-}
-
-/** Buffer a polyline into a polygon of the given width (union of per-segment quads + round-ish joints). */
-function bufferLine(line: Pt[], width: number): Poly[] {
-  const h = width / 2;
-  const quads: Poly[] = [];
-  for (let i = 0; i + 1 < line.length; i++) {
-    const [ax, az] = line[i], [bx, bz] = line[i + 1];
-    const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
-    if (len < 0.01) continue;
-    const nx = (-dz / len) * h, nz = (dx / len) * h;
-    quads.push([[[ax + nx, az + nz], [bx + nx, bz + nz], [bx - nx, bz - nz], [ax - nx, az - nz]]]);
-    if (i + 2 < line.length) { // joint disc
-      const disc: Ring = []; for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; disc.push([bx + Math.cos(a) * h, bz + Math.sin(a) * h]); }
-      quads.push([disc]);
-    }
-  }
-  return unionAll(quads);
 }
 
 function roadWidth(tags: Record<string, string>): number {
