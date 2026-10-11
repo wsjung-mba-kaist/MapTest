@@ -183,20 +183,30 @@ export async function run(ctx: BakeContext) {
   await ensureDir(geoDir);
   const summaryFile = path.join(geoDir, 'summary.json');
   const summary: Record<string, unknown> = await exists(summaryFile) ? await readJson(summaryFile) : {};
+  const failed: string[] = [];
   for (const theme of Object.keys(THEMES)) {
     const out = path.join(geoDir, `${theme}.geojson`);
     if (!ctx.force && await exists(out) && !(TILED_THEMES.has(theme) && await tiledIncomplete(theme))) { log.info(`osm ${theme}: cached`); continue; }
-    const { raw } = TILED_THEMES.has(theme) ? await fetchThemeTiled(theme, ctx.force) : await fetchTheme(theme, ctx.force);
-    const fc = osmtogeojson(raw) as FeatureCollection<Geometry, OsmProps>;
-    const tainted = fc.features.filter(f => (f.properties as any)?.tainted).length;
-    if (tainted) log.warn(`osm ${theme}: ${tainted} tainted (incomplete) features`);
-    const byType: Record<string, number> = {};
-    for (const f of fc.features) byType[f.geometry.type] = (byType[f.geometry.type] ?? 0) + 1;
-    log.info(`osm ${theme}: ${fc.features.length} features`, JSON.stringify(byType));
-    summary[theme] = { count: fc.features.length, byType, timestamp: raw.osm3s?.timestamp_osm_base, coverage: raw.coverage };
-    await writeJson(out, fc);
+    try {
+      const { raw } = TILED_THEMES.has(theme) ? await fetchThemeTiled(theme, ctx.force) : await fetchTheme(theme, ctx.force);
+      const fc = osmtogeojson(raw) as FeatureCollection<Geometry, OsmProps>;
+      const tainted = fc.features.filter(f => (f.properties as any)?.tainted).length;
+      if (tainted) log.warn(`osm ${theme}: ${tainted} tainted (incomplete) features`);
+      const byType: Record<string, number> = {};
+      for (const f of fc.features) byType[f.geometry.type] = (byType[f.geometry.type] ?? 0) + 1;
+      log.info(`osm ${theme}: ${fc.features.length} features`, JSON.stringify(byType));
+      summary[theme] = { count: fc.features.length, byType, timestamp: raw.osm3s?.timestamp_osm_base, coverage: raw.coverage };
+      await writeJson(out, fc);
+      // summary.json goes out after every theme, not once after the loop: a theme that failed later used to take the
+      // timestamps of the ones already written down with it, and the next `build` stamped manifest.osmTimestamp
+      // undefined although buildings.geojson was fresh. The other themes keep going so one flaky query costs one theme.
+      await writeJson(summaryFile, summary);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failed.push(`${theme}: ${msg}`); log.warn(`osm ${theme}: failed (${msg.split('\n')[0]})`);
+    }
     // Be polite between themes.
     await sleep(2000);
   }
-  if (Object.keys(summary).length) await writeJson(summaryFile, summary);
+  if (failed.length) throw new Error(`osm: ${failed.length} of ${Object.keys(THEMES).length} themes failed\n  ${failed.join('\n  ')}`);
 }
