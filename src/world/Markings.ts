@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { assertAnchors } from '../materials/patch';
 import { RADII } from './radii';
-import { GRID_N, MarkKind, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
+import { ChunkRadius } from './ChunkRadius';
+import { MarkKind, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 
@@ -15,10 +16,9 @@ export class Markings {
   readonly material: THREE.MeshStandardMaterial;
   private readonly loader = new PriorityLoader(3);
   private readonly meshes = new Map<string, THREE.Mesh | null>();
-  private readonly requested = new Set<string>();
+  /** the chunks requested so far: inside = a fetch is queued, in flight or landed */
+  readonly radius = new ChunkRadius(RADII.marksLoad, RADII.marksUnload);
   private playerX = 0; private playerZ = 0;
-  loadDistance: number = RADII.marksLoad;
-  unloadDistance: number = RADII.marksUnload;
   count = 0;
   lastError = '';
 
@@ -54,44 +54,41 @@ export class Markings {
     withLamps(this.material);
   }
 
-  get requestedCount() { return this.requested.size; }
-  get stats() { return `marks ${this.count}/${this.requested.size}${this.lastError ? ' ERR ' + this.lastError : ''}`; }
+  get requestedCount() { return this.radius.count; }
+  get stats() { return `marks ${this.count}/${this.radius.count}${this.lastError ? ' ERR ' + this.lastError : ''}`; }
 
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
     this.loader.reprioritise();
-    const ld2 = this.loadDistance ** 2, ud2 = this.unloadDistance ** 2;
-    for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
-      const k = chunkKey(i, j);
-      const cx = chunkCentreX(i), cz = chunkCentreZ(j);
-      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
-      if (d2 < ld2 && !this.requested.has(k)) {
-        this.requested.add(k);
-        const o = chunkOrigin(i, j);
-        this.loader.add(k, () => (cx - this.playerX) ** 2 + (cz - this.playerZ) ** 2, async () => {
-          try {
-            const bm = await loadBinMesh(`${DATA_URL}/marks/${k}.bin`);
-            if (!this.requested.has(k)) return;   // unloaded while the fetch was in flight: drop it
-            const s = bm.sections.get('marks');
-            if (!s) { this.meshes.set(k, null); return; }
-            const m = new THREE.Mesh(s.geometry, this.material);
-            m.position.set(o.x, 0, o.z); m.matrixAutoUpdate = false; m.updateMatrix();
-            m.renderOrder = 2; m.receiveShadow = true; m.castShadow = false; m.frustumCulled = true;
-            m.name = `marks_${k}`;
-            this.group.add(m);
-            this.meshes.set(k, m);
-            this.count++;
-          } catch (e) {
-            this.lastError = `${k}: ${String((e as Error)?.message ?? e).slice(0, 80)}`;
-            console.warn('marks load failed', k, e);
-          }
-        });
-      } else if (d2 > ud2 && this.requested.has(k)) {
-        const m = this.meshes.get(k);
-        if (m) { this.group.remove(m); m.geometry.dispose(); this.count--; }
-        else this.loader.cancel(k);   // still queued: take the request back so it can be re-issued later
-        this.meshes.delete(k); this.requested.delete(k);
+    this.radius.update(x, z, (i, j) => this.request(i, j), (i, j) => this.drop(i, j));
+  }
+
+  private request(i: number, j: number) {
+    const k = chunkKey(i, j), o = chunkOrigin(i, j), cx = chunkCentreX(i), cz = chunkCentreZ(j);
+    this.loader.add(k, () => (cx - this.playerX) ** 2 + (cz - this.playerZ) ** 2, async () => {
+      try {
+        const bm = await loadBinMesh(`${DATA_URL}/marks/${k}.bin`);
+        if (!this.radius.has(i, j)) return;   // unloaded while the fetch was in flight: drop it
+        const s = bm.sections.get('marks');
+        if (!s) { this.meshes.set(k, null); return; }
+        const m = new THREE.Mesh(s.geometry, this.material);
+        m.position.set(o.x, 0, o.z); m.matrixAutoUpdate = false; m.updateMatrix();
+        m.renderOrder = 2; m.receiveShadow = true; m.castShadow = false; m.frustumCulled = true;
+        m.name = `marks_${k}`;
+        this.group.add(m);
+        this.meshes.set(k, m);
+        this.count++;
+      } catch (e) {
+        this.lastError = `${k}: ${String((e as Error)?.message ?? e).slice(0, 80)}`;
+        console.warn('marks load failed', k, e);
       }
-    }
+    });
+  }
+
+  private drop(i: number, j: number) {
+    const k = chunkKey(i, j), m = this.meshes.get(k);
+    if (m) { this.group.remove(m); m.geometry.dispose(); this.count--; }
+    else this.loader.cancel(k);   // still queued: take the request back so it can be re-issued later
+    this.meshes.delete(k);
   }
 }

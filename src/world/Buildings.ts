@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RADII } from './radii';
+import { ChunkRadius } from './ChunkRadius';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GRID_N, chunkKey, chunkOrigin, chunkCentreX, chunkCentreZ } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader, type LoadedBinMesh } from './DataLoader';
@@ -12,6 +13,7 @@ import { localLights } from '../render/LocalLights';
 type RoofTopMaterial = ReturnType<typeof createRoofTopMaterial>;
 const SKIP_ALT: ReadonlySet<string> = new Set(['roofs_alt', 'tops_alt']);
 const SKIP_DSM: ReadonlySet<string> = new Set(['dsm']);
+const noop = () => {};
 
 export interface BuildingChunk {
   i: number; j: number;
@@ -39,6 +41,8 @@ export class Buildings {
   lodDistance: number = RADII.buildingLod;
   shadowDistance: number = RADII.buildingShadow;
   detailDistance: number = RADII.buildingDetail;      // balconies / cornices / awnings exist only this close
+  /** hysteresis band of the facade details: built inside detailDistance, dropped on leaving 350 m beyond it */
+  private readonly detail = new ChunkRadius(RADII.buildingDetail, RADII.buildingDetailUnload);
   onChunkLoaded: (c: BuildingChunk) => void = () => {};
   /** Supplies the current ortho texture for a chunk (set by World). */
   textureProvider: (i: number, j: number) => THREE.Texture | null = () => null;
@@ -109,7 +113,10 @@ export class Buildings {
     this.playerX = x; this.playerZ = z;
     this.loader.reprioritise();
     buildingUniforms.uTime.value = time;
-    const lod2 = this.lodDistance ** 2, sh2 = this.shadowDistance ** 2;
+    // App moves detailDistance (mobile preset, ?details=0): the drop radius keeps its 350 m band beyond it
+    this.detail.setRadii(this.detailDistance, this.detailDistance + (RADII.buildingDetailUnload - RADII.buildingDetail));
+    this.detail.update(x, z, noop, (i, j) => { const c = this.chunks.get(chunkKey(i, j)); if (c) this.dropChunkDetails(c); });
+    const lod2 = this.lodDistance ** 2, sh2 = this.shadowDistance ** 2, det2 = this.detailDistance ** 2;
     let next: BuildingChunk | null = null, nextD2 = Infinity;
     for (const c of this.chunks.values()) {
       if (!c.loaded) continue;
@@ -118,19 +125,20 @@ export class Buildings {
       if (c.lod0.visible !== near) { c.lod0.visible = near; c.lod1.visible = !near; }
       const shadows = d2 < sh2;
       for (const m of c.shadowMeshes) if (m.castShadow !== shadows) m.castShadow = shadows;
-      // Facade details: build lazily near the viewer (one chunk per frame, nearest first), drop them again far away.
-      if (c.details === undefined && d2 < this.detailDistance ** 2 && c.walls) {
-        if (d2 < nextD2) { next = c; nextD2 = d2; }
-      } else if ((c.details || c.roof) && d2 > (this.detailDistance + (RADII.buildingDetailUnload - RADII.buildingDetail)) ** 2) {
-        // `c.details` is null for a chunk without facade work, so the roof furniture has to be checked on its own or
-        // its chimney / dormer instances stay resident for the session
-        if (c.details) { c.lod0.remove(...c.details.meshes); c.details.dispose(); localLights.removeLights(`shop:${chunkKey(c.i, c.j)}`); }
-        c.details = undefined;
-        if (c.roof) { c.lod0.remove(...c.roof.meshes); disposeRoofDetails(c.roof); }
-        c.roof = undefined;
-      }
+      // Facade details: build lazily near the viewer (one chunk per frame, nearest first); `detail` drops them again far away.
+      if (c.details === undefined && d2 < det2 && c.walls && d2 < nextD2) { next = c; nextD2 = d2; }
     }
     if (next) this.buildChunkDetails(next);
+  }
+
+  private dropChunkDetails(c: BuildingChunk) {
+    // `c.details` is null for a chunk without facade work, so the roof furniture has to be checked on its own or
+    // its chimney / dormer instances stay resident for the session
+    if (!c.details && !c.roof) return;
+    if (c.details) { c.lod0.remove(...c.details.meshes); c.details.dispose(); localLights.removeLights(`shop:${chunkKey(c.i, c.j)}`); }
+    c.details = undefined;
+    if (c.roof) { c.lod0.remove(...c.roof.meshes); disposeRoofDetails(c.roof); }
+    c.roof = undefined;
   }
 
   private buildChunkDetails(c: BuildingChunk) {
@@ -141,7 +149,9 @@ export class Buildings {
       c.roofLoading = true;
       void fetchBuffer(`${DATA_URL}/details/${chunkKey(c.i, c.j)}.bin`).then(buf => {
         c.roofLoading = false;
-        if (c.details === undefined) return;   // the player left while the file was in flight: the unload branch ran, build nothing
+        // The player left while the file was in flight: the drop ran (details reset) or, for a chunk with no facade work
+        // (details null), never had anything to drop — either way build nothing, as the next frame would have dropped it.
+        if (c.details === undefined || !this.detail.has(c.i, c.j)) { c.details = undefined; return; }
         c.roof = buildRoofDetails(new Float32Array(buf), new THREE.Vector3(o.x, 0, o.z));
         if (c.roof) c.lod0.add(...c.roof.meshes);
       }).catch(() => { c.roofLoading = false; c.roof = null; });
