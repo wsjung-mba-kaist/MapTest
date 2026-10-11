@@ -1,4 +1,5 @@
 import type { Weather } from '../render/Environment';
+import { required } from './dom';
 
 export const WEATHER_LABEL: Record<Weather, string> = { clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' };
 /** Season presets: a representative day each (leaves: mid-April budding, mid-October colour, mid-January bare). */
@@ -25,9 +26,8 @@ export class TimePanel {
   onSeason: (s: { label: string; month: number; day: number } | null) => void = () => {};
 
   constructor(panel: HTMLElement) {
-    const slider = panel.querySelector('#timeslider');
     this.ticks.className = 'ticks';
-    slider?.after(this.ticks);
+    required<HTMLInputElement>('timeslider').after(this.ticks);
     const presets = panel.querySelector('.presets');
     const row = (cls: string, ...kids: HTMLElement[]) => { const d = document.createElement('div'); d.className = cls; d.append(...kids); return d; };
     const btn = (label: string, title: string, on: () => void) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.title = title; b.addEventListener('click', () => { on(); b.blur(); }); return b; };

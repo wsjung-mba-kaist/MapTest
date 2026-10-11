@@ -1,5 +1,6 @@
 import type { GpuInfo, HpAdapter } from '../core/Renderer';
 import { STORAGE_KEYS, storageGet, storageSet } from './storage';
+import { required } from './dom';
 
 const VENDOR_LABEL: Record<string, string> = { nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel', apple: 'Apple', qualcomm: 'Qualcomm', software: '소프트웨어', unknown: '알 수 없음' };
 
@@ -10,16 +11,10 @@ const VENDOR_LABEL: Record<string, string> = { nvidia: 'NVIDIA', amd: 'AMD', int
  * WebGL landed on an integrated or software device while a stronger one is around, or any time with G.
  */
 export class GpuPanel {
-  private readonly el: HTMLDivElement;
+  private readonly el = required<HTMLDivElement>('gpupanel');
   onOpen: () => void = () => {};
   /** after hide(): App grabs the pointer back unless another panel is up */
   onClose: () => void = () => {};
-
-  constructor() {
-    let el = document.getElementById('gpupanel') as HTMLDivElement | null;
-    if (!el) { el = document.createElement('div'); el.id = 'gpupanel'; el.hidden = true; (document.getElementById('hud') ?? document.body).appendChild(el); }
-    this.el = el;
-  }
 
   get open() { return !this.el.hidden; }
   static get suppressed(): boolean { return storageGet(STORAGE_KEYS.gpuPanelNever) === '1'; }

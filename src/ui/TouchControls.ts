@@ -1,4 +1,5 @@
 import type { Input } from '../player/Input';
+import { required } from './dom';
 
 /**
  * Touch UI for coarse pointers: a virtual joystick anywhere on the left 40 % of the screen (pushed to the rim = run),
@@ -45,10 +46,10 @@ export class TouchControls {
     this.setFlying(false);
     this.hideStick();
     // the lift prompt ("E · 1층으로") doubles as the E button
-    const prompt = document.getElementById('prompt');
-    if (prompt) { prompt.style.pointerEvents = 'auto'; prompt.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); this.input.emitKey('KeyE'); }); }
+    const prompt = required<HTMLDivElement>('prompt');
+    prompt.style.pointerEvents = 'auto'; prompt.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); this.input.emitKey('KeyE'); });
 
-    const surface = document.getElementById('app') as HTMLCanvasElement;
+    const surface = required<HTMLCanvasElement>('app');
     surface.style.touchAction = 'none';
     surface.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse') return;

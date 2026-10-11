@@ -1,3 +1,5 @@
+import { required } from './dom';
+
 /** Default time-of-day presets (local hours); App replaces them with sunrise / sunset based ones for the current day. */
 export const TIME_PRESETS: { label: string; hour: number }[] = [
   { label: '새벽', hour: 5.75 },
@@ -34,18 +36,21 @@ const MENU: { action: MenuAction; label: string; key: string; sep?: boolean }[] 
  * controls, a start button) and, after the first start, a translucent pause menu over the visible scene.
  */
 export class Hud {
-  private overlay = document.getElementById('overlay') as HTMLDivElement;
-  private msg = document.getElementById('overlay-msg') as HTMLParagraphElement;
-  private bar = document.querySelector('#progress > i') as HTMLElement;
-  private status = document.getElementById('status') as HTMLDivElement;
-  private help = document.getElementById('help') as HTMLDivElement;
-  private crosshair = document.getElementById('crosshair') as HTMLDivElement;
-  private timePanel = document.getElementById('timepanel') as HTMLDivElement;
-  private timeSlider = document.getElementById('timeslider') as HTMLInputElement;
-  private timeVal = document.getElementById('timeval') as HTMLSpanElement;
-  private toastEl = document.getElementById('toast') as HTMLDivElement | null;
-  private clock = document.getElementById('clock') as HTMLDivElement | null;
-  private stream = document.getElementById('stream') as HTMLDivElement | null;
+  // every element below is declared in index.html, so a missing one is a markup error that `required` reports at boot
+  private overlay = required<HTMLDivElement>('overlay');
+  private msg = required<HTMLParagraphElement>('overlay-msg');
+  private bar = required<HTMLDivElement>('progress').querySelector<HTMLElement>('i')!;
+  private status = required<HTMLDivElement>('status');
+  private help = required<HTMLDivElement>('help');
+  private crosshair = required<HTMLDivElement>('crosshair');
+  private timePanel = required<HTMLDivElement>('timepanel');
+  private timeSlider = required<HTMLInputElement>('timeslider');
+  private timeVal = required<HTMLSpanElement>('timeval');
+  private dateLabel = required<HTMLSpanElement>('datelabel');
+  private toastEl = required<HTMLDivElement>('toast');
+  private clock = required<HTMLDivElement>('clock');
+  private stream = required<HTMLDivElement>('stream');
+  private promptEl = required<HTMLDivElement>('prompt');
   private menuButtons = new Map<MenuAction, HTMLButtonElement>();
   private toastTimer = 0;
   private streamTimer = 0;
@@ -67,8 +72,7 @@ export class Hud {
 
   constructor() {
     this.overlay.addEventListener('click', () => { if (this.ready) this.onStart(); });
-    const start = document.getElementById('startbtn');
-    start?.addEventListener('click', e => { e.stopPropagation(); if (this.ready) this.onStart(); });
+    required<HTMLButtonElement>('startbtn').addEventListener('click', e => { e.stopPropagation(); if (this.ready) this.onStart(); });
     const retry = this.overlay.querySelector('.retry');
     retry?.addEventListener('click', e => { e.stopPropagation(); location.reload(); });
     const menu = this.overlay.querySelector('.menu');
@@ -80,9 +84,9 @@ export class Hud {
       if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
       menu.appendChild(b); this.menuButtons.set(m.action, b);
     }
-    this.clock?.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
-    this.clock?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
-    this.timeSlider?.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
+    this.clock.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
+    this.clock.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
+    this.timeSlider.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
     this.setPresets(TIME_PRESETS);
   }
 
@@ -93,7 +97,7 @@ export class Hud {
   presets: { label: string; hour: number }[] = TIME_PRESETS;
   setPresets(list: { label: string; hour: number }[]) {
     this.presets = list;
-    const presets = this.timePanel?.querySelector('.presets');
+    const presets = this.timePanel.querySelector('.presets');
     if (!presets) return;
     presets.replaceChildren();
     for (const p of list) {
@@ -103,9 +107,9 @@ export class Hud {
       presets.appendChild(b);
     }
   }
-  setDateLabel(text: string) { const el = document.getElementById('datelabel'); if (el) el.textContent = text; }
+  setDateLabel(text: string) { this.dateLabel.textContent = text; }
   /** the always-visible top-right chip: "17:30 · 맑음" (+ date when not today) */
-  setClock(text: string) { if (this.clock && this.clock.textContent !== text) this.clock.textContent = text; }
+  setClock(text: string) { if (this.clock.textContent !== text) this.clock.textContent = text; }
 
   private applyTime(hour: number) { this.setTimeDisplay(hour); this.onTimeChange(hour); }
 
@@ -129,7 +133,7 @@ export class Hud {
 
   setTimeDisplay(hour: number) {
     this.timeVal.textContent = formatHour(hour);
-    if (this.timeSlider && Math.abs(parseFloat(this.timeSlider.value) - hour) > 0.01) this.timeSlider.value = String(hour);
+    if (Math.abs(parseFloat(this.timeSlider.value) - hour) > 0.01) this.timeSlider.value = String(hour);
   }
 
   progress(frac: number, text?: string) {
@@ -162,7 +166,7 @@ export class Hud {
     this.overlay.classList.toggle('pause', show && this.started);
     this.overlay.classList.toggle('peek', show && this.panelOpen);
     this.crosshair.hidden = show;
-    if (!show) this.timeSlider?.blur();
+    if (!show) this.timeSlider.blur();
     this.updateOverlayText();
   }
   private updateOverlayText() {
@@ -180,24 +184,21 @@ export class Hud {
   setStatus(text: string) { this.status.textContent = text; }
   /** Short confirmation message at the bottom of the screen. */
   toast(text: string, ms = 2200) {
-    if (!this.toastEl) return;
     this.toastEl.textContent = text; this.toastEl.hidden = false;
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => { if (this.toastEl) this.toastEl.hidden = true; }, ms);
+    this.toastTimer = window.setTimeout(() => { this.toastEl.hidden = true; }, ms);
   }
   /** Building chunks still arriving after the start ("거리 불러오는 중 37/144", GRID_N²); hides itself a second after the last one. */
   streaming(loaded: number, total: number) {
-    if (!this.stream) return;
     if (loaded < total) { this.stream.textContent = `거리 불러오는 중 ${loaded}/${total}`; this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }
-    else if (!this.stream.hidden && !this.streamTimer) this.streamTimer = window.setTimeout(() => { if (this.stream) this.stream.hidden = true; }, 1000);
+    else if (!this.stream.hidden && !this.streamTimer) this.streamTimer = window.setTimeout(() => { this.stream.hidden = true; }, 1000);
   }
   /** the bottom-left hint bar (touch devices never show it) */
   showHint(show: boolean) { this.help.classList.toggle('faded', !show); }
-  private promptEl = document.getElementById('prompt') as HTMLDivElement | null;
   private promptText = '';
   /** Persistent interaction hint ("E · 1층으로"); null hides it. */
   prompt(text: string | null) {
-    if (!this.promptEl || text === this.promptText) return;
+    if (text === this.promptText) return;
     this.promptText = text ?? '';
     this.promptEl.hidden = !text;
     if (text) {   // "E · label": the key as <kbd>, the label as text (never markup — it comes from a data file)

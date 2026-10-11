@@ -1,4 +1,5 @@
 import { App } from './core/App';
+import { required } from './ui/dom';
 
 // CanvasRenderingContext2D.roundRect is missing in Firefox < 116 / Safari < 16; the minimap, compass and landmark
 // labels all draw with it, so a missing method turned a cosmetic corner into a hard boot failure.
@@ -10,7 +11,7 @@ if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D
   };
 }
 
-const canvas = document.getElementById('app') as HTMLCanvasElement;
+const canvas = required<HTMLCanvasElement>('app');
 const app = new App(canvas);
 Object.assign(window, { app });   // console / screenshot automation: window.app
 app.boot().catch(err => {
