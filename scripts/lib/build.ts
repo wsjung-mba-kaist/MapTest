@@ -177,6 +177,7 @@ export async function run(_ctx: BakeContext) {
   }
   log.info(`buildings: ${GRID_N * GRID_N} chunks, ${fmtBytes(totalBytes)}, ${(totalTris / 1e6).toFixed(2)} M tris (LOD0), ${detailRows} roof detail rows`);
   if (dsm) log.info(`dsm: ${dsmBuildings} landmark footprints capped, ${(dsmTrisRaw / 1e6).toFixed(2)} M -> ${(dsmTrisTotal / 1e6).toFixed(2)} M tris`);
+  if (dsm?.simplifyFailures) log.warn(`dsm: ${dsm.simplifyFailures} cap(s) went out unsimplified (see the per-cap warnings above)`);
   if (dsmTrisTotal > DSM_BUDGET) throw new Error(`dsm: ${dsmTrisTotal} triangles exceed the ${DSM_BUDGET} budget; raise the grid step or the simplification error in dsmroof.ts`);
 
   const w = await buildWater(water, hm);
