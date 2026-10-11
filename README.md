@@ -95,7 +95,7 @@ URL 파라미터로 디버그 시점을 지정할 수 있습니다:
 `?auto=1&fly=1&x=-480&z=-409&y=28&yaw=130&pitch=2&hour=19.5&quality=medium&post=0&tower=lattice&hide=trees,furniture&details=0&timepanel=0&facadetex=0&noenv=1`
 (`facadetex=0`은 사진 텍스처 없이 절차 파사드만, `noenv=1`은 환경맵 없이 렌더링해 비교할 때 씁니다.)
 움직이는 도시: `life=0`(끄기) / `life=crowd,traffic,boats`(선택) / `lifedebug=1`(활성 경로 그래프 표시) / `sim=0`(정지, `sim=4` 4배속) / `simt=240`(시뮬레이션 시각 고정 → 재현 가능한 스크린샷).
-빛·물: `lamps=0`(가로등 광원 끄기) / `lampsdebug=1`(광원 마젠타) / `refl=0|1|2`(반사 끄기·절반·1/4 해상도) / `stars=0` / `glow=0`(광공해 끄기) / `headlights=0` / `shoplights=0` / `signals=0`(신호등 끄기) / `fartraffic=0`(원경 차량 불빛 끄기) / `wet=1`(비 온 뒤 노면) / `tower=lit`(탑 조명 밤새 유지) / `ao=0`(AO 끄기) / `clouds=0`(구름 끄기) / `crossings=0`(횡단보도 신호·양보 끄기) / `carlights=0`(브레이크등·방향지시등 끄기).
+빛·물: `lamps=0`(가로등 광원 끄기) / `lampsdebug=1`(광원 마젠타) / `refl=0|1|2`(반사 끄기·절반·1/4 해상도) / `refldbg=uv|uv2|noclip|noshadow|norender`(반사 패스 디버그) / `noshadow=1`(그림자 끄기) / `skydim=1.0`(하늘 밝기 배율, 콘솔에 하늘 유니폼 출력) / `clear=rrggbb`(배경 클리어 색) / `fov=70`(시야각 20–130) / `stars=0` / `glow=0`(광공해 끄기) / `headlights=0` / `shoplights=0` / `signals=0`(신호등 끄기) / `fartraffic=0`(원경 차량 불빛 끄기) / `wet=1`(비 온 뒤 노면) / `tower=lit`(탑 조명 밤새 유지) / `ao=0`(AO 끄기) / `clouds=0`(구름 끄기) / `crossings=0`(횡단보도 신호·양보 끄기) / `carlights=0`(브레이크등·방향지시등 끄기).
 움직이는 도시 추가 토글: `metro=0`(6호선 열차 끄기) / `cyclists=0`(자전거 끄기).
 날씨·계절: `weather=overcast|rain|fog`(기본 맑음, `R`로 순환) / `date=2026-10-25`처럼 날짜를 주면 가로수가 그 계절(4월 중순 발아 → 10월 단풍 → 11월 낙엽 → 겨울 나목)을 따릅니다.
 거리·간판: `marks=0`(노면 표시 끄기) / `marksdebug=1`(마젠타) / `streets=0`(인도 슬래브 끄기) / `streetsdebug=1`(법선 색) / `signs=0`(간판·거리명판 끄기) / `signsdebug=1`(간판 마젠타 + 콘솔에 명판 위치·카메라 URL).

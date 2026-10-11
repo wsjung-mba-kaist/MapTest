@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      # public/data is committed, so the runtime can be bundled without a bake
+      - run: npm run build
+
+  smoke:
+    # Shader compile errors and boot-time exceptions only show up in a browser: stream the whole square on
+    # SwiftShader (several minutes) and fail on `THREE.WebGLProgram: Shader Error` or an uncaught exception.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run smoke   # ubuntu-latest ships google-chrome; scripts/smoke.ts finds it on PATH
+        env:
+          SMOKE_TIMEOUT: '600'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: smoke/
+          if-no-files-found: ignore
