@@ -15,7 +15,6 @@ import { encodeBinMesh, type SectionInput } from './binmesh.ts';
 import { loadHeightmap } from './build.ts';
 import { frame } from '../../shared/geo.ts';
 import { CHUNK_SIZE, GRID_N, KERB_H, SURFACE_N, SURFACE_STEP, StreetFlag, SurfaceClass, WORLD_HALF, chunkKey, chunkOrigin } from '../../shared/layout.ts';
-import type { Heightmap } from '../../shared/heightmap.ts';
 import { area, bboxOf, distToRing, pointInPoly, type Poly, type Pt, type Ring } from './polygons.ts';
 import { differencePolys, intersectPolys, offsetLine, offsetPolys } from './clip.ts';
 

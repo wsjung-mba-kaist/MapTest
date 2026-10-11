@@ -158,7 +158,7 @@ function parapetRuns(ring: Ring, top: number, mouths: Mouth[], hm: Heightmap, ov
   }
   if (keep.every(k => k)) return null;
   const runs: Pt[][] = [];
-  let start = keep.findIndex((k, i) => k && !keep[(i + n - 1) % n]);
+  const start = keep.findIndex((k, i) => k && !keep[(i + n - 1) % n]);
   if (start < 0) return [];
   for (let done = 0; done < n;) {
     if (!keep[(start + done) % n]) { done++; continue; }

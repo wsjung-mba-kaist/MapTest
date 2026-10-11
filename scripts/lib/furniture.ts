@@ -224,6 +224,6 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
 
   const arr = new Float32Array(rows);
   await fs.writeFile(path.join(OUT_DIR, 'furniture.bin'), Buffer.from(arr.buffer));
-  log.info(`furniture: ${arr.length / FURNITURE_STRIDE} items (${fromOsm} from OSM points, ${fromRoads} lamps along streets)`);
+  log.info(`furniture: ${arr.length / FURNITURE_STRIDE} items (${fromOsm} from OSM points, ${fromRoads} lamps along streets, ${statues} hand-placed statues)`);
   return { count: arr.length / FURNITURE_STRIDE, bytes: arr.byteLength };
 }

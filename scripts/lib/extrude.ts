@@ -251,7 +251,7 @@ function addCone(gb: GeomBuilder, ring: Ring, y0: number, rise: number, ox: numb
 interface ProfileFrame { axis: Pt; perp: Pt; centre: Pt; half: number }
 
 /** Ridge axis and cross direction of a gabled / round / skillion roof from roof:direction, roof:orientation or the min-area rect. */
-export function profileFrame(b: BuildingSpec, kind: RoofKind): ProfileFrame {
+export function profileFrame(b: BuildingSpec, _kind: RoofKind): ProfileFrame {
   const rect = b.rect;
   const longDir: Pt = rect.w >= rect.h ? [Math.cos(rect.angle), Math.sin(rect.angle)] : [-Math.sin(rect.angle), Math.cos(rect.angle)];
   const shortDir: Pt = [-longDir[1], longDir[0]];

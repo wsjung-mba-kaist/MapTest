@@ -129,7 +129,7 @@ export function insetRing(ring: Ring, d: number, minAreaFrac = 0.4): Ring | null
     const bl = Math.hypot(bx, bz);
     if (bl < 1e-6) { bx = n1[0]; bz = n1[1]; } else { bx /= bl; bz /= bl; }
     const cosHalf = bx * n1[0] + bz * n1[1];
-    let k = d / Math.max(cosHalf, 0.25);
+    const k = d / Math.max(cosHalf, 0.25);
     const maxK = 0.45 * Math.min(l1, l2) / Math.max(1e-6, Math.sqrt(1 - Math.min(0.999, cosHalf * cosHalf)) || 1);
     if (k > maxK) return null;
     out.push([c[0] + bx * k, c[1] + bz * k]);

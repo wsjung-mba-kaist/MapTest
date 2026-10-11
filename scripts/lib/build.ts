@@ -58,7 +58,7 @@ async function buildWater(water: FeatureCollection<Geometry, OsmProps>, hm: Heig
     if (isRiver) river.push(...polys);
     else for (const p of polys) {
       if (area(p[0]) < 3) continue;
-      let ys: number[] = [];
+      const ys: number[] = [];
       for (const [x, z] of p[0]) ys.push(hm.sample(x, z));
       basins.push({ poly: p, y: percentile(ys, 0.2) - 0.25 });
     }

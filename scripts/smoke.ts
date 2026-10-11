@@ -83,7 +83,8 @@ class Cdp {
   close() { this.ws.close(); }
 }
 
-function kill(p: ChildProcess | undefined) { if (p && !p.killed) { try { p.kill('SIGTERM'); } catch { /* gone */ } } }
+/** `npx vite` and Chromium both fork: kill the whole process group (they are spawned detached) or the run never exits. */
+function kill(p: ChildProcess | undefined) { if (p?.pid) { try { process.kill(-p.pid, 'SIGTERM'); } catch { try { p.kill('SIGTERM'); } catch { /* gone */ } } } }
 
 async function main() {
   await mkdir(OUT, { recursive: true });
@@ -92,7 +93,7 @@ async function main() {
   const note = (s: string) => { console.log(s); log.push(s); };
 
   const serverArgs = process.env.SMOKE_DIST ? ['vite', 'preview', '--port', String(PORT), '--strictPort'] : ['vite', '--port', String(PORT), '--strictPort'];
-  const server = spawn('npx', serverArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn('npx', serverArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   server.stdout?.on('data', d => log.push(`[vite] ${String(d).trim()}`));
   server.stderr?.on('data', d => log.push(`[vite:err] ${String(d).trim()}`));
   let chrome: ChildProcess | undefined;
@@ -105,7 +106,7 @@ async function main() {
     chrome = spawn(bin, [
       '--headless=new', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox', '--disable-gpu-sandbox',
       '--disable-dev-shm-usage', '--window-size=1280,720', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--no-first-run', 'about:blank',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     chrome.stderr?.on('data', d => log.push(`[chrome] ${String(d).trim()}`));
     await waitHttp(`http://127.0.0.1:${CDP_PORT}/json/version`, 30);
     const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json() as { type: string; webSocketDebuggerUrl: string }[];
@@ -179,6 +180,7 @@ async function main() {
   }
   if (failures.length) { console.error(`\nSMOKE FAILED (${failures.length}):\n - ${failures.join('\n - ')}\n(see smoke/console.log)`); process.exit(1); }
   console.log('\nSMOKE OK');
+  process.exit(0);   // the killed children may still hold the event loop for a moment
 }
 
 void main();

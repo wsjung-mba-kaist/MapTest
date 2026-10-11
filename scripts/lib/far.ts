@@ -20,7 +20,7 @@ const MIN_AREA = 140;
 const MAX_VERTS = 8;
 
 function simplify(r: Ring, maxVerts: number, minEdge = 2.0): Ring {
-  let out = cleanRing(r, minEdge);
+  const out = cleanRing(r, minEdge);
   while (out.length > maxVerts) {
     // Drop the vertex whose removal changes the area least.
     let best = -1, bestCost = Infinity;

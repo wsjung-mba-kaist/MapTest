@@ -275,7 +275,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       const shapedRise = (available: number) => roofHeightTag ?? angleRise ?? (kindTag ? defaultRise(kindTag, minor, available) : 4.5);
 
       // ---- height cascade
-      let eave = 0, ridge = 0, source: HeightSource = 'default', bdp: BdTopoProps | null = null;
+      let eave: number, ridge: number, source: HeightSource, bdp: BdTopoProps | null = null;
       let lowDefault = false;   // an untagged footprint too small or too narrow to be an apartment block
       if (heightTag != null && heightTag > 1.5) {
         // OSM "height" is the total height including the roof.
