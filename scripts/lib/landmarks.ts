@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
@@ -316,5 +315,4 @@ export async function run(ctx: BakeContext) {
   } else log.warn('landmarks: manifest.json missing (run bake:build); landmarks.json written anyway');
   const withImg = data.landmarks.filter(l => l.image).length, withDesc = data.landmarks.filter(l => l.desc).length, ko = data.landmarks.filter(l => l.desc?.lang === 'ko').length;
   log.info(`landmarks: ${data.landmarks.length} entries (ok ${counts.ok}, partial ${counts.partial}, failed ${counts.failed}); ${withDesc} descriptions (${ko} Korean), ${withImg} photos -> public/data/landmarks.json`);
-  void fs;
 }

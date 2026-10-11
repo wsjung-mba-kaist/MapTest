@@ -18,7 +18,7 @@ import { buildFountains } from './fountains.ts';
 import { buildRail } from './rail.ts';
 import { Heightmap } from '../../shared/heightmap.ts';
 import { ORIGIN, DATUM_ALT } from '../../shared/geo.ts';
-import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
+import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
 import { area, clipToBox, percentile, pointInPoly, toWorldPolys, type Poly } from './polygons.ts';
 
 export async function loadHeightmap(raw = false): Promise<Heightmap> {
@@ -193,5 +193,4 @@ export async function run(_ctx: BakeContext) {
   manifest.chunks = chunkInfo;
   await writeJson(path.join(OUT_DIR, 'manifest.json'), manifest);
   log.info('manifest written');
-  void SurfaceFlag;
 }

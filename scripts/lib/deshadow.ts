@@ -180,10 +180,13 @@ export async function run(ctx: BakeContext) {
   };
   const rawOverview = await copyOnce('overview.jpg');
 
-  const luma = await loadLuma(rawOverview, 2048);
-  const detected = estimateSun(luma, 2048);
-  log.info(`deshadow: detector says azimuth ${detected.azDeg.toFixed(1)}°, elevation ${detected.elevDeg.toFixed(1)}° (${detected.source})`);
-  const sun = detected.source === 'env' || ENV.orthoSunAuto ? detected : DEFAULT_SUN;
+  // the detector walks 720 directions over the 2048 px overview and its answer is used only with ORTHO_SUN_AUTO=1 or an
+  // explicit ORTHO_SUN_AZ/ELEV (which it returns verbatim); every other run used to pay for it and then take DEFAULT_SUN
+  let sun = DEFAULT_SUN;
+  if (ENV.orthoSun || ENV.orthoSunAuto) {
+    sun = estimateSun(await loadLuma(rawOverview, 2048), 2048);
+    log.info(`deshadow: detector says azimuth ${sun.azDeg.toFixed(1)}°, elevation ${sun.elevDeg.toFixed(1)}° (${sun.source})`);
+  }
   log.info(`deshadow: capture sun azimuth ${sun.azDeg.toFixed(1)}°, elevation ${sun.elevDeg.toFixed(1)}° (tower shadow ${sun.shadowLenM.toFixed(0)} m toward ${sun.shadowDirWorld.map(v => v.toFixed(2))}) — ${sun.source}`);
 
   const { casters, crowns } = await collectCasters();

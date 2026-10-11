@@ -1,12 +1,11 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { FeatureCollection, Geometry, LineString } from 'geojson';
+import type { LineString } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { OUT_DIR } from '../config.ts';
 import { ensureDir, exists } from './http.ts';
-import { loadTheme, type OsmProps } from './overpass.ts';
+import { loadTheme } from './overpass.ts';
 import { GRID_N, MASK_PX, ORTHO_MARGIN, ORTHO_TILE_M, chunkKey, chunkOrigin } from '../../shared/layout.ts';
 import { pointInPoly, toWorldPolysRaw, toWorldPts, type Pt } from './polygons.ts';
 import { carriagewayWidth } from './roadnet.ts';
@@ -103,6 +102,4 @@ export async function run(ctx: BakeContext) {
     written++;
   }
   log.info(`masks: ${written} written, ${skipped} cached`);
-  void fs;
 }
-void (0 as unknown as Geometry); void (0 as unknown as FeatureCollection<Geometry, OsmProps>);

@@ -57,12 +57,6 @@ function roadWidth(tags: Record<string, string>): number {
   }
 }
 
-function addBox(gb: GeomBuilder, x0: number, z0: number, x1: number, z1: number, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
-  const ring: Ring = orient([[x0, z0], [x1, z0], [x1, z1], [x0, z1]], false);
-  addWalls(gb, ring, y0, y1, flag, tint);
-  addCapAt(gb, [ring], y1, flag, tint, true);
-}
-
 function addWalls(gb: GeomBuilder, ring: Ring, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
   const n = ring.length; let u = 0;
   for (let i = 0; i < n; i++) {
@@ -630,7 +624,6 @@ export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>,
       addWalls(stone, ring, waterLevelY - 3, bottom + 0.05, SurfaceFlag.Plinth, STONE);
     }
   }
-  void addBox;
   const buf = encodeBinMesh({ x: 0, z: 0 }, [deck.toSection('deck'), stone.toSection('stone'), parapet.toSection('parapet')], { count: bridges.length });
   await fs.writeFile(path.join(OUT_DIR, 'bridges.bin'), buf);
   const names = [...new Set(bridges.map(b => b.name))];
