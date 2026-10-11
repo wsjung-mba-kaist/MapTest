@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
-import { CACHE_DIR } from '../config.ts';
+import { ENV, CACHE_DIR } from '../config.ts';
 import { exists, readJson } from './http.ts';
 import { DSM_INDEX, type DsmIndex, type DsmWindow } from './dsm.ts';
 import { log } from './log.ts';
@@ -111,7 +111,7 @@ export class DsmProvider {
   simplifyFailures = 0;
 
   static async load(): Promise<DsmProvider | null> {
-    if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
+    if (!ENV.dsm || !await exists(DSM_INDEX)) return null;
     // The simplifier is a WASM module: `simplify` before `ready` throws on every cap, which the per-cap catch below
     // used to swallow one warning at a time while the raw grids blew past the triangle budget.
     await MeshoptSimplifier.ready;

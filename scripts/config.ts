@@ -65,6 +65,32 @@ export const EIFFEL_OSM_WAY_ID = 5013364;
 /** Preferred tower model in public/models (user's choice; Sketchfab CC-BY, credited in the HUD). Override with EIFFEL_SOURCE=. */
 export const EIFFEL_SOURCE_GLB = 'eiffel_tower_model_3d_with_best_quality.glb';
 
+const sunAz = parseFloat(process.env.ORTHO_SUN_AZ ?? ''), sunEl = parseFloat(process.env.ORTHO_SUN_ELEV ?? '');
+/**
+ * Every environment switch the bake reads, parsed once so a typo shows up here and not as a silently ignored string
+ * three modules deep. CLAUDE.md "Env knobs" lists the same names; keep the two in step.
+ */
+export const ENV = {
+  /** DSM=0: no LiDAR roof caps — bake:dsm is skipped and build extrudes analytic roofs everywhere */
+  dsm: process.env.DSM !== '0',
+  /** DSM_IDS=way/1,relation/2: extra OSM ids that get a LiDAR cap on top of the landmark registry */
+  dsmIds: (process.env.DSM_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean),
+  /** DESHADOW=0: leave the shadows baked into the orthophoto alone */
+  deshadow: process.env.DESHADOW !== '0',
+  /** ORTHO_SUN_AZ + ORTHO_SUN_ELEV (degrees, both required): the capture-time sun when the detector and the default are both wrong */
+  orthoSun: Number.isFinite(sunAz) && Number.isFinite(sunEl) ? { azDeg: sunAz, elevDeg: sunEl } : undefined,
+  /** ORTHO_SUN_AUTO=1: trust the tower-shadow detector over the configured default sun */
+  orthoSunAuto: process.env.ORTHO_SUN_AUTO === '1',
+  /** EIFFEL_SOURCE=<glb in public/models>: the tower model to fit instead of EIFFEL_SOURCE_GLB */
+  eiffelSource: process.env.EIFFEL_SOURCE ?? EIFFEL_SOURCE_GLB,
+  /** EIFFEL_TEXTURE=<px>: texture size the tower scan is resampled to (default 4096) */
+  eiffelTexture: Number(process.env.EIFFEL_TEXTURE ?? 4096),
+  /** ALLOW_NONFREE=1: let bake:models process a hero model whose licence is not free for redistribution */
+  allowNonfree: process.env.ALLOW_NONFREE === '1',
+  /** PATHS_DEBUG=1: bake:paths logs the bridge pier boxes the boat lanes are routed around */
+  pathsDebug: !!process.env.PATHS_DEBUG,
+};
+
 /**
  * Roof fixes for buildings whose OSM tags miss what everyone can see (keyed by OSM id): the gilded dome of the
  * Invalides, for example. `shape` / `material` / `colour` replace the roof:* tags.

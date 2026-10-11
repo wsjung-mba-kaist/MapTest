@@ -1,4 +1,4 @@
-import { EIFFEL_OSM_WAY_ID, EIFFEL_SOURCE_GLB } from './config.ts';
+import { ENV, EIFFEL_OSM_WAY_ID, EIFFEL_SOURCE_GLB } from './config.ts';
 
 /**
  * Hero models: real 3D models that replace the extruded footprint of a landmark. The bake (npm run bake:models)
@@ -72,5 +72,5 @@ export const LANDMARK_MODELS: LandmarkModel[] = [
 const NONFREE = /\bNC\b|\bND\b|non-?commercial|unknown|all rights/i;
 /** true when the licence allows redistribution here (or the bake was told to ignore that). */
 export function licenseAllowed(license: string): boolean {
-  return process.env.ALLOW_NONFREE === '1' || !NONFREE.test(license);
+  return ENV.allowNonfree || !NONFREE.test(license);
 }

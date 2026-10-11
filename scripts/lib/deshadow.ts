@@ -3,7 +3,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, MODELS_DIR, OUT_DIR } from '../config.ts';
+import { ENV, CACHE_DIR, MODELS_DIR, OUT_DIR } from '../config.ts';
 import { heroFootprints } from './landmarks_footprints.ts';
 import { ensureDir, exists, readJson, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
@@ -38,13 +38,12 @@ async function loadLuma(file: string, size: number): Promise<Float32Array> {
 
 /** Estimate the capture-time sun from the tower shadow in the overview. */
 function estimateSun(luma: Float32Array, size: number): SunEstimate {
-  const envAz = parseFloat(process.env.ORTHO_SUN_AZ ?? ''), envEl = parseFloat(process.env.ORTHO_SUN_ELEV ?? '');
   const mPerPx = (WORLD_HALF * 2) / size;
   const toPx = (x: number, z: number) => [(x + WORLD_HALF) / mPerPx, (z + WORLD_HALF) / mPerPx];
   const sample = (x: number, z: number) => { const [px, pz] = toPx(x, z); const i = Math.round(px), j = Math.round(pz); return i >= 0 && j >= 0 && i < size && j < size ? luma[j * size + i] : 1; };
-  if (Number.isFinite(envAz) && Number.isFinite(envEl)) {
-    const az = envAz * Math.PI / 180;
-    return { azDeg: envAz, elevDeg: envEl, shadowDirWorld: [-Math.sin(az), Math.cos(az)], shadowLenM: TOWER_H / Math.tan(envEl * Math.PI / 180), source: 'env' };
+  if (ENV.orthoSun) {
+    const { azDeg, elevDeg } = ENV.orthoSun, az = azDeg * Math.PI / 180;
+    return { azDeg, elevDeg, shadowDirWorld: [-Math.sin(az), Math.cos(az)], shadowLenM: TOWER_H / Math.tan(elevDeg * Math.PI / 180), source: 'env' };
   }
   // ring medians give a local reference brightness per radius
   const radii: number[] = []; for (let r = 90; r <= 520; r += 2) radii.push(r);
@@ -158,7 +157,7 @@ export async function collectCasters(): Promise<{ casters: Caster[]; crowns: Cro
 export { DEFAULT_SUN };
 
 export async function run(ctx: BakeContext) {
-  if (process.env.DESHADOW === '0') { log.info('deshadow: skipped (DESHADOW=0)'); return; }
+  if (!ENV.deshadow) { log.info('deshadow: skipped (DESHADOW=0)'); return; }
   const groundDir = path.join(OUT_DIR, 'ground');
   const rawDir = path.join(CACHE_DIR, 'ortho_raw');
   const stamp = path.join(groundDir, 'deshadow.json');
@@ -184,7 +183,7 @@ export async function run(ctx: BakeContext) {
   const luma = await loadLuma(rawOverview, 2048);
   const detected = estimateSun(luma, 2048);
   log.info(`deshadow: detector says azimuth ${detected.azDeg.toFixed(1)}°, elevation ${detected.elevDeg.toFixed(1)}° (${detected.source})`);
-  const sun = detected.source === 'env' || process.env.ORTHO_SUN_AUTO === '1' ? detected : DEFAULT_SUN;
+  const sun = detected.source === 'env' || ENV.orthoSunAuto ? detected : DEFAULT_SUN;
   log.info(`deshadow: capture sun azimuth ${sun.azDeg.toFixed(1)}°, elevation ${sun.elevDeg.toFixed(1)}° (tower shadow ${sun.shadowLenM.toFixed(0)} m toward ${sun.shadowDirWorld.map(v => v.toFixed(2))}) — ${sun.source}`);
 
   const { casters, crowns } = await collectCasters();

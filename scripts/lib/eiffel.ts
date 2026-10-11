@@ -6,7 +6,7 @@ import { dedup, prune, weld, simplify, unpartition } from '@gltf-transform/funct
 import { MeshoptSimplifier } from 'meshoptimizer';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { EIFFEL_3DMR_URL, EIFFEL_OSM_WAY_ID, EIFFEL_SOURCE_GLB, MODELS_DIR } from '../config.ts';
+import { ENV, EIFFEL_3DMR_URL, EIFFEL_OSM_WAY_ID, MODELS_DIR } from '../config.ts';
 import { cachedBytes, ensureDir, exists, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
@@ -36,14 +36,14 @@ export async function run(ctx: BakeContext) {
 
   // A user-supplied scan (any other .glb in public/models) takes precedence over the CC0 3DMR model.
   // Source priority: EIFFEL_SOURCE env / config (the chosen glb) > any other supplied .glb > the CC0 3DMR model.
-  const preferred = process.env.EIFFEL_SOURCE ?? EIFFEL_SOURCE_GLB;
+  const preferred = ENV.eiffelSource;
   const others = (await fs.readdir(MODELS_DIR)).filter(f => f.endsWith('.glb') && f !== 'eiffel.glb' && f !== preferred).sort((a, b) => (a.startsWith('eiffel_src') ? -1 : 0) - (b.startsWith('eiffel_src') ? -1 : 0));
   const candidates = (await exists(path.join(MODELS_DIR, preferred))) ? [preferred, ...others] : others;
   if (candidates.length) {
     const src = path.join(MODELS_DIR, candidates[0]);
     log.info(`eiffel: using supplied model ${candidates[0]}`);
     const { processScan } = await import('./eiffel_scan.ts');
-    const textureSize = Number(process.env.EIFFEL_TEXTURE ?? 4096);
+    const textureSize = ENV.eiffelTexture;
     await processScan(src, { angleFootprint: rect.angle, cx: rect.cx, cz: rect.cz }, out, metaOut, textureSize);
     return;
   }

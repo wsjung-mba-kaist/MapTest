@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { ENV, OUT_DIR } from '../config.ts';
 import { readJson, writeJson } from './http.ts';
 import { loadTheme, type OsmProps } from './overpass.ts';
 import { classify, type RoadSpec } from './roadnet.ts';
@@ -394,7 +394,7 @@ export async function buildPaths(roads: FeatureCollection<Geometry, OsmProps>, w
     const start = loops.reduce((s, l) => s + l.pts.length, 0);
     loops.push({ pts, meta: { start, count: pts.length, length, kind, boats: idx === 0 ? 2 : 1 } });
     log.info(`paths: river loop ${idx} (${kind}): ${pts.length} pts, ${(length / 1000).toFixed(2)} km, min pier clearance ${minPierDistance(pts, piers).toFixed(1)} m`);
-    if (process.env.PATHS_DEBUG) for (const p of piers) {
+    if (ENV.pathsDebug) for (const p of piers) {
       let m = Infinity, seg = 0;
       for (let i = 0; i + 1 < pts.length; i++) { const d = pierClearance(pts[i], pts[i + 1], p); if (d < m) { m = d; seg = i; } }
       if (m < 8) {
