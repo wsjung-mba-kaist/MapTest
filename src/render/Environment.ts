@@ -294,13 +294,19 @@ export class Environment {
 }
 
 // ---- Europe/Paris calendar helpers (Intl-based, DST-aware; fall back to CEST when Intl has no time zones)
+let todayAt = -Infinity, todayVal: [number, number, number] = [2000, 1, 1];
 export function todayParis(): [number, number, number] {
+  // Cached for a minute: the clock chip refreshes every frame during time-lapse, and building an Intl.DateTimeFormat
+  // per frame is exactly the cost the hour/sun caches in Environment were introduced to remove.
+  const now = Date.now();
+  if (now - todayAt < 60_000) return todayVal;
+  todayAt = now;
   try {
-    const s = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const s = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
     const [y, m, d] = s.split('-').map(Number);
-    if (y && m && d) return [y, m, d];
+    if (y && m && d) return (todayVal = [y, m, d]);
   } catch { /* no Intl time zones */ }
-  const n = new Date(); return [n.getFullYear(), n.getMonth() + 1, n.getDate()];
+  const n = new Date(now); return (todayVal = [n.getFullYear(), n.getMonth() + 1, n.getDate()]);
 }
 /** UTC offset (hours) of Europe/Paris at noon on that day: 1 in winter, 2 in summer. */
 let offsetKey = '';

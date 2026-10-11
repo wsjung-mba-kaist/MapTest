@@ -81,7 +81,7 @@ export class GpuPanel {
 }
 
 async function copyText(text: string, btn: HTMLButtonElement) {
-  let ok = false;
+  let ok: boolean;
   try { await navigator.clipboard.writeText(text); ok = true; }
   catch {
     const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();

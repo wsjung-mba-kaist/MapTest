@@ -144,7 +144,7 @@ export class Furniture {
       const model = kit.get(name);
       const colors = (k: number) => new THREE.Color(carColor(((k * 7 + v) % 97) / 97, v));
       if (model) place(model.geometry, carMat, idx, { lift: false, colors });
-      else place(fallbackCar(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.3 }), idx, { lift: false, colors });
+      else place(fallbackCar(), withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.3 })), idx, { lift: false, colors });
     });
   }
 

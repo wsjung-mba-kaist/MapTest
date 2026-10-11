@@ -57,6 +57,8 @@ export class World {
   readonly models = { group: new THREE.Group() };
   heroModels: LandmarkModel[] = [];
   heroLodOnly = false;
+  /** floodlight schedule shared with the tower (nightlife.towerLit): 1 lit, 0 off after 23:45; set by App each frame */
+  heroLit = 1;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
   lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
 
@@ -118,7 +120,7 @@ export class World {
     this.streets?.update(x, z);
     this.furniture?.update(night, time);
     this.eiffel?.update(night, time, x, camY, z);
-    for (const m of this.heroModels) m.update(night, x, z);
+    for (const m of this.heroModels) m.update(night, x, z, this.heroLit);
     this.buildings.update(x, z, time);
     this.trees?.update(x, z, time);
     this.water?.update(time);

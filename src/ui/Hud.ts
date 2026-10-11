@@ -199,7 +199,10 @@ export class Hud {
     if (!this.promptEl || text === this.promptText) return;
     this.promptText = text ?? '';
     this.promptEl.hidden = !text;
-    if (text) this.promptEl.innerHTML = text.replace(/^E/, '<kbd>E</kbd>');
+    if (text) {   // "E · label": the key as <kbd>, the label as text (never markup — it comes from a data file)
+      const kbd = document.createElement('kbd'); kbd.textContent = 'E';
+      this.promptEl.replaceChildren(...(text.startsWith('E') ? [kbd, text.slice(1)] : [text]));
+    }
   }
   addCredit(text: string) { this.credits.push(text); this.onCredit(text); }
 }

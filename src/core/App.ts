@@ -103,7 +103,7 @@ export class App {
     this.post = new Post(this.renderer, this.scene, this.camera);
     // diagnostics (FPS panel + status readout) are opt-in: ?status=1, H twice, or the settings switch
     this.hud.onDiagnostics = on => {
-      if (on && !this.stats) { this.stats = new Stats({ trackGPU: false, horizontal: true }); this.stats.dom.style.cssText = 'position:fixed;left:16px;bottom:190px;opacity:.8;z-index:10'; document.body.appendChild(this.stats.dom); this.stats.init(this.renderer); }
+      if (on && !this.stats) { this.stats = new Stats({ trackGPU: false, horizontal: true }); this.stats.dom.style.cssText = 'position:fixed;left:16px;bottom:190px;opacity:.8;z-index:10'; document.body.appendChild(this.stats.dom); void this.stats.init(this.renderer); }
       if (this.stats) this.stats.dom.style.display = on ? '' : 'none';
     };
     window.addEventListener('resize', () => this.resize());
@@ -216,7 +216,9 @@ export class App {
     this.placePanel.onGo = lm => { this.goTo(lm); if (!this.input.touchMode) this.input.lock(); };
     this.audio = new AudioEngine(q.get('audio'));
     const wake = () => this.audio.ensure();
-    window.addEventListener('pointerdown', wake); window.addEventListener('keydown', wake);
+    // capture phase: the panels stop pointerdown from bubbling (so a drag does not reach the canvas), which used to
+    // leave the AudioContext suspended when the first gesture landed on a panel instead of the scene
+    window.addEventListener('pointerdown', wake, { capture: true }); window.addEventListener('keydown', wake, { capture: true });
     this.player.onStep = s => {
       const p = this.player.position;
       this.audio.step(AudioEngine.kindAt(this.world.surface, p.x, p.z, p.y - this.world.groundY(p.x, p.z)), s);
@@ -292,7 +294,8 @@ export class App {
       const lit = towerLit(this.env.hour, st.sunset, st.sunrise, this.towerAlwaysOn);
       localLights.towerScale = lit * n;
       this.world.eiffel.lit = lit;
-      this.world.eiffel.sparkle = towerSparkle(this.env.hour, st.sunset, this.towerAlwaysOn);
+      this.world.heroLit = lit;
+      this.world.eiffel.sparkle = towerSparkle(this.env.hour, st.sunset, st.sunrise, this.towerAlwaysOn);
       localLights.setDynamic(n > 0.05 ? (this.world.life?.dynamicLights(p.x, p.z, this.headlights ? 5 : 0) ?? []) : []);
       localLights.update(p.x, p.z, n);
     });

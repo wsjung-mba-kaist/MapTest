@@ -290,7 +290,7 @@ export class Eiffel {
   /** Coarse parametric lattice tower used only when the baked model is missing. */
   private procedural(): THREE.Object3D {
     const g = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x5c4a3a, roughness: 0.6, metalness: 0.4 });
+    const mat = withLamps(new THREE.MeshStandardMaterial({ color: 0x5c4a3a, roughness: 0.6, metalness: 0.4 }));
     this.materials.push(mat);
     const beam = new THREE.BoxGeometry(1, 1, 1);
     const mesh = new THREE.InstancedMesh(beam, mat, 4 * 60 + 3 * 8);

@@ -154,7 +154,9 @@ export class Crowd {
         this.edge[i] = e; this.dir[i] = dir; this.seg[i] = this.tmp.seg; this.s[i] = sPos; this.speed[i] = speed;
         this.lat[i] = lat; this.latTarget[i] = lat; this.pref[i] = tr.track === 0 ? (hash32(seed, 7) < 0.5 ? 1 : -1) : (tr.track * dir) as 1 | -1;
         this.phase[i] = hash32(seed, 8) * Math.PI * 2;
-        this.walk[i] = hash32(seed, 9) < 0.06 ? 0 : 1;
+        // A few people stand still (phones, photos) — never on a crossing: every agent on a crossing edge counts into
+        // `crossOcc`, and a stander would hold the cars at that junction until the player walked 280 m away.
+        this.walk[i] = (f & EdgeFlag.CROSSING) === 0 && hash32(seed, 9) < 0.06 ? 0 : 1;
         this.hx[i] = dir * this.tmp.ux; this.hz[i] = dir * this.tmp.uz;
         this.px[i] = this.tmp.x; this.pz[i] = this.tmp.z;
         this.seed[i] = seed; this.hop[i] = 0; this.ident[i] = id; this.alive.add(id);

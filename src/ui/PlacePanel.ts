@@ -95,7 +95,8 @@ export class PlacePanel {
         this.img.src = `${DATA_URL}/${lm.image.file}`; this.img.hidden = false;
         this.cap.textContent = `사진: ${lm.image.artist ?? 'Wikimedia Commons'}${lm.image.license ? ` · ${lm.image.license}` : ''}`; this.cap.hidden = false;
       } else { this.img.removeAttribute('src'); this.img.hidden = true; this.cap.hidden = true; }
-      if (lm.links.wiki) { this.wiki.href = lm.links.wiki.url; this.wiki.hidden = false; } else this.wiki.hidden = true;
+      // only http(s): the URL comes from Wikidata sitelinks via the bake, and an anchor href is a script sink otherwise
+      if (lm.links.wiki && /^https?:\/\//i.test(lm.links.wiki.url)) { this.wiki.href = lm.links.wiki.url; this.wiki.hidden = false; } else this.wiki.hidden = true;
       const tip = TIPS[lm.id]; this.tip.textContent = tip ?? ''; this.tip.hidden = !tip;
     }
     this.root.hidden = false;

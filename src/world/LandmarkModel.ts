@@ -3,7 +3,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
-import { buildingUniforms } from '../materials/FacadeMaterial';
 
 export interface LandmarkModelMeta {
   id: string; height?: number; top?: number; centre?: [number, number]; radius?: number; textured?: boolean; lod?: string;
@@ -131,13 +130,17 @@ export class LandmarkModel {
     });
   }
 
-  update(night: number, px: number, pz: number) {
+  private lastWash = -1;
+  /** `lit` is the tower's floodlight schedule (off after 23:45, see nightlife.towerLit): hero floodlights follow it. */
+  update(night: number, px: number, pz: number, lit = 1) {
     if (this.full && this.lod) {
       const far = Math.hypot(this.centre.x - px, this.centre.z - pz) > this.lodAt;
       if (this.full.visible === far) { this.full.visible = !far; this.lod.visible = far; }
     }
     if (this.meta.runtime?.floodlit) {
-      const k = night * (buildingUniforms.uNight.value >= 0 ? 1 : 1);
+      const k = night * lit;
+      if (k === this.lastWash) return;
+      this.lastWash = k;
       for (const m of this.materials) m.emissive.setRGB(1.0, 0.78, 0.55).multiplyScalar((m.emissiveMap ? 0.35 : 0.12) * k);
     }
   }

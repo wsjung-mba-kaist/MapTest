@@ -51,9 +51,10 @@ export function towerLit(hour: number, sunset: number, sunrise: number, alwaysOn
   const on = alwaysOn ? (h >= sunset - 0.5 || h < sunrise + 0.3) : (h >= sunset - 0.5 && h < 23.75);
   return on ? 1 : 0;
 }
-export function towerSparkle(hour: number, sunset: number, alwaysOn = false): number {
+export function towerSparkle(hour: number, sunset: number, sunrise: number, alwaysOn = false): number {
+  // same window as towerLit: with `alwaysOn` the lights stay on past midnight, so the sparkle must too
+  if (!towerLit(hour, sunset, sunrise, alwaysOn)) return 0;
   const h = ((hour % 24) + 24) % 24;
-  if (!(h >= sunset - 0.5 && (alwaysOn ? true : h < 23.75 + 1e-6))) return 0;
   const minute = (h % 1) * 60;
   return minute < 5 ? 1 : 0;
 }

@@ -84,7 +84,8 @@ export class Input {
       if (p && typeof p.catch === 'function') p.catch(() => plain()); 
     } catch { plain(); }
   }
-  unlock() { document.exitPointerLock?.(); }
+  /** Release the pointer; a live gamepad counts as "in use" again only once a stick moves after this. */
+  unlock() { document.exitPointerLock?.(); this.gamepadActive = false; }
 
   /** Poll the first connected gamepad (call once per frame). */
   update(dt: number) {
@@ -109,7 +110,10 @@ export class Input {
 
   /** Movement axes: forward (+1 = forward), strafe (+1 = right), vertical (+1 = up). */
   axes() {
-    const kf = (this.down('KeyW') || this.down('ArrowUp') ? 1 : 0) - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
+    // Nothing moves while the pointer is free (pause overlay, a settings panel): WASD used to walk the player behind
+    // the dimmed overlay — the mirror image of the focused-checkbox bug fixed in the keydown handler above.
+    if (!this.active) return { f: 0, s: 0, v: 0, sprint: false };
+    const kf =(this.down('KeyW') || this.down('ArrowUp') ? 1 : 0) - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
     const ks = (this.down('KeyD') || this.down('ArrowRight') ? 1 : 0) - (this.down('KeyA') || this.down('ArrowLeft') ? 1 : 0);
     const kv = (this.down('KeyE') || this.down('Space') ? 1 : 0) - (this.down('KeyQ') || this.down('KeyC') ? 1 : 0);
     const clamp = (x: number) => Math.max(-1, Math.min(1, x));

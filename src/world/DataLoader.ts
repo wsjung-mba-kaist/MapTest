@@ -42,7 +42,7 @@ export function binMeshToGeometries(buf: ArrayBuffer, skip?: ReadonlySet<string>
     for (const spec of s.attrs) {
       const view = a.attrs.get(spec.name)!;
       // Copy so the geometry owns compact buffers (the source buffer holds every section).
-      const copy = (view as any).slice() as THREE.TypedArray;
+      const copy = (view as THREE.TypedArray).slice() as THREE.TypedArray;
       g.setAttribute(spec.name, new THREE.BufferAttribute(copy, spec.size, !!spec.normalized));
     }
     g.setIndex(new THREE.BufferAttribute(a.indices.slice(), 1));

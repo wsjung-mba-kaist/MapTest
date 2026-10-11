@@ -29,7 +29,19 @@ export class Metro {
     if (!res.ok) throw new Error(`rail.json ${res.status}`);
     const data = await res.json() as { lines: RailLine[] };
     const geom = carGeometry();
-    this.mat = withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.35 }));
+    // Headlight discs glow through `aEmit` (1 on the discs, 0 elsewhere): the emissive term is white × emissiveIntensity
+    // (= night) × the vertex colour, so the body never glows and the discs fade in with dusk.
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.35, emissive: 0xffffff, emissiveIntensity: 0 });
+    mat.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aEmit; varying float vEmit;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEmit = aEmit;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vEmit;')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vEmit * vColor.rgb;');
+    };
+    mat.customProgramCacheKey = () => 'metro-emit';
+    this.mat = withLamps(mat);
     for (const line of data.lines) {
       if (line.pts.length < 2) continue;
       const cum = [0];
@@ -52,7 +64,7 @@ export class Metro {
     const tCruise = Math.max(0, (run - 2 * dAcc) / CRUISE);
     const tTrip = 2 * tAcc + tCruise, tLeg = tTrip + DWELL;
     const u = time % (2 * tLeg), fwd = u < tLeg, t = fwd ? u : u - tLeg;
-    let d = 0, v = 0;
+    let d: number, v: number;
     if (t < tAcc) { d = 0.5 * ACCEL * t * t; v = ACCEL * t; }
     else if (t < tAcc + tCruise) { d = dAcc + CRUISE * (t - tAcc); v = CRUISE; }
     else if (t < tTrip) { const r = tTrip - t; d = run - 0.5 * ACCEL * r * r; v = ACCEL * r; }
@@ -95,8 +107,9 @@ export class Metro {
 function carGeometry(): THREE.BufferGeometry {
   const tint = (g: THREE.BufferGeometry, hex: number, em = 0): THREE.BufferGeometry => {
     const c = new THREE.Color(hex), n = g.attributes.position.count, col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = c.r * (1 + em); col[i * 3 + 1] = c.g * (1 + em); col[i * 3 + 2] = c.b * (1 + em); }
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aEmit', new THREE.BufferAttribute(new Float32Array(n).fill(em), 1));
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
     return g;
   };
