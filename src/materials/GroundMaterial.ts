@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { assertAnchors, checkSamplerBudget } from './patch';
 import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
-import { buildingUniforms } from './FacadeMaterial';
+import { globalUniforms } from '../render/GlobalUniforms';
 import { ORTHO_MARGIN, ORTHO_TILE_M, WORLD_HALF } from '../../shared/layout';
 
 /**
@@ -70,7 +70,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
   mat.customProgramCacheKey = () => opts.street ? 'ground-v3-street' : 'ground-v3';
   mat.onBeforeCompile = shader => {
     assertAnchors('GroundMaterial', shader.vertexShader, shader.fragmentShader, ['common', 'uv_vertex'], ['common']);
-    Object.assign(shader.uniforms, shared, own, { uNight: buildingUniforms.uNight });
+    Object.assign(shader.uniforms, shared, own, { uNight: globalUniforms.uNight });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 uvOv;\nvarying vec3 vWorldPosG; varying vec3 vNormalWG; varying vec2 vUvOv; varying vec2 vUvG;\n#ifdef STREET_SLAB\nattribute float sflag; varying float vSFlag;\n#endif')
       .replace('#include <uv_vertex>', /* glsl */`#include <uv_vertex>

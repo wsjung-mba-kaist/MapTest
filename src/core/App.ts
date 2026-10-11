@@ -8,11 +8,10 @@ import { setSignageDebug, setSignageEnabled } from '../world/Signage';
 import { setShopLights } from '../world/BuildingDetails';
 import { shopOpen, towerLit, towerSparkle } from '../../shared/nightlife';
 import type { SpatialSource } from '../audio/Spatial';
-import { setWet } from '../materials/GroundMaterial';
 import { seasonState } from '../../shared/season';
 import { Rain } from '../render/Rain';
 import type { XRMode } from './XR';
-import { localHour, todayParis, type Weather } from '../render/Environment';
+import { todayParis, type Weather } from '../render/Environment';
 import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
 import { AudioEngine } from '../audio/Audio';
@@ -20,15 +19,19 @@ import { TowerAccess, type Hotspot } from '../world/TowerAccess';
 import { createRenderer, gpuInfo, hpAdapter, probeHighPerfAdapter } from './Renderer';
 import { GpuPanel } from '../ui/GpuPanel';
 import { Hud, formatHour, type MenuAction } from '../ui/Hud';
+import { ModalManager, type ModalKind } from '../ui/ModalManager';
+import { TimeController } from './TimeController';
+import { QualityController } from './QualityController';
+import { actionOf, gamepadMap } from './Keymap';
+import { globalUniforms } from '../render/GlobalUniforms';
 import { HelpPanel, InfoPanel } from '../ui/Menu';
-import { TimePanel, WEATHER_LABEL } from '../ui/TimePanel';
+import { TimePanel } from '../ui/TimePanel';
 import { SettingsPanel } from '../ui/SettingsPanel';
 import { clearPrefs, devicePrefs, loadPrefs, savePrefs } from '../ui/Prefs';
 import { type Prefs } from '../../shared/prefs';
-import { pickQuality, type QualityLevel } from '../../shared/quality';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
-import { buildingUniforms, setFacadeTextures } from '../materials/FacadeMaterial';
+import { setFacadeTextures } from '../materials/FacadeMaterial';
 import { WaterReflection } from '../render/WaterReflection';
 import { Input } from '../player/Input';
 import { FlyControls } from '../player/FlyControls';
@@ -69,12 +72,15 @@ export class App {
   touch!: TouchControls;
   readonly tower = new TowerAccess();
   private headlights = true;
-  weather: Weather = 'clear';
   timePanel!: TimePanel;
-  /** time-lapse rate (sim seconds per real second), 0 = off */
-  private timeRate = 0;
+  /** time of day, weather, presets and the time-lapse (src/core/TimeController.ts) */
+  time!: TimeController;
+  /** quality / AO / shadows / reflection / pixel ratio and the automatic step-down */
+  quality!: QualityController;
+  /** one panel at a time + the pointer-lock contract (src/ui/ModalManager.ts) */
+  modals!: ModalManager;
+  get weather(): Weather { return this.time.weather; }
   private carLights = true;
-  private wetFlag = false;
   private rain?: Rain;
   private xr?: XRMode;
   private longTasks = 0;
@@ -101,9 +107,7 @@ export class App {
     this.renderer = createRenderer(canvas);
     this.canvas = this.renderer.domElement;   // createRenderer may have swapped in a fresh canvas
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.2, 9000);
-    this.input = new Input(this.canvas);
-    this.gpuPanel.onOpen = () => this.input.unlock();
-    this.gpuPanel.onClose = () => { if (!this.modal && !this.hud.timePanelOpen && !this.input.locked && !this.input.touchMode && this.hud.started) this.input.lock(); };
+    this.input = new Input(this.canvas, gamepadMap());
     this.fly = new FlyControls(this.camera, this.input);
     this.scene.add(this.world.group);
     this.env = new Environment(this.scene, this.renderer);
@@ -127,6 +131,7 @@ export class App {
 
   async boot() {
     const q = this.params;
+    let wetFlag: boolean, weatherFlag: Weather | null;   // set from the URL block below, applied once the TimeController exists
     if (q.unknown.length) console.warn(`[url] unknown parameter(s): ${q.unknown.join(', ')} — see the README table`);
     const tower = q.get('tower');
     if (tower === 'lattice') this.world.towerKind = 'lattice';
@@ -151,8 +156,8 @@ export class App {
       if (q.get('signs') === '0') setSignageEnabled(false);
       if (q.get('glow') === '0') this.env.setGlow(false);
       if (q.get('headlights') === '0') this.headlights = false;
-      if (q.get('wet') === '1') { setWet(1); this.wetFlag = true; }
-      const wq = q.get('weather'); if (wq === 'overcast' || wq === 'rain' || wq === 'fog') this.weather = wq;
+      wetFlag = q.get('wet') === '1';
+      weatherFlag = q.oneOf('weather', ['overcast', 'rain', 'fog'] as const);
       if (q.get('signals') === '0' && this.world.lifeOptions) this.world.lifeOptions.signals = false;
       if (q.get('fartraffic') === '0' && this.world.lifeOptions) this.world.lifeOptions.farTraffic = false;
       if (q.get('crossings') === '0' && this.world.lifeOptions) this.world.lifeOptions.crossings = false;
@@ -205,14 +210,23 @@ export class App {
     this.placeList = new PlaceList(hudEl, lm => { this.closeModal(false); this.goTo(lm); if (!this.input.touchMode) this.input.lock(); }, () => this.closeModal());
     this.helpPanel = new HelpPanel(hudEl, () => this.closeModal(), touchUi);
     this.infoPanel = new InfoPanel(hudEl, () => this.closeModal());
+    this.modals = new ModalManager(this.input, this.canvas);
+    this.modals.onModal = (open, hint) => this.hud.setModal(open, hint);
+    this.modals.started = () => this.hud.started;
+    this.modals.register('places', { hint: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', show: () => { const p = this.flying ? this.camera.position : this.player.position; this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw, this.currentLandmark?.id ?? null); }, hide: () => this.placeList.hide() });
+    this.modals.register('help', { hint: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', show: () => this.helpPanel.show(), hide: () => this.helpPanel.hide() });
+    this.modals.register('info', { hint: '닫으면 계속 걷습니다', show: () => this.infoPanel.show(), hide: () => this.infoPanel.hide() });
+    // the time panel and the GPU panel keep the scene visible: `light` panels skip the modal dim / hint
+    this.modals.register('time', { light: true, show: () => { this.hud.toggleTimePanel(true); if (this.touch?.enabled) this.placePanel.fold(); }, hide: () => this.hud.toggleTimePanel(false) });   // phones: one bottom sheet at a time
+    this.modals.register('gpu', { light: true, show: () => { this.gpuPanel.show(gpuInfo(), hpAdapter()); void probeHighPerfAdapter().then(hp => { if (this.gpuPanel.open) this.gpuPanel.show(gpuInfo(), hp); }); }, hide: () => this.gpuPanel.hide() });
+    this.gpuPanel.onClose = () => { if (this.modals.is('gpu')) this.modals.hide(); };   // its own 닫기 / 다시 보지 않기 buttons
     this.hud.onCredit = t => this.infoPanel.addCredit(t);
     this.hud.onMenu = a => this.menuAction(a);
     this.hud.onClock = () => this.toggleTimePanel();
     this.timePanel = new TimePanel(document.getElementById('timepanel')!);
-    this.timePanel.onNow = () => { const t = todayParis(); this.timePanel.stop(); this.env.setDate(t); this.applyDayPresets(); this.setHour(localHour(new Date(), t)); this.hud.toast(`지금 · ${formatHour(this.env.hour)}`, 1500); };
-    this.timePanel.onPlay = rate => { this.timeRate = rate; this.audio.chime = rate === 0; };
-    this.timePanel.onWeather = w => this.setWeather(w);
-    this.timePanel.onSeason = s => { const t = todayParis(); this.env.setDate(s ? [t[0], s.month, s.day] : t); this.applyDayPresets(); this.hud.toast(s ? `${s.label} · ${s.month}월 ${s.day}일` : '오늘', 1500); };
+    this.time = new TimeController({ env: this.env, hud: this.hud, timePanel: this.timePanel, world: this.world, audio: () => this.audio, rain: () => this.rain });
+    this.time.wetFlag = wetFlag;
+    if (weatherFlag) this.time.weather = weatherFlag;
     { const first = this.world.landmarks.byHotkey(1) ?? this.world.landmarks.list[0]; if (first) this.goTo(first, { instant: true, quiet: true }); }
 
     // ---- Phase D: minimap, soundscape, touch / gamepad
@@ -248,6 +262,8 @@ export class App {
       () => { clearPrefs(); this.prefs = devicePrefs(this.touch.enabled); this.applyPrefs(this.prefs); this.settingsPanel.set(this.prefs); this.hud.toast('설정을 기본값으로 되돌렸습니다'); });
     this.hud.enableMenu('settings', true);
     this.hud.enableMenu('night', this.touch.enabled);
+    this.modals.register('settings', { hint: '바뀐 설정은 바로 적용되고 저장됩니다 · 닫으면 계속 걷습니다', show: () => this.settingsPanel.show(), hide: () => this.settingsPanel.hide() });
+    this.quality = new QualityController({ renderer: this.renderer, post: this.post, world: this.world, hud: this.hud, reflection: () => this.reflection, touch: () => this.touch.enabled, inputActive: () => this.input.active, resize: () => this.resize() });
     this.applyPrefs(this.prefs);
     this.settingsPanel.set(this.prefs);
     if (q.get('minimap') === '1' && !this.minimap.visible) this.minimap.toggle(true);   // URL wins over the stored default
@@ -278,14 +294,14 @@ export class App {
       const feet = this.player.position;
       this.hotspot = !this.flying && !this.player.riding && !this.glide.active && this.tower.ready ? this.tower.nearest(feet.x, feet.y, feet.z) : null;
       this.hud.prompt(this.hotspot ? `E · ${this.hotspot.label}` : null);
-      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); this.hud.streaming(this.world.buildings.loadedCount, this.world.buildings.chunks.size); if (this.modal === 'places') { const f = this.flying ? this.camera.position : this.player.position; this.placeList.update(f.x, f.z, this.input.yaw); } }
+      if (t - this.placeCheckAt > 0.25 && !this.glide.active) { this.placeCheckAt = t; this.updatePlace(t); this.hud.streaming(this.world.buildings.loadedCount, this.world.buildings.chunks.size); if (this.modals.is('places')) { const f = this.flying ? this.camera.position : this.player.position; this.placeList.update(f.x, f.z, this.input.yaw); } }
       this.world.labels?.update(p.x, p.z, this.currentLandmark?.id ?? null);
     });
     const camDir = new THREE.Vector3();
     this.loop.add((dt, t) => { this.camera.getWorldDirection(camDir); this.world.update(this.camera.position.x, this.camera.position.z, t, this.env.night, dt, camDir, this.env.hour, this.camera.position.y); });
     this.rain = new Rain(); this.scene.add(this.rain.points);
     this.loop.add((dt, t) => { this.rain?.update(t, this.camera.position, this.env.night, dt); this.world.trees?.setSeason(seasonState(this.env.dayOfYear())); });
-    this.loop.add((_dt, t) => { this.env.follow(this.camera.position); this.env.tick(t, this.camera.position); this.post.setNight(this.env.night, this.env.sunElev); buildingUniforms.uHour.value = this.env.hour; });
+    this.loop.add((_dt, t) => { this.env.follow(this.camera.position); this.env.tick(t, this.camera.position); this.post.setNight(this.env.night, this.env.sunElev); globalUniforms.uHour.value = this.env.hour; });
     this.loop.add(() => {
       const p = this.camera.position, n = this.env.night;
       const st = this.env.sunTimes();
@@ -298,23 +314,9 @@ export class App {
       localLights.setDynamic(n > 0.05 ? (this.world.life?.dynamicLights(p.x, p.z, this.headlights ? 5 : 0) ?? []) : []);
       localLights.update(p.x, p.z, n);
     });
-    this.loop.add(dt => { if (this.timeRate) { this.env.setHour((this.env.hour + this.timeRate * dt / 3600) % 24); this.hud.setTimeDisplay(this.env.hour); this.refreshClock(); } });
+    this.loop.add(dt => this.time.tick(dt));
     this.loop.add(() => this.updateStatus());
-    this.loop.add((dt, t) => {
-      if (this.autoQualityDone || this.prefs.quality !== 'auto' || !this.post.enabled || !this.input.active) return;
-      if (!this.autoQualityAt) { this.autoQualityAt = t; return; }
-      const settled = this.world.pending === 0 || t - this.autoQualityAt > 25;
-      if (!settled || t - this.autoQualityAt < 3) return;
-      this.frameSamples.push(dt * 1000);
-      if (this.frameSamples.length < 30 || t - this.autoQualityAt < 8) return;
-      const d = pickQuality(this.frameSamples, this.autoLevel, { minSamples: 30 });
-      this.autoQualityDone = true;
-      if (!d.changed) return;
-      this.autoLevel = d.quality;
-      this.post.setQuality(d.quality);
-      if (d.pixelRatio) { this.renderer.setPixelRatio(this.renderer.getPixelRatio() * d.pixelRatio); this.resize(); }
-      this.hud.toast(`화면이 느려 품질을 '${{ high: '높음', medium: '보통', low: '낮음' }[d.quality]}'${d.pixelRatio ? ' · 해상도 0.75×' : ''}으로 낮췄습니다 · 설정에서 변경`, 5000);
-    });
+    this.loop.add((dt, t) => this.quality.tick(dt, t, this.prefs.quality === 'auto'));
     this.loop.onRender = () => {
       if (this.xr?.presenting) { this.xr.render(); return; }
       this.post.render(1 / 60);
@@ -330,29 +332,31 @@ export class App {
     this.loop.start(cb => this.renderer.setAnimationLoop(cb));
 
     this.input.onKey((code, e) => {
-      // Esc reaches the page only while the pointer is free (locked, the browser eats it): close the top modal first
-      if (code === 'Escape') { if (this.gpuPanel.open) this.gpuPanel.hide(); else if (this.modal) this.closeModal(false); }
-      if (code === 'KeyH') this.toggleHelp();
-      if (code === 'Menu') this.hud.showOverlay(true);   // touch "...": the pause menu (no pointer lock to release)
-      if (code === 'KeyG') this.toggleGpuPanel();
-      if (code === 'KeyF') this.toggleFly();
-      if (code === 'KeyT') this.toggleTimePanel();
-      if (code === 'KeyN') this.cycleTime();
-      if (code === 'KeyR') this.cycleWeather();
-      if (code === 'KeyP') void this.share();
-      if (code === 'KeyO') this.captureRequested = true;
-      if (code === 'KeyM') this.toggleMinimap();
-      if (code === 'KeyL') this.toggleModal('places');
-      if (code === 'KeyI') this.placePanel.toggle();
-      if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); }
-      if (code === 'KeyV') { const m = this.audio.toggleMute(); this.prefs = { ...this.prefs, muted: m }; savePrefs(this.prefs); this.hud.toast(m ? '소리 끔' : '소리 켬'); }
-      if (code === 'Comma' || code === 'Period') { this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25)); this.hud.toast(formatHour(this.env.hour), 1200); }
-      const digit = /^Digit([1-8])$/.exec(code);
-      if (digit) { const lm = this.world.landmarks.byHotkey(Number(digit[1])); if (lm) this.goTo(lm); }
+      const hit = actionOf(code);
+      if (!hit) return;
+      switch (hit.action) {
+        // Esc reaches the page only while the pointer is free (locked, the browser eats it): close the top panel first
+        case 'escape': this.modals.closeTop(); break;
+        case 'help': this.toggleHelp(); break;
+        case 'menu': this.hud.showOverlay(true); break;   // touch "...": the pause menu (no pointer lock to release)
+        case 'gpu': this.modals.toggle('gpu'); break;
+        case 'fly': this.toggleFly(); break;
+        case 'time': this.toggleTimePanel(); break;
+        case 'nextTime': this.time.cycleTime(); break;
+        case 'weather': this.time.cycleWeather(); break;
+        case 'share': void this.share(); break;
+        case 'screenshot': this.captureRequested = true; break;
+        case 'minimap': this.toggleMinimap(); break;
+        case 'places': this.modals.toggle('places'); break;
+        case 'card': this.placePanel.toggle(); break;
+        case 'lift': if (!this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); } break;
+        case 'mute': { const m = this.audio.toggleMute(); this.prefs = { ...this.prefs, muted: m }; savePrefs(this.prefs); this.hud.toast(m ? '소리 끔' : '소리 켬'); break; }
+        case 'timeBack': case 'timeForward': this.time.stepTime((hit.action === 'timeBack' ? -1 : 1) * (e.shiftKey ? 1 : 0.25)); this.hud.toast(formatHour(this.env.hour), 1200); break;
+        case 'landmark': { const lm = hit.hotkey ? this.world.landmarks.byHotkey(hit.hotkey) : undefined; if (lm) this.goTo(lm); break; }
+      }
     });
-    this.hud.onTimeChange = h => { this.timePanel.stop(); this.env.setHour(h); this.refreshClock(); };
-    this.applyDayPresets();
-    this.applyWeather(false);
+    this.time.applyDayPresets();
+    this.time.applyWeather(false);
     if (this.world.life?.traffic) this.world.life.traffic.lightFx = this.carLights;
     this.player.obstacles = (x, z, r, out) => this.world.life?.pushOut(x, z, r, out);
     // compile the programs of everything already in the scene off the first frames (KHR_parallel_shader_compile)
@@ -367,11 +371,11 @@ export class App {
     this.hud.addCredit('Map data © OpenStreetMap contributors · IGN BD TOPO / BD ORTHO / RGE ALTI · Ville de Paris');
     if (this.world.landmarks.baked) this.hud.addCredit('명소 설명: Wikipedia · Wikidata (CC BY-SA 4.0) · 사진: Wikimedia Commons (저작자·라이선스는 카드에 표시)');
     this.hud.setTimeDisplay(this.env.hour);
-    this.refreshClock();
+    this.time.refreshClock();
     document.addEventListener('pointerlockchange', () => { if (!this.input.touchMode) this.hud.showOverlay(!this.input.locked); });
     this.hud.onStart = () => {
       this.gpuNotice();
-      if (this.modal) this.closeModal(false);   // clicking the scene means "continue": whatever panel was open goes
+      this.modals.closeTop();   // clicking the scene means "continue": whatever panel was open goes
       this.audio.ensure();
       this.hud.markStarted(this.touch.enabled ? '탭하면 계속 걷습니다' : undefined);
       if (this.touch.enabled) {   // phones: no pointer lock
@@ -403,48 +407,23 @@ export class App {
     if (life?.metro) for (const h of life.metro.heads) if (Math.hypot(h.x - p.x, h.z - p.z) < 260 && h.v > 0.5) src.push({ kind: 'train', x: h.x, y: h.y, z: h.z, level: 0.25 + 0.55 * Math.min(1, h.v / 11.5) });
   }
 
-  /** T while walking: release the pointer (and show the panel) so the slider can be dragged; T again hides it and grabs the pointer back. */
-  toggleTimePanel(open = this.input.locked || !this.hud.timePanelOpen) {
-    this.hud.toggleTimePanel(open);
-    if (open && this.touch?.enabled) this.placePanel.fold();   // phones: one bottom sheet at a time
-    if (open) this.input.unlock();
-    else if (!this.input.locked && !this.input.touchMode) this.input.lock();   // phones never hold the pointer
-  }
+  /** T: the time panel (released pointer so the slider can be dragged); T again hides it and grabs the pointer back. */
+  toggleTimePanel(open?: boolean) { if (open === undefined) this.modals.toggle('time'); else if (open) this.modals.show('time'); else if (this.modals.is('time')) this.modals.hide(); }
   helpPanel!: HelpPanel;
   infoPanel!: InfoPanel;
-  /** the one centred modal that may be open (landmark list, help, info); same pointer-lock contract as the time panel */
-  modal: 'places' | 'help' | 'info' | 'settings' | null = null;
+  /** the centred modal that is open (landmark list, help, info, settings); null for none or a light panel */
+  get modal(): Exclude<ModalKind, 'time' | 'gpu'> | null { return this.modals.modal; }
   settingsPanel!: SettingsPanel;
   compass!: Compass;
   prefs!: Prefs;
   private reflection?: WaterReflection;
-  private readonly frameSamples: number[] = [];
-  private autoQualityAt = 0;
-  private autoQualityDone = false;
-  private autoLevel: QualityLevel = 'high';
-  openModal(kind: NonNullable<App['modal']>) {
-    if (this.modal) this.closeModal(false);
-    if (kind === 'places') {
-      const p = this.flying ? this.camera.position : this.player.position;
-      this.placeList.show(this.world.landmarks.sorted(p.x, p.z), p.x, p.z, this.input.yaw, this.currentLandmark?.id ?? null);
-    } else if (kind === 'help') this.helpPanel.show(); else if (kind === 'settings') this.settingsPanel.show(); else this.infoPanel.show();
-    this.modal = kind;
-    this.hud.setModal(true, { places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보', info: '닫으면 계속 걷습니다', settings: '바뀐 설정은 바로 적용되고 저장됩니다 · 닫으면 계속 걷습니다' }[kind]);
-    this.input.unlock();
-  }
-  /** close the open modal; `relock` grabs the pointer back (false when another panel or the menu takes over) */
-  closeModal(relock = true) {
-    if (this.modal === 'places') this.placeList.hide(); else if (this.modal === 'help') this.helpPanel.hide(); else if (this.modal === 'info') this.infoPanel.hide(); else if (this.modal === 'settings') this.settingsPanel.hide();
-    this.modal = null;
-    this.hud.setModal(false);
-    this.canvas.focus();   // keyboard focus leaves the closed panel
-    if (relock && !this.input.locked && !this.input.touchMode) this.input.lock();
-  }
-  /** L / H / menu: open while walking or closed, close when it is the open one */
-  toggleModal(kind: NonNullable<App['modal']>) { if (this.modal === kind && !this.input.locked) this.closeModal(); else this.openModal(kind); }
+  openModal(kind: ModalKind) { this.modals.show(kind); }
+  /** close the open panel; `relock` grabs the pointer back (false when another panel or the menu takes over) */
+  closeModal(relock = true) { this.modals.hide(relock); }
+  toggleModal(kind: ModalKind) { this.modals.toggle(kind); }
   /** H: the help panel; H again while it is open flips the diagnostics readout ("H twice") and closes it. */
   toggleHelp() {
-    if (this.modal === 'help') { const on = !this.hud.diagnostics; this.hud.setDiagnostics(on); this.settingsPanel.set({ ...this.prefs, diagnostics: on }); this.closeModal(); this.hud.toast(on ? '진단 정보 표시 (H 두 번: 숨김)' : '진단 정보 숨김'); }
+    if (this.modals.is('help')) { const on = !this.hud.diagnostics; this.hud.setDiagnostics(on); this.settingsPanel.set({ ...this.prefs, diagnostics: on }); this.closeModal(); this.hud.toast(on ? '진단 정보 표시 (H 두 번: 숨김)' : '진단 정보 숨김'); }
     else this.openModal('help');
   }
   toggleMinimap() {
@@ -455,26 +434,18 @@ export class App {
   private menuAction(a: MenuAction) {
     if (a === 'continue') this.hud.onStart();
     else if (a === 'places') this.openModal('places');
-    else if (a === 'time') this.toggleTimePanel(true);
+    else if (a === 'time') this.openModal('time');
     else if (a === 'share') void this.share();
     else if (a === 'shot') { this.captureRequested = true; }
     else if (a === 'help') this.openModal('help');
     else if (a === 'info') this.openModal('info');
     else if (a === 'settings') this.openModal('settings');
-    else if (a === 'night') this.cycleTime();
+    else if (a === 'night') this.time.cycleTime();
   }
   /** Push preferences into the runtime; `keys` limits it to what changed (a panel edit) — default: everything. */
   applyPrefs(p: Prefs, keys: (keyof Prefs)[] = Object.keys(p) as (keyof Prefs)[]) {
-    const touch = this.touch?.enabled ?? false;
     for (const k of keys) {
-      if (k === 'quality') { if (p.quality !== 'auto') this.post.setQuality(p.quality); else if (this.autoQualityDone) { this.autoQualityDone = false; this.autoQualityAt = 0; this.frameSamples.length = 0; } }
-      else if (k === 'ao') this.post.setAo(p.ao);
-      else if (k === 'shadows') { this.renderer.shadowMap.enabled = p.shadows; this.renderer.shadowMap.needsUpdate = true; }
-      else if (k === 'reflection') {
-        const r = this.reflection;
-        if (r) { r.enabled = p.reflection; this.post.reflection = p.reflection ? r : undefined; if (p.reflection) this.world.water?.setReflection(r.target.texture, r.textureMatrix); else this.world.water?.setReflection(null, null, 0); }
-      }
-      else if (k === 'pixelRatio') { this.renderer.setPixelRatio(p.pixelRatio === 'auto' ? Math.min(window.devicePixelRatio || 1, touch ? 1 : 2) : p.pixelRatio); this.resize(); }
+      if ((QualityController.KEYS as readonly string[]).includes(k)) this.quality.apply(p, k);
       else if (k === 'sensitivity') this.input.lookScale = p.sensitivity;
       else if (k === 'fov') { this.camera.fov = p.fov; this.camera.updateProjectionMatrix(); }
       else if (k === 'headBob') this.player.headBob = p.headBob && !this.noGlide;
@@ -486,22 +457,6 @@ export class App {
       else if (k === 'diagnostics') this.hud.setDiagnostics(p.diagnostics);
     }
   }
-  /** the top-right chip: time · weather (· date when it is not today) */
-  refreshClock() {
-    const [y, m, d] = this.env.ymd, t = todayParis();
-    const today = y === t[0] && m === t[1] && d === t[2];
-    this.hud.setClock(`${formatHour(this.env.hour)} · ${WEATHER_LABEL[this.weather]}${today ? '' : ` · ${this.env.dateLabel()}`}`);
-  }
-  /** sunrise / sunset ticks, the highlighted weather and season buttons */
-  private refreshTimePanel() {
-    if (!this.timePanel) return;
-    const { sunrise, sunset } = this.env.sunTimes();
-    this.timePanel.setSun(sunrise, sunset);
-    this.timePanel.setWeather(this.weather);
-    const [y, m, d] = this.env.ymd, t = todayParis();
-    this.timePanel.setDate(m, d, y === t[0] && m === t[1] && d === t[2]);
-  }
-
   /** 4 Hz: which site the feet are in (with hysteresis + a 0.5 s dwell), the chip text, and a card on entering a new one. */
   private updatePlace(t: number) {
     const p = this.flying ? this.camera.position : this.player.position;
@@ -524,12 +479,6 @@ export class App {
   private readonly gpuPanel = new GpuPanel();
   private forceGpuPanel = false;
   private gpuNoticed = false;
-  /** G: the "GPU 선택" panel (which adapter WebGL got, which one the browser could use, how to switch). */
-  private toggleGpuPanel(force = false) {
-    if (this.gpuPanel.open && !force) { this.gpuPanel.hide(); return; }
-    this.gpuPanel.show(gpuInfo(), hpAdapter());
-    void probeHighPerfAdapter().then(hp => { if (this.gpuPanel.open) this.gpuPanel.show(gpuInfo(), hp); });
-  }
   /** One-time GPU readout after the first click; opens the panel when WebGL is on a weaker adapter than the browser can see. */
   private gpuNotice() {
     if (this.gpuNoticed) return;
@@ -540,25 +489,14 @@ export class App {
     void probeHighPerfAdapter().then(hp => {
       const better = !!hp && hp.vendor !== '' && hp.vendor !== 'unknown' && hp.vendor !== g.vendor;
       const wrongGpu = g.software || (g.integrated && better);
-      if (this.forceGpuPanel || (wrongGpu && !GpuPanel.suppressed)) this.toggleGpuPanel(true);
+      if (this.forceGpuPanel || (wrongGpu && !GpuPanel.suppressed)) this.modals.show('gpu');
       else if (g.software || g.integrated) this.hud.toast(`GPU: ${g.name}${g.software ? ' · 소프트웨어 렌더링' : ' · 내장 GPU'} · G 키: GPU 선택 안내`, 8000);
       else this.hud.toast(`GPU: ${g.name}`, 5000);
     });
   }
 
-  setHour(h: number) { this.env.setHour(h); this.hud.setTimeDisplay(this.env.hour); this.refreshClock(); }
-  /** Preset hours follow the day's real sunrise / sunset (a June sunset is 21:58, a December one 16:56). */
-  applyDayPresets() {
-    const { sunrise, sunset } = this.env.sunTimes();
-    const r = (h: number) => Math.round(h * 4) / 4;
-    this.hud.setPresets([
-      { label: '새벽', hour: r(sunrise - 0.25) }, { label: '낮', hour: 13 }, { label: '오후', hour: r(Math.max(14, sunset - 3.2)) },
-      { label: '노을', hour: r(sunset - 0.35) }, { label: '야경', hour: Math.ceil(sunset + 1.4) % 24 + 0.02 }, { label: '심야', hour: 1 },
-    ]);
-    this.hud.setDateLabel(`${this.env.dateLabel()} · 파리`);
-    this.refreshClock();
-    this.refreshTimePanel();
-  }
+  setHour(h: number) { this.time.setHour(h); }
+  applyDayPresets() { this.time.applyDayPresets(); }
   /** P: copy a link that reproduces this view. */
   async share() {
     const url = shareUrl(this.shareState());
@@ -576,34 +514,10 @@ export class App {
       tower: this.world.towerKind, weather: this.weather, at: this.currentLandmark?.id,
     };
   }
-  stepTime(dh: number) { this.timePanel.stop(); this.setHour(this.env.hour + dh); }
-  /** N: jump to the next preset after the current time (dawn, noon, afternoon, sunset, night, late night). */
-  /** Weather: sky/sun/fog in Environment, plus wet streets, rain and wind here. */
-  applyWeather(toast = true) {
-    const w = this.weather;
-    this.env.setWeather(w);
-    setWet(w === 'rain' || this.wetFlag ? 1 : 0);
-    this.world.trees?.setWind(w === 'rain' ? 1.6 : w === 'overcast' ? 1.1 : 0.7);
-    if (this.rain) this.rain.on = w === 'rain';
-    this.audio.setRain(w === 'rain' ? 1 : 0);
-    if (toast) this.hud.toast(WEATHER_LABEL[w]);
-    this.refreshClock();
-    this.timePanel?.setWeather(w);
-  }
-  setWeather(w: Weather, toast = true) { this.weather = w; this.applyWeather(toast); }
-  cycleWeather() {
-    const order: Weather[] = ['clear', 'overcast', 'rain', 'fog'];
-    this.setWeather(order[(order.indexOf(this.weather) + 1) % order.length]);
-  }
-
-  cycleTime() {
-    const sorted = [...this.hud.presets].sort((a, b) => a.hour - b.hour);
-    const h = this.env.hour;
-    const next = sorted.find(p => p.hour > h + 0.05) ?? sorted[0];
-    this.timePanel.stop();
-    this.setHour(next.hour);
-    this.hud.toast(`${next.label} · ${formatHour(next.hour)}`, 1500);
-  }
+  stepTime(dh: number) { this.time.stepTime(dh); }
+  setWeather(w: Weather, toast = true) { this.time.setWeather(w, toast); }
+  cycleWeather() { this.time.cycleWeather(); }
+  cycleTime() { this.time.cycleTime(); }
 
   /** Debug helpers: ?auto=1 skips the overlay; ?fly=1&x=..&y=..&z=..&yaw=deg&pitch=deg places the camera; ?hour=19.5 sets the time. */
   private applyUrlParams() {

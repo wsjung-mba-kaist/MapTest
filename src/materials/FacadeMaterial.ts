@@ -5,15 +5,10 @@ import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { ORTHO_MARGIN, ORTHO_TILE_M, STYLE_SCALE, Style, SurfaceFlag, WORLD_HALF } from '../../shared/layout';
 import { litProbabilityGlsl } from '../../shared/nightlife';
+import { globalUniforms } from '../render/GlobalUniforms';
 
-/**
- * Shared uniforms for all building materials (night factor, time).
- */
-export const buildingUniforms = {
-  uNight: { value: 0 },
-  uTime: { value: 0 },
-  uHour: { value: 12 },   // local hour: drives which windows are lit and shop opening hours (shared/nightlife.ts)
-};
+/** The shared night / time / hour uniforms live in src/render/GlobalUniforms.ts; this name is kept for the world layers. */
+export const buildingUniforms = globalUniforms;
 
 /** Photographic micro-detail shared by every wall/roof material; filled by loadFacadeDetail(). */
 const facadeTex = {
@@ -109,11 +104,14 @@ ${facadeGlsl}
 `;
 
 type Hooks = (shader: THREE.WebGLProgramParametersWithUniforms) => void;
+/** djb2 of a shader body for the program cache key: the length alone collided for equal-length bodies. */
+function strHash(s: string): string { let h = 5381; for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); }
 
 /** Patch a MeshStandardMaterial so it runs the procedural facade/roof shading. fragMain must define fDetailN (tangent-space). */
 function patch(mat: THREE.MeshStandardMaterial, fragMain: string, extraHooks?: Hooks) {
   mat.vertexColors = true;
-  mat.customProgramCacheKey = () => `facade:${fragMain.length}:${mat.name}`;
+  const key = `facade:${strHash(fragMain)}:${mat.name}`;
+  mat.customProgramCacheKey = () => key;
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (shader, renderer) => {
     prev?.call(mat, shader, renderer);

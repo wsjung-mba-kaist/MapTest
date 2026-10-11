@@ -10,7 +10,7 @@ export type Weather = 'clear' | 'overcast' | 'rain' | 'fog';
 export const SKY_GLOW = new THREE.Vector3(0.16, 0.11, 0.075);
 const FOG_DAY = new THREE.Color(0xb7c9dc), FOG_DAY_OC = new THREE.Color(0.58, 0.61, 0.65), FOG_DUSK = new THREE.Color(0xd9a98a), FOG_DUSK_OC = new THREE.Color(0.5, 0.5, 0.52);
 const fogDayTmp = new THREE.Color(), fogDuskTmp = new THREE.Color(), fogNightTmp = new THREE.Color();
-import { buildingUniforms } from '../materials/FacadeMaterial';
+import { globalUniforms } from './GlobalUniforms';
 import { CLOUD_BODY, CLOUD_DECL, cloudDensityJs, NIGHT_SKY_BODY, NIGHT_SKY_DECL, localSiderealTime, moonDirection, starMatrix, starTexture } from './NightSky';
 import { REFLECT_LAYER } from './WaterReflection';
 
@@ -276,7 +276,7 @@ export class Environment {
     // city haze at night is real, but the lights must punch through it; cloud, rain and fog thicken it
     const fogK = this.weather === 'fog' ? 9 : this.weather === 'rain' ? 3 : this.weather === 'overcast' ? 2.2 : 1;
     this.fog.density = 0.00030 * fogK;
-    buildingUniforms.uNight.value = n;
+    globalUniforms.uNight.value = n;
   }
 
   /** Per-frame: star twinkle clock. */
