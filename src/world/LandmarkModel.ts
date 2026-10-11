@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
+import { adaptGltfMaterial, adoptGltfScene } from './gltf';
 
 export interface LandmarkModelMeta {
   id: string; height?: number; top?: number; centre?: [number, number]; radius?: number; textured?: boolean; lod?: string;
@@ -64,16 +65,7 @@ export class LandmarkModel {
     loader.setMeshoptDecoder(MeshoptDecoder);
     let y = this.groundY(this.centre.x, this.centre.z);
     const adopt = (scene: THREE.Object3D) => {
-      scene.updateMatrixWorld(true);
-      scene.traverse(o => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = true;
-        m.layers.enable(REFLECT_LAYER);
-        const g = m.geometry; const idx = g.index;
-        this.triangles += (idx ? idx.count : g.attributes.position.count) / 3;
-        m.material = this.adaptMaterial(m.material as THREE.MeshStandardMaterial);
-      });
+      this.triangles += adoptGltfScene(scene, { adapt: src => this.adaptMaterial(src), materials: this.materials, reflect: true });
       scene.position.y = y;
       return scene;
     };
@@ -92,29 +84,20 @@ export class LandmarkModel {
     this.loaded = true;
   }
 
+  /** A scan keeps its texture (glowing through it after dusk when floodlit); an untextured CAD model gets a stone tint. */
   private adaptMaterial(src: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
-    const textured = !!src.map;
-    const mat = textured ? src : new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 });
-    if (textured) {
-      mat.roughness = this.meta.runtime?.roughness ?? Math.max(0.6, mat.roughness); mat.envMapIntensity = 0.6;
+    const rt = this.meta.runtime;
+    return adaptGltfMaterial(src, { untextured: { roughness: 0.85, metalness: 0.0 }, glow: !!rt?.floodlit, tune: (mat, _src, textured) => {
+      if (!textured) { const p = rt?.paint ?? [222, 214, 196]; mat.color.setRGB(p[0] / 255, p[1] / 255, p[2] / 255); return; }
+      mat.roughness = rt?.roughness ?? Math.max(0.6, mat.roughness); mat.envMapIntensity = 0.6;
       // Photogrammetry and asset-store models often ship a near-metal PBR material (this one is metalness 0.9).
       // A metal has no diffuse term, so under our modest environment intensity it renders as a black silhouette
       // speckled with reflections. Real subjects here are stone, plaster and oxidised copper, all dielectric.
-      mat.metalness = this.meta.runtime?.metalness ?? Math.min(mat.metalness, 0.15);
-      const t = this.meta.runtime?.tint;
+      mat.metalness = rt?.metalness ?? Math.min(mat.metalness, 0.15);
+      const t = rt?.tint;
       if (t) mat.color.setRGB(t[0], t[1], t[2]);           // three multiplies the map by this, so > 1 lifts a dark scan
-      if (this.meta.runtime?.doubleSided) mat.side = THREE.DoubleSide;
-      if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; }
-      if (this.meta.runtime?.floodlit) { mat.emissiveMap = mat.map; mat.emissive = new THREE.Color(0, 0, 0); }
-    } else {
-      const p = this.meta.runtime?.paint ?? [222, 214, 196];
-      mat.color.setRGB(p[0] / 255, p[1] / 255, p[2] / 255);
-      mat.side = src.side;
-      mat.emissive = new THREE.Color(0, 0, 0);
-    }
-    withLamps(mat);
-    this.materials.push(mat);
-    return mat;
+      if (rt?.doubleSided) mat.side = THREE.DoubleSide;
+    } });
   }
 
   /**

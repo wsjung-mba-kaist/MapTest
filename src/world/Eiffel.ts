@@ -5,6 +5,7 @@ import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { buildLattice } from './EiffelLattice';
+import { adaptGltfMaterial, adoptGltfScene } from './gltf';
 
 /** lighthouse beams: length rendered (m), half-width at the lamp and at the far end (m), elevation (deg), seconds per turn */
 const BEAM_LEN = 1600, BEAM_W0 = 2.2, BEAM_W1 = 70, BEAM_ELEV = 3, BEAM_PERIOD = 40;
@@ -70,22 +71,15 @@ export class Eiffel {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
       const gltf = await loader.loadAsync(`${MODELS_URL}/eiffel.glb`);
-      const positions: THREE.Vector3[] = [];
-      gltf.scene.updateMatrixWorld(true);
-      gltf.scene.traverse(o => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true; m.receiveShadow = true;
-        m.frustumCulled = true;
-        const g = m.geometry;
-        const idx = g.index;
-        this.triangles += (idx ? idx.count : g.attributes.position.count) / 3;
-        m.material = this.adaptMaterial(m.material as THREE.MeshStandardMaterial);
-        // Sample vertices for night sparkles (world space).
-        const pos = g.attributes.position;
-        const step = Math.max(1, Math.floor(pos.count / 6000));
-        const v = new THREE.Vector3();
-        for (let i = 0; i < pos.count; i += step) { v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); positions.push(v.clone()); }
+      const positions: THREE.Vector3[] = [], v = new THREE.Vector3();
+      this.triangles += adoptGltfScene(gltf.scene, {
+        adapt: src => this.adaptMaterial(src), materials: this.materials,
+        onMesh: m => {
+          // Sample vertices for night sparkles (world space).
+          const pos = m.geometry.attributes.position;
+          const step = Math.max(1, Math.floor(pos.count / 6000));
+          for (let i = 0; i < pos.count; i += step) { v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); positions.push(v.clone()); }
+        },
       });
       this.group.add(gltf.scene);
       this.addSparkles(positions);
@@ -98,18 +92,17 @@ export class Eiffel {
     }
   }
 
+  /** Photogrammetry keeps the photo (glowing through it after dusk); a solid model gets the shaded three-tone paint. */
   private adaptMaterial(src: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
-    const textured = !!src.map;
-    const mat = textured ? src : new THREE.MeshStandardMaterial();
-    if (textured) {
-      // Photogrammetry: keep the photo, but give the paint a little sheen and a night glow driven by the same texture.
-      mat.roughness = 0.62; mat.metalness = 0.12; mat.envMapIntensity = 0.7;
-      mat.color.setRGB(1.10, 0.99, 0.88); // the scan was shot under a grey sky; nudge toward the real "Eiffel brown"
-      mat.emissiveMap = mat.map; mat.emissive = new THREE.Color(0, 0, 0);
-      if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; }
-    } else {
+    return adaptGltfMaterial(src, { glow: true, tune: (mat, _src, textured) => {
+      if (textured) {
+        // Photogrammetry: keep the photo, but give the paint a little sheen and a night glow driven by the same texture.
+        mat.roughness = 0.62; mat.metalness = 0.12; mat.envMapIntensity = 0.7;
+        mat.color.setRGB(1.10, 0.99, 0.88); // the scan was shot under a grey sky; nudge toward the real "Eiffel brown"
+        return;
+      }
       // Solid model: three-tone "Eiffel brown", darker at the base and lighter towards the top.
-      mat.color.set(0xffffff); mat.roughness = 0.5; mat.metalness = 0.35; mat.side = src.side;
+      mat.color.set(0xffffff); mat.roughness = 0.5; mat.metalness = 0.35;
       mat.customProgramCacheKey = () => 'eiffel-paint-v2';
       mat.userData.floodlit = true;
       mat.onBeforeCompile = shader => {
@@ -138,11 +131,7 @@ export class Eiffel {
               totalEmissiveRadiance += vec3(1.0, 0.50, 0.15) * 0.9 * litk * uTowerLit;
             }`);
       };
-      mat.emissive = new THREE.Color(0, 0, 0);
-    }
-    withLamps(mat);
-    this.materials.push(mat);
-    return mat;
+    } });
   }
 
   private addSparkles(points: THREE.Vector3[]) {
