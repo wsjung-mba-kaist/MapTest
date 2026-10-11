@@ -5,10 +5,12 @@ import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { BBOX_PADDED, CACHE_DIR, OUT_DIR, WMS_ELEVATION, type LonLatBox } from '../config.ts';
 import { cachedBytes, exists, writeJson } from './http.ts';
-import { frame, altToY } from '../../shared/geo.ts';
+import { frame, altToY, DATUM_ALT } from '../../shared/geo.ts';
 import { TERRAIN_N, TERRAIN_STEP, WORLD_HALF } from '../../shared/layout.ts';
 
 const PX = 2048;
+/** terrain.bin stores Int16 centimetres: ±327.67 m, clamped a little inside that */
+const INT16_CM_MAX_M = 320;
 const NODATA_MIN = -1000;
 
 interface Quad { box: LonLatBox; data: Float32Array }
@@ -70,10 +72,10 @@ export async function run(ctx: BakeContext) {
       const x = -WORLD_HALF + ix * TERRAIN_STEP;
       const { lon, lat } = frame.fromWorld(x, z);
       let alt = sampleAlt(quads, lon, lat);
-      if (!Number.isFinite(alt)) { bad++; alt = 33.8; }
+      if (!Number.isFinite(alt)) { bad++; alt = DATUM_ALT; }   // nodata: the datum (y = 0)
       const y = altToY(alt);
       min = Math.min(min, y); max = Math.max(max, y);
-      out[iz * n + ix] = Math.round(Math.max(-320, Math.min(320, y)) * 100);
+      out[iz * n + ix] = Math.round(Math.max(-INT16_CM_MAX_M, Math.min(INT16_CM_MAX_M, y)) * 100);
     }
   }
   const towerY = out[((n - 1) / 2) * n + (n - 1) / 2] / 100;

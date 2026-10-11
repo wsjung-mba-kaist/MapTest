@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { unzipSync } from 'fflate';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
+import { CAR_VARIANTS } from '../../shared/layout.ts';
 import { ASSETS, MODELS_DIR, TEXTURES_DIR } from '../config.ts';
 import { cachedBytes, cachedJson, ensureDir, exists } from './http.ts';
 
@@ -72,7 +73,7 @@ async function ambientcgTexture(id: string, outDir: string, lines: string[]) {
 async function kenneyCars(lines: string[]) {
   const outDir = path.join(MODELS_DIR, 'cars');
   await ensureDir(outDir);
-  const wanted = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'sedan-sports', 'police', 'delivery'];
+  const wanted: readonly string[] = CAR_VARIANTS;   // shared/layout.ts: the order is the FurnitureKind.Car run
   const texOut = path.join(outDir, 'Textures', 'colormap.png');
   const have = await Promise.all([...wanted.map(w => exists(path.join(outDir, w + '.glb'))), exists(texOut)]);
   if (have.every(Boolean)) { lines.push('- Kenney Car Kit (CC0) https://kenney.nl/assets/car-kit'); log.info('assets: kenney cars cached'); return; }

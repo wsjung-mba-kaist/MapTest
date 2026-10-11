@@ -2,13 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { FeatureCollection, Geometry, LineString, Polygon, MultiPolygon } from 'geojson';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { HAUSSMANN, OUT_DIR } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
 import { GeomBuilder, encodeBinMesh } from './binmesh.ts';
 import { triangulateCap } from './extrude.ts';
 import { frame } from '../../shared/geo.ts';
-import { SurfaceFlag, WORLD_HALF } from '../../shared/layout.ts';
+import { Style, SurfaceFlag, WORLD_HALF, packStyleSeed } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
+/** bridge masonry is drawn as a one-storey stone facade (Style.Stone) with one fixed seed for every bridge */
+const STONE_META_W = packStyleSeed(Style.Stone, 17);
 import { area, bufferLine, centroid, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
 
 const DECK_THICK = 2.2;
@@ -71,7 +73,7 @@ function addWalls(gb: GeomBuilder, ring: Ring, y0: number, y1: number, flag: Sur
   for (let i = 0; i < n; i++) {
     const a = ring[i], b = ring[(i + 1) % n];
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]); if (len < 0.02) continue;
-    const m: [number, number, number, number] = [3.1, 1, len, 2 * 256 + 17];
+    const m: [number, number, number, number] = [HAUSSMANN.floor, 1, len, STONE_META_W];
     const c: [number, number, number, number] = [tint[0], tint[1], tint[2], flag];
     const i0 = gb.vertex(a[0], y0, a[1], u, y0 - y0, m, c), i1 = gb.vertex(b[0], y0, b[1], u + len, 0, m, c);
     const i2 = gb.vertex(b[0], y1, b[1], u + len, y1 - y0, m, c), i3 = gb.vertex(a[0], y1, a[1], u, y1 - y0, m, c);
@@ -96,7 +98,7 @@ function addWallsToGround(gb: GeomBuilder, ring: Ring, bottom: number, top: numb
     const a = ring[i], b = ring[(i + 1) % n];
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
     if (len < 0.02) continue;
-    const m: [number, number, number, number] = [3.1, 1, len, 2 * 256 + 17];
+    const m: [number, number, number, number] = [HAUSSMANN.floor, 1, len, STONE_META_W];
     const ya = footAt(a), yb = footAt(b);
     const i0 = gb.vertex(a[0], ya, a[1], u, 0, m, c), i1 = gb.vertex(b[0], yb, b[1], u + len, 0, m, c);
     const i2 = gb.vertex(b[0], top, b[1], u + len, top - yb, m, c), i3 = gb.vertex(a[0], top, a[1], u, top - ya, m, c);
@@ -108,7 +110,7 @@ function addWallsToGround(gb: GeomBuilder, ring: Ring, bottom: number, top: numb
 function addCapAt(gb: GeomBuilder, rings: Poly, y: number, flag: SurfaceFlag, tint: [number, number, number], up: boolean) {
   const { flat, tris } = triangulateCap(rings);
   const base = gb.vertexCount;
-  const m: [number, number, number, number] = [3.1, 1, 0, 2 * 256 + 17];
+  const m: [number, number, number, number] = [HAUSSMANN.floor, 1, 0, STONE_META_W];
   for (let i = 0; i < flat.length; i += 2) gb.vertex(flat[i], y, flat[i + 1], flat[i], flat[i + 1], m, [tint[0], tint[1], tint[2], flag]);
   for (let t = 0; t < tris.length; t += 3) up ? gb.tri(base + tris[t], base + tris[t + 1], base + tris[t + 2]) : gb.tri(base + tris[t], base + tris[t + 2], base + tris[t + 1]);
 }
@@ -221,7 +223,7 @@ function addArches(gb: GeomBuilder, b: Bridge, piers: PierBox[], bottom: number,
   const supports = [{ s: 0, half: 0 }, ...piers.map(p => ({ s: sOf(p.cx, p.cz), half: p.halfL })).sort((p, q) => p.s - q.s), { s: total, half: 0 }];
   const spring = Math.max(waterLevelY + 1.2, bottom - ARCH_MAX_H);
   if (bottom - spring < 1.5) return;
-  const m: [number, number, number, number] = [3.1, 1, 0, 2 * 256 + 17];
+  const m: [number, number, number, number] = [HAUSSMANN.floor, 1, 0, STONE_META_W];
   const c: [number, number, number, number] = [STONE[0], STONE[1], STONE[2], SurfaceFlag.Plinth];
   for (let k = 0; k + 1 < supports.length; k++) {
     const a = supports[k].s + supports[k].half, e = supports[k + 1].s - supports[k + 1].half;

@@ -40,6 +40,7 @@ export class Trees {
       loadTexture('/textures/pbr/Bark014_color.jpg').catch(() => null),
     ]);
     const data = new Float32Array(buf);
+    if (data.length % TREE_STRIDE) throw new Error(`trees.bin: ${data.length} floats is not a multiple of TREE_STRIDE=${TREE_STRIDE} — stale bake`);
     this.count = data.length / TREE_STRIDE;
     this.trunkMat = withLamps(new THREE.MeshStandardMaterial({ color: bark ? 0xb9b0a6 : 0x5a4a3c, map: bark ?? undefined, roughness: 0.95 }));
     if (bark) { bark.wrapS = bark.wrapT = THREE.RepeatWrapping; bark.repeat.set(1, 2); }

@@ -4,6 +4,7 @@ import { DETAIL_STRIDE, RoofDetailKind } from '../../shared/layout';
 import { buildingUniforms } from '../materials/FacadeMaterial';
 import { withLamps } from '../render/LocalLights';
 import { hash32 } from '../../shared/hash';
+import { litProbabilityGlsl } from '../../shared/nightlife';
 
 /**
  * Chimney stacks and dormer boxes baked per chunk (details/{i}_{j}.bin). Instanced per kind; dormer windows glow
@@ -67,14 +68,8 @@ function materials() {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
           uniform float uNight; uniform float uHour; varying float vGlow;
-          // same table as shared/nightlife.ts LIT_ANCHORS; attic rooms light up at about half the rate of the floors below
-          float dormerLitP(float h) {
-            h = mod(h, 24.0);
-            float hs[17] = float[17](0.,1.,2.,3.,4.,5.,6.,7.,8.,17.,18.,19.,20.,21.,22.,23.,24.);
-            float ps[17] = float[17](0.20,0.15,0.10,0.07,0.06,0.08,0.12,0.10,0.05,0.05,0.09,0.15,0.28,0.40,0.40,0.35,0.20);
-            for (int i = 0; i < 16; i++) if (h >= hs[i] && h <= hs[i + 1]) return 0.6 * mix(ps[i], ps[i + 1], (h - hs[i]) / (hs[i + 1] - hs[i]));
-            return 0.1;
-          }`)
+          // shared/nightlife.ts LIT_ANCHORS; attic rooms light up at about half the rate of the floors below
+          ${litProbabilityGlsl('dormerLitP', 0.6)}`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           {
             // vGlow = aGlass * hash: glass texel of a dormer whose draw falls under tonight's lit fraction

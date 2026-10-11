@@ -1,6 +1,6 @@
 import { DATA_URL, fetchBuffer } from '../DataLoader';
 import { parseBinMesh } from '../../../shared/binmesh';
-import { EdgeFlag, NodeFlag, laneOffset, rightNormal, type PathsMeta } from '../../../shared/paths';
+import { EdgeFlag, NodeFlag, laneOffset, rightNormal, type PathsMeta, PATHS_VERSION } from '../../../shared/paths';
 
 /** A point on the network: position, unit heading (x/z) and the segment index used as a search hint. */
 export interface EdgePoint { x: number; y: number; z: number; ux: number; uz: number; seg: number }
@@ -24,8 +24,9 @@ export class PathGraph {
   get nodeCount() { return this.adjStart.length; }
 
   async load() {
-    const { header, arrays } = parseBinMesh(await fetchBuffer(`${DATA_URL}/paths.bin`));
+    const { header, arrays } = parseBinMesh(await fetchBuffer(`${DATA_URL}/paths.bin`), 'paths.bin');
     this.meta = header.meta as unknown as PathsMeta;
+    if (this.meta?.version !== PATHS_VERSION) throw new Error(`paths.bin version ${this.meta?.version}, this build reads ${PATHS_VERSION} — re-run npm run bake:paths`);
     const g = (sec: string, attr: string) => arrays.get(sec)!.attrs.get(attr)!;
     this.nodePos = g('nodes', 'pos') as Float32Array; this.adjStart = g('nodes', 'adjStart') as Uint32Array; this.adjCount = g('nodes', 'adjCount') as Uint8Array; this.nodeFlags = g('nodes', 'flags') as Uint8Array;
     this.adj = g('adj', 'edge') as Uint32Array;

@@ -33,7 +33,8 @@
     "compress": "tsx scripts/compress.ts dist",
     "build:compressed": "vite build && tsx scripts/compress.ts dist",
     "lint": "eslint .",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "verify:data": "tsx scripts/verify-data.ts"
   },
   "dependencies": {
     "clipper-lib": "^6.4.2",

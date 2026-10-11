@@ -5,7 +5,7 @@ import { log } from './log.ts';
 import { MODELS_DIR, OUT_DIR, STATUES } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
-import { FURNITURE_STRIDE, FurnitureKind, WORLD_HALF } from '../../shared/layout.ts';
+import { CAR_VARIANT_COUNT, FURNITURE_STRIDE, FurnitureKind, PERSON_VARIANT_COUNT, WORLD_HALF } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
 import type { Pt } from './polygons.ts';
 import type { BuildingSpec } from './buildings.ts';
@@ -164,7 +164,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
   const placePerson = (x: number, z: number, yaw: number, seed: number) => {
     if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return false;
     const y = hm.sample(x, z); if (y < waterLevelY + 0.8 || inBuilding(x, z)) return false;
-    rows.push(x, y, z, yaw, FurnitureKind.Person + Math.floor(seed * 4) % 4, 0.92 + seed * 0.16); people++; return true;
+    rows.push(x, y, z, yaw, FurnitureKind.Person + Math.floor(seed * PERSON_VARIANT_COUNT) % PERSON_VARIANT_COUNT, 0.92 + seed * 0.16); people++; return true;
   };
   for (const f of roads.features) {
     const t = f.properties.tags ?? {};
@@ -188,7 +188,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
         const h = rnd(f.properties.id + i, d);
         if (isStreet && parkingSides > 0) {
           const side = parkingSides === 2 ? (h > 0.5 ? 1 : -1) : flip; // one side only: the right of the way direction
-          if (rnd(d, f.properties.id) < 0.55) { if (placeCar(px - uz * (half - 1.05) * side, pz + ux * (half - 1.05) * side, yaw + (side > 0 ? 0 : Math.PI), Math.floor(rnd(px, pz) * 8))) cars++; }
+          if (rnd(d, f.properties.id) < 0.55) { if (placeCar(px - uz * (half - 1.05) * side, pz + ux * (half - 1.05) * side, yaw + (side > 0 ? 0 : Math.PI), Math.floor(rnd(px, pz) * CAR_VARIANT_COUNT))) cars++; }
         }
         if (isWalk && rnd(pz, px) < (isStreet ? 0.08 : 0.12)) {
           const off = isStreet ? half + 1.6 + rnd(px, d) * 1.5 : (rnd(px, d) - 0.5) * 2.5;

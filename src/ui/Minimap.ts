@@ -4,9 +4,11 @@
  * cycles hidden -> 320 m -> 800 m -> 1.5 km -> hidden; a click while the pointer is free flies the player there.
  * Redrawn at 10 Hz from a plain <img>, so it costs nothing on the GPU side.
  */
+import { WORLD_HALF } from '../../shared/layout';
+
 export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number; /** site radius (m): bigger sites get their label first */ weight?: number }
 
-const WORLD = 3072;          // metres covered by overview.jpg
+const WORLD = 2 * WORLD_HALF;   // metres covered by overview.jpg (the baked square)
 const HALF = WORLD / 2;
 const SPANS = [320, 800, 1500];
 

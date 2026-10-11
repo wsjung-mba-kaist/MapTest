@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, GRID_N, chunkKey, chunkOrigin } from '../../shared/layout';
+import { CHUNK_SIZE, GRID_N, MarkKind, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 
@@ -39,7 +39,7 @@ export class Markings {
           float aaM = fwidth(vMuv.x) * 1.2;
           float cov = smoothstep(0.0, aaM + 0.02, 1.0 - abs(vMuv.x));
           float distM = length(vViewPosition);
-          bool thin = vKind > 0.5 && vKind < 2.5;
+          bool thin = vKind > ${MarkKind.LaneDash - 0.5} && vKind < ${MarkKind.CentreDash + 0.5};   // lane / centre dashes (MarkKind)
           float far = thin ? 1.0 - smoothstep(70.0, 130.0, distM) : 1.0 - smoothstep(160.0, 280.0, distM);
           vec2 wp = floor(vWorldXZm * 3.0);
           float wear = 0.72 + 0.28 * mhash(wp);

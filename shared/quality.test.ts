@@ -28,4 +28,7 @@ test('a few slow frames (shader compiles, chunk uploads) do not trigger it', () 
   const mixed = [...frames(16, 100), ...frames(200, 15)];
   assert.equal(pickQuality(mixed, 'high').changed, false);
   assert.equal(pickQuality(frames(55, 30), 'high').changed, false);   // too few samples
+  // App samples 30 frames with minSamples: 30 — that threshold must trip, one frame fewer must not
+  assert.equal(pickQuality(frames(29, 50), 'high', { minSamples: 30 }).changed, false);
+  assert.equal(pickQuality(frames(30, 50), 'high', { minSamples: 30 }).changed, true);
 });

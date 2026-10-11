@@ -6,7 +6,7 @@ import { log } from './log.ts';
 import { CACHE_DIR, OUT_DIR, OVERPASS_ENDPOINTS } from '../config.ts';
 import { cachedJson, ensureDir, exists, fetchRetry, limit, readJson, sleep, writeJson } from './http.ts';
 import { frame } from '../../shared/geo.ts';
-import type { Landmark, LandmarksData } from '../../shared/layout.ts';
+import { LANDMARKS_VERSION, type Landmark, type LandmarksData } from '../../shared/layout.ts';
 import { bearingDeg } from '../../shared/landmarks.ts';
 import { LANDMARKS, type LandmarkSpec } from './landmarks_registry.ts';
 
@@ -267,7 +267,7 @@ export async function run(ctx: BakeContext) {
   }
   const counts = { ok: 0, partial: 0, failed: 0 };
   for (const r of resolved) counts[r.status]++;
-  const data: LandmarksData = { version: 1, generated: new Date().toISOString(), landmarks: resolved.map(r => r.landmark), credits: [...credits].sort() };
+  const data: LandmarksData = { version: LANDMARKS_VERSION, generated: new Date().toISOString(), landmarks: resolved.map(r => r.landmark), credits: [...credits].sort() };
   await writeJson(out, data);
   const manifestFile = path.join(OUT_DIR, 'manifest.json');
   if (await exists(manifestFile)) {

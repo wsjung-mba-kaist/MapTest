@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Heightmap } from '../../shared/heightmap';
-import type { Manifest } from '../../shared/layout';
+import { CHUNK_SIZE, GRID_N, MANIFEST_VERSION, WORLD_HALF, type Manifest } from '../../shared/layout';
+import { DATUM_ALT } from '../../shared/geo';
 import { Buildings } from './Buildings';
 import { Terrain } from './Terrain';
 import { Eiffel } from './Eiffel';
@@ -65,6 +66,13 @@ export class World {
   async load(onProgress: (frac: number, msg: string) => void) {
     onProgress(0.05, '지도 정보 읽는 중…');
     this.manifest = await loadManifest();
+    // The manifest carries the frame the data was baked in: refuse a stale public/data loudly instead of placing every
+    // chunk a grid cell off and failing somewhere deep in a loader.
+    const m = this.manifest, bad: string[] = [];
+    if (m.version !== MANIFEST_VERSION) bad.push(`version ${m.version} (expected ${MANIFEST_VERSION})`);
+    if (m.worldHalf !== WORLD_HALF || m.chunkSize !== CHUNK_SIZE || m.gridN !== GRID_N) bad.push(`grid ${m.worldHalf}/${m.chunkSize}/${m.gridN} (expected ${WORLD_HALF}/${CHUNK_SIZE}/${GRID_N})`);
+    if (Math.abs(m.datumAlt - DATUM_ALT) > 1e-6) bad.push(`datumAlt ${m.datumAlt} (expected ${DATUM_ALT})`);
+    if (bad.length) throw new Error(`manifest.json does not match this build: ${bad.join(', ')} — re-run npm run bake`);
     onProgress(0.15, '지형 만드는 중…');
     this.heightmap = await loadHeightmap();
     if (this.streetsEnabled) { try { this.surface = SurfaceGrid.fromBuffer(await fetchBuffer(`${DATA_URL}/surface.bin`)); } catch { this.surface = null; } }

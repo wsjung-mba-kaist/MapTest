@@ -1,4 +1,5 @@
 import earcut from 'earcut';
+import { HAUSSMANN } from '../config.ts';
 import { SurfaceFlag, ORTHO_MARGIN, CHUNK_SIZE, packStyleSeed } from '../../shared/layout.ts';
 import { bearingToDir } from '../../shared/geo.ts';
 import { GeomBuilder } from './binmesh.ts';
@@ -18,7 +19,8 @@ export type DsmParts = (b: BuildingSpec) => ((p: Pt) => number) | null;
 /** Hook for the DSM cap (scripts/lib/dsmroof.ts): returns null to fall back to the analytic roof. */
 export type DsmHook = (gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => { trisBefore: number; trisAfter: number; wallTop: (p: Pt) => number } | null;
 
-const MANSARD = { inset1: 1.3, rise1Max: 4.0, inset2Max: 4.0 };
+/** mansard profile (config.HAUSSMANN): first inset, max rise of the steep brisis, max inset of the terrasson */
+const MANSARD = { inset1: HAUSSMANN.mansardInset1, rise1Max: HAUSSMANN.mansardRise1Max, inset2Max: HAUSSMANN.mansardInset2Max };
 /**
  * Extra wall-top samples along a long edge, matching the spacing the surface fit uses. Without them one quad spans
  * the whole edge and its top is a straight line between the two ends: the Maison de la Radio had a 42 m facade

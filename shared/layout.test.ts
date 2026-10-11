@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FurnitureKind, packStyleSeed, unpackSeed, unpackStyle, STYLE_SCALE } from './layout.ts';
+import { FurnitureKind, packStyleSeed, unpackSeed, unpackStyle, STYLE_SCALE, CAR_VARIANTS, CAR_VARIANT_COUNT, PERSON_VARIANT_COUNT } from './layout.ts';
 
 /**
  * meta.w carries the facade style and the per-building seed in one float. A rounding decode (`+ 0.5`) used to
@@ -43,9 +43,9 @@ test('the shader decode matches the TypeScript decode', () => {
  * hatchbacks came back as statues.
  */
 test('no single furniture kind falls inside the car or person variant runs', () => {
-  const CAR_VARIANTS = 8, PERSON_VARIANTS = 4;
-  const carRun = { lo: FurnitureKind.Car, hi: FurnitureKind.Car + CAR_VARIANTS - 1 };
-  const personRun = { lo: FurnitureKind.Person, hi: FurnitureKind.Person + PERSON_VARIANTS - 1 };
+  assert.equal(CAR_VARIANT_COUNT, CAR_VARIANTS.length, 'CAR_VARIANT_COUNT is the length of the variant list');
+  const carRun = { lo: FurnitureKind.Car, hi: FurnitureKind.Car + CAR_VARIANT_COUNT - 1 };
+  const personRun = { lo: FurnitureKind.Person, hi: FurnitureKind.Person + PERSON_VARIANT_COUNT - 1 };
   assert.ok(carRun.hi < personRun.lo, 'the car run runs into the person run');
   const singles = Object.entries(FurnitureKind)
     .filter(([k, v]) => typeof v === 'number' && k !== 'Car' && k !== 'Person') as [string, number][];

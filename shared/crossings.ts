@@ -1,4 +1,5 @@
-import { armPhase, signalState, SIGNAL_RED } from './signals.js';
+import { armPhase, signalState, SIGNAL_RED } from './signals.ts';
+import { EdgeFlag, NodeFlag } from './paths.ts';
 
 /**
  * Pedestrian crossings on the path graph. OSM `footway=crossing` ways share a node with the road they cross, and the
@@ -7,8 +8,8 @@ import { armPhase, signalState, SIGNAL_RED } from './signals.js';
  * SIGNAL node within SEARCH_M along the road) and remember the phase of the car arm it protects: pedestrians walk
  * while that arm is red, cars arriving at the road node brake while the crossing is occupied.
  */
-export const CROSSING_FLAG = 128;   // EdgeFlag.CROSSING (shared/paths.ts)
-export const SIGNAL_NODE = 1;       // NodeFlag.SIGNAL
+export const CROSSING_FLAG: number = EdgeFlag.CROSSING;
+export const SIGNAL_NODE: number = NodeFlag.SIGNAL;
 const SEARCH_M = 30;
 
 export interface CrossingGraph {

@@ -24,13 +24,22 @@ function interp(table: [number, number][], hour: number): number {
 export function activity(hour: number, kind: 'car' | 'walk'): number { return interp(kind === 'car' ? CAR_ANCHORS : WALK_ANCHORS, hour); }
 
 /** Fraction of windows lit at a local hour (0..24). */
-export function litProbability(hour: number): number {
-  const h = ((hour % 24) + 24) % 24;
-  for (let i = 0; i + 1 < LIT_ANCHORS.length; i++) {
-    const [h0, p0] = LIT_ANCHORS[i], [h1, p1] = LIT_ANCHORS[i + 1];
-    if (h >= h0 && h <= h1) return h1 > h0 ? p0 + (p1 - p0) * (h - h0) / (h1 - h0) : p0;
-  }
-  return LIT_ANCHORS[0][1];
+export function litProbability(hour: number): number { return interp(LIT_ANCHORS, hour); }
+
+/**
+ * The same table as a GLSL function `float <name>(float h)` (piecewise linear, cyclic over 24 h, result × `scale`),
+ * so the facade, dormer and far-ring shaders are generated from LIT_ANCHORS instead of carrying transcribed copies.
+ */
+export function litProbabilityGlsl(name = 'litProbability', scale = 1): string {
+  const n = LIT_ANCHORS.length;
+  const hs = LIT_ANCHORS.map(([h]) => h.toFixed(1)).join(','), ps = LIT_ANCHORS.map(([, p]) => p.toFixed(3)).join(',');
+  return `float ${name}(float h) {
+  h = mod(h, 24.0);
+  float hs[${n}] = float[${n}](${hs});
+  float ps[${n}] = float[${n}](${ps});
+  for (int i = 0; i < ${n - 1}; i++) if (h >= hs[i] && h <= hs[i + 1]) return ${scale.toFixed(3)} * mix(ps[i], ps[i + 1], (h - hs[i]) / max(hs[i + 1] - hs[i], 1e-3));
+  return ${(scale * LIT_ANCHORS[0][1]).toFixed(3)};
+}`;
 }
 
 /** Shop-front brightness factor: full until 20:00, restaurants (30 %) until 01:00, then a security light. */

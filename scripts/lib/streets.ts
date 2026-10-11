@@ -356,7 +356,7 @@ export async function run(_ctx: BakeContext) {
       { polys: slabs, cls: SurfaceClass.Sidewalk }, { polys: input.carriage, cls: SurfaceClass.Road },
       { polys: input.grass, cls: SurfaceClass.Grass }, { polys: input.paved, cls: SurfaceClass.Paved },
     ]);
-    if ((j * GRID_N + i) % 24 === 23) log.info(`  streets: ${j * GRID_N + i + 1}/144 chunks, ${polys} slabs so far`);
+    if ((j * GRID_N + i) % 24 === 23) log.info(`  streets: ${j * GRID_N + i + 1}/${GRID_N * GRID_N} chunks, ${polys} slabs so far`);
   }
   // water cells from the heightmap (below the water line)
   for (let gj = 0; gj < SURFACE_N; gj++) for (let gi = 0; gi < SURFACE_N; gi++) {

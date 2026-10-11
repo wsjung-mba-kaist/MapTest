@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { FeatureCollection, Geometry } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { DSM_BUDGET, OUT_DIR } from '../config.ts';
 import { ensureDir, exists, readJson, writeJson, fmtBytes } from './http.ts';
 import { loadTheme, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
@@ -18,7 +18,7 @@ import { buildFountains } from './fountains.ts';
 import { buildRail } from './rail.ts';
 import { Heightmap } from '../../shared/heightmap.ts';
 import { ORIGIN, DATUM_ALT, frame } from '../../shared/geo.ts';
-import { CHUNK_SIZE, GRID_N, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type Manifest } from '../../shared/layout.ts';
+import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
 import { area, clipToBox, cleanRing, orient, pointInPoly, type Poly, type Ring } from './polygons.ts';
 
 export async function loadHeightmap(raw = false): Promise<Heightmap> {
@@ -152,8 +152,7 @@ export async function run(_ctx: BakeContext) {
   const dsmParts = dsm ? ((b: BuildingSpec) => dsm.partTops(b)) : undefined;
   let detailRows = 0;
   let totalBytes = 0, totalTris = 0, dsmBuildings = 0, dsmTrisTotal = 0, dsmTrisRaw = 0;
-  const DSM_BUDGET = 1_200_000;
-  const chunkInfo: Record<string, { buildings: number; bytes: number; tris: number; dsmTris?: number }> = {};
+  const chunkInfo: Record<string, ChunkInfo> = {};
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const k = chunkKey(i, j);
     const list = byChunk.get(k) ?? [];
@@ -170,7 +169,7 @@ export async function run(_ctx: BakeContext) {
     const buf = encodeBinMesh({ x: o.x, z: o.z }, sections, { buildings: list.length });
     await fs.writeFile(path.join(chunkDir, `${k}.bin`), buf);
     await fs.writeFile(path.join(detailDir, `${k}.bin`), Buffer.from(new Float32Array(cb.details ?? []).buffer));
-    detailRows += (cb.details?.length ?? 0) / 9;
+    detailRows += (cb.details?.length ?? 0) / DETAIL_STRIDE;
     const tris = (cb.walls.indices.length + cb.roofs.indices.length + cb.tops.indices.length + cb.dsm!.indices.length) / 3;
     chunkInfo[k] = { buildings: list.length, bytes: buf.length, tris, ...(cb.dsm!.indices.length ? { dsmTris: cb.dsm!.indices.length / 3 } : {}) };
     totalBytes += buf.length; totalTris += tris;
@@ -192,7 +191,7 @@ export async function run(_ctx: BakeContext) {
   // later steps (paths, markings, streets) add their own files/counts: keep them across a rebuild
   const prevManifest = await readJson<Manifest>(path.join(OUT_DIR, 'manifest.json')).catch(() => null);
   const manifest: Manifest = {
-    version: 1,
+    version: MANIFEST_VERSION,
     generated: new Date().toISOString(),
     origin: { lon: ORIGIN.lon, lat: ORIGIN.lat },
     datumAlt: DATUM_ALT,
@@ -205,7 +204,7 @@ export async function run(_ctx: BakeContext) {
     heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat, curved: stats.curved, monument: stats.monument, landmark: stats.landmark },
     files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };
-  (manifest as Manifest & { chunks: typeof chunkInfo }).chunks = chunkInfo;
+  manifest.chunks = chunkInfo;
   await writeJson(path.join(OUT_DIR, 'manifest.json'), manifest);
   log.info('manifest written');
   void SurfaceFlag;

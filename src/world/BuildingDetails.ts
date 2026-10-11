@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildingUniforms } from '../materials/FacadeMaterial';
 import { withLamps, type LocalLight } from '../render/LocalLights';
+import { Style, SurfaceFlag, unpackSeed, unpackStyle, unpackSurfaceFlag } from '../../shared/layout';
 import { PHARMACY, PHARMACY_CELL, SHOP_NAMES, SIGN_PALETTES, plaqueArmsNear, plaqueCanvas, plaqueMaterial, shopSignMaterial, signCell, signRect, signageDebug, signageEnabled, type PlaqueArm } from './Signage';
 
 /**
@@ -168,10 +169,9 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
   const quads = Math.floor(pos.count / 4);
   for (let q = 0; q < quads; q++) {
     const i0 = q * 4, i1 = i0 + 1, i3 = i0 + 3;
-    const flag = Math.round(col.getW(i0) * 255);
-    if (flag !== 0) continue;                                   // walls only (no plinths)
-    const style = Math.floor(meta.getW(i0) / 256);   // seed occupies the low 256; rounding would misread seed >= 128
-    const seed = meta.getW(i0) % 256;
+    if (unpackSurfaceFlag(col.getW(i0)) !== SurfaceFlag.Wall) continue;   // walls only (no plinths)
+    const style = unpackStyle(meta.getW(i0));   // seed occupies the low 256; rounding would misread seed >= 128
+    const seed = unpackSeed(meta.getW(i0));
     const ax = pos.getX(i0), az = pos.getZ(i0), bx = pos.getX(i1), bz = pos.getZ(i1);
     const len = Math.hypot(bx - ax, bz - az);
     if (len < 3) continue;
@@ -209,7 +209,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
       }
     }
 
-    if (style !== 0 && style !== 4) continue;
+    if (style !== Style.Haussmann && style !== Style.Monument) continue;
     if (len < 3.5 || wallH < 7) continue;
     const floorH = Math.max(2.4, meta.getX(i0));
     const levels = Math.max(1, meta.getY(i0));
@@ -217,7 +217,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
     tint.setRGB(col.getX(i0), col.getY(i0), col.getZ(i0));
 
     Q.setFromAxisAngle(up, yaw);
-    if (style === 4) {
+    if (style === Style.Monument) {
       // Monument crown: a deep two-step cornice, a balustrade along the parapet, and piers at every bay boundary.
       P.set(cx + nx * (MON_CORNICE_D / 2 - 0.05), eaveY - 0.3, cz + nz * (MON_CORNICE_D / 2 - 0.05)); S.set(MON_CORNICE_D, 0.5, len);
       boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.06) });
@@ -243,7 +243,7 @@ export function buildDetails(walls: THREE.BufferGeometry, chunkOrigin: THREE.Vec
       boxes.push({ m: M.compose(P, Q, S).clone(), c: tint.clone().multiplyScalar(1.05) });
     }
 
-    if (style === 0) {
+    if (style === Style.Haussmann) {
       // Continuous balconies on floors 2 and 5 (Haussmann), when the building is tall enough.
       const floors = [2, ...(levels > 5.5 ? [5] : [])];
       for (const k of floors) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { armGroup, armPhase, signalState, SIGNAL_CYCLE, SIGNAL_GREEN, SIGNAL_RED, SIGNAL_AMBER } from './signals.js';
+import { armGroup, armPhase, signalState, SIGNAL_CYCLE, SIGNAL_GREEN, SIGNAL_RED, SIGNAL_AMBER } from './signals.ts';
 
 test('opposite arms share a group, crossing arms do not', () => {
   assert.equal(armGroup(0, 1), armGroup(0, -1));

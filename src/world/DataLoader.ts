@@ -16,7 +16,7 @@ export async function fetchBuffer(url: string): Promise<ArrayBuffer> {
   return r.arrayBuffer();
 }
 
-export async function loadManifest(): Promise<Manifest & { chunks?: Record<string, { buildings: number; bytes: number; tris: number }> }> {
+export async function loadManifest(): Promise<Manifest> {
   return fetchJson(`${DATA_URL}/manifest.json`);
 }
 
@@ -32,8 +32,8 @@ export interface LoadedSection { name: string; geometry: THREE.BufferGeometry; m
 export interface LoadedBinMesh { header: BinMeshHeader; sections: Map<string, LoadedSection> }
 
 /** Turn a PBM1 buffer into BufferGeometries (one per section). Empty sections and the names in `skip` are left out. */
-export function binMeshToGeometries(buf: ArrayBuffer, skip?: ReadonlySet<string>): LoadedBinMesh {
-  const { header, arrays } = parseBinMesh(buf);
+export function binMeshToGeometries(buf: ArrayBuffer, skip?: ReadonlySet<string>, label = 'PBM1'): LoadedBinMesh {
+  const { header, arrays } = parseBinMesh(buf, label);
   const sections = new Map<string, LoadedSection>();
   for (const s of header.sections) {
     if (!s.vertexCount || !s.indexCount || skip?.has(s.name)) continue;
@@ -65,7 +65,7 @@ export function binMeshToGeometries(buf: ArrayBuffer, skip?: ReadonlySet<string>
 }
 
 export async function loadBinMesh(url: string, skip?: ReadonlySet<string>): Promise<LoadedBinMesh> {
-  return binMeshToGeometries(await fetchBuffer(url), skip);
+  return binMeshToGeometries(await fetchBuffer(url), skip, url);
 }
 
 const texLoader = new THREE.TextureLoader();

@@ -184,7 +184,7 @@ export class Hud {
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => { if (this.toastEl) this.toastEl.hidden = true; }, ms);
   }
-  /** Building chunks still arriving after the start ("거리 불러오는 중 37/144"); hides itself a second after the last one. */
+  /** Building chunks still arriving after the start ("거리 불러오는 중 37/144", GRID_N²); hides itself a second after the last one. */
   streaming(loaded: number, total: number) {
     if (!this.stream) return;
     if (loaded < total) { this.stream.textContent = `거리 불러오는 중 ${loaded}/${total}`; this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }

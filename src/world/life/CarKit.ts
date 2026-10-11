@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CAR_VARIANTS } from '../../../shared/layout';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { withLamps } from '../../render/LocalLights';
@@ -13,7 +14,7 @@ import { withLamps } from '../../render/LocalLights';
  */
 export interface CarModel { geometry: THREE.BufferGeometry; length: number; width: number; height: number }
 
-export const CAR_VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'sedan-sports', 'police', 'delivery'] as const;
+export { CAR_VARIANTS };   // the list lives in shared/layout.ts next to FurnitureKind, whose Car run it sizes
 
 /** Paris street mix: mostly white / grey / black, a few blues, reds and beiges (sRGB). */
 const PAINT: { hex: number; w: number }[] = [

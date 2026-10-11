@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, GRID_N, chunkKey, chunkOrigin } from '../../shared/layout';
+import { CHUNK_SIZE, GRID_N, StreetFlag, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { createGroundMaterial, type GroundMaterial } from '../materials/GroundMaterial';
 import { REFLECT_LAYER } from '../render/WaterReflection';
@@ -88,7 +88,7 @@ function topOnly(geom: THREE.BufferGeometry): THREE.BufferGeometry {
   const out: number[] = [];
   for (let t = 0; t < index.count; t += 3) {
     const a = index.getX(t), b = index.getX(t + 1), c = index.getX(t + 2);
-    if (!flag || flag.getX(a) + flag.getX(b) + flag.getX(c) === 0) out.push(a, b, c);
+    if (!flag || (flag.getX(a) === StreetFlag.Top && flag.getX(b) === StreetFlag.Top && flag.getX(c) === StreetFlag.Top)) out.push(a, b, c);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', geom.getAttribute('position'));

@@ -148,7 +148,7 @@ async function main() {
       // stream every building chunk (SwiftShader: 1-2 min)
       let loaded = 0, total = 0;
       while (Date.now() < deadline) {
-        [loaded, total] = await cdp.eval<[number, number]>('[window.app.world.buildings.loadedCount, window.app.world.buildings.chunks.size]');
+        [loaded, total] = await cdp.eval<[number, number]>('[window.app?.world?.buildings?.loadedCount ?? 0, window.app?.world?.buildings?.chunks?.size ?? 0]');
         if (total > 0 && loaded >= total) break;
         await new Promise(r => setTimeout(r, 2000));
       }

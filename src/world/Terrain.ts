@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import type { Heightmap } from '../../shared/heightmap';
-import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, TERRAIN_MESH_SEGMENTS, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
+import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, TERRAIN_MESH_SEGMENTS, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadTexture, PriorityLoader } from './DataLoader';
 import { createGroundMaterial, loadGroundDetail, setGroundWaterLevel, type GroundMaterial } from '../materials/GroundMaterial';
 
@@ -80,7 +80,7 @@ export class Terrain {
       const wx = ox + lx, wz = oz + lz;
       pos[k * 3] = lx; pos[k * 3 + 1] = this.heightmap.sample(wx, wz); pos[k * 3 + 2] = lz;
       uv[k * 2] = (lx + ORTHO_MARGIN) / ORTHO_TILE_M; uv[k * 2 + 1] = 1 - (lz + ORTHO_MARGIN) / ORTHO_TILE_M;
-      uvOv[k * 2] = (wx + 1536) / 3072; uvOv[k * 2 + 1] = 1 - (wz + 1536) / 3072;
+      uvOv[k * 2] = (wx + WORLD_HALF) / (2 * WORLD_HALF); uvOv[k * 2 + 1] = 1 - (wz + WORLD_HALF) / (2 * WORLD_HALF);
       k++;
     }
     const idx = new Uint32Array(n * n * 6);

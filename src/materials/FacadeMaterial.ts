@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import facadeGlsl from './shaders/facade.glsl?raw';
 import { loadTexture } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
+import { ORTHO_MARGIN, ORTHO_TILE_M, STYLE_SCALE, Style, SurfaceFlag, WORLD_HALF } from '../../shared/layout';
+import { litProbabilityGlsl } from '../../shared/nightlife';
 
 /**
  * Shared uniforms for all building materials (night factor, time).
@@ -89,6 +91,16 @@ uniform float uHour;
 varying vec2 vUvM;
 varying vec4 vMetaV;
 varying vec3 vWorldPosV;
+// contract constants from shared/layout.ts (meta.w = style * STYLE_SCALE + seed; COLOR_0 alpha * 255 = SurfaceFlag)
+#define STYLE_SCALE ${STYLE_SCALE.toFixed(1)}
+#define STYLE_HAUSSMANN ${Style.Haussmann.toFixed(1)}
+#define STYLE_MODERN ${Style.Modern.toFixed(1)}
+#define STYLE_STONE ${Style.Stone.toFixed(1)}
+#define STYLE_INDUSTRIAL ${Style.Industrial.toFixed(1)}
+#define STYLE_MONUMENT ${Style.Monument.toFixed(1)}
+#define FLAG_PLINTH ${SurfaceFlag.Plinth.toFixed(1)}
+#define FLAG_ROOF_CURVED ${SurfaceFlag.RoofCurved.toFixed(1)}
+${litProbabilityGlsl('litProbability')}
 ${facadeGlsl}
 `;
 
@@ -173,8 +185,8 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
   dsm.name = 'dsm';
   patch(dsm, /* glsl */`
     float fFlag = floor(vColor.a * 255.0 + 0.5);
-    vec2 uvT = (vUvM - uChunkOrigin + 32.0) / 320.0; uvT.y = 1.0 - uvT.y;
-    vec2 uvO = (vUvM + 1536.0) / 3072.0; uvO.y = 1.0 - uvO.y;
+    vec2 uvT = (vUvM - uChunkOrigin + ${ORTHO_MARGIN.toFixed(1)}) / ${ORTHO_TILE_M.toFixed(1)}; uvT.y = 1.0 - uvT.y;
+    vec2 uvO = (vUvM + ${WORLD_HALF.toFixed(1)}) / ${(2 * WORLD_HALF).toFixed(1)}; uvO.y = 1.0 - uvO.y;
     // Fade into the overview across a margin instead of switching at the tile edge. A landmark wider than one
     // 320 m tile (the Invalides is ~450 m) otherwise gets a straight line of changing sharpness and colour
     // running across its roof, exactly where the chunk boundary falls.
@@ -230,8 +242,8 @@ export function createRoofTopMaterial(chunkOrigin: { x: number; z: number }, til
   });
   patch(mat, /* glsl */`
     float fFlag = floor(vColor.a * 255.0 + 0.5);
-    vec2 uvT = (vUvM - uChunkOrigin + 32.0) / 320.0; uvT.y = 1.0 - uvT.y;
-    vec2 uvO = (vUvM + 1536.0) / 3072.0; uvO.y = 1.0 - uvO.y;
+    vec2 uvT = (vUvM - uChunkOrigin + ${ORTHO_MARGIN.toFixed(1)}) / ${ORTHO_TILE_M.toFixed(1)}; uvT.y = 1.0 - uvT.y;
+    vec2 uvO = (vUvM + ${WORLD_HALF.toFixed(1)}) / ${(2 * WORLD_HALF).toFixed(1)}; uvO.y = 1.0 - uvO.y;
     bool inTile = all(greaterThan(uvT, vec2(0.002))) && all(lessThan(uvT, vec2(0.998)));
     vec3 col = vColor.rgb;
     if (fFlag != 4.0 && inTile && uHasTile > 0.5) col = texture2D(uTile, uvT).rgb;

@@ -38,7 +38,7 @@ import { Glide } from '../player/Glide';
 import { PlacePanel, CATEGORY_COLOR } from '../ui/PlacePanel';
 import { PlaceList } from '../ui/PlaceList';
 import { Compass } from '../ui/Compass';
-import { hasNum, queryNum, type Landmark } from '../../shared/layout';
+import { GRID_N, WORLD_HALF, hasNum, queryNum, type Landmark } from '../../shared/layout';
 
 /** yaw so that the camera at (x,z) faces (tx,tz); yaw 0 = north (-z), clockwise positive. */
 export const yawTo = (x: number, z: number, tx = 0, tz = 0) => Math.atan2(tx - x, -(tz - z));
@@ -633,7 +633,7 @@ export class App {
 
   /** Minimap click: glide to that point (walking: onto the ground / a deck there; flying: same height), keep the heading. */
   goToPoint(x: number, z: number) {
-    x = Math.max(-1536, Math.min(1536, x)); z = Math.max(-1536, Math.min(1536, z));
+    x = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, x)); z = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, z));
     const yaw = this.input.yaw;
     let target: THREE.Vector3, land: () => void;
     if (this.flying) {
@@ -699,6 +699,6 @@ export class App {
     const yawDeg = ((THREE.MathUtils.radToDeg(this.input.yaw) % 360) + 360) % 360;
     const w = this.world;
     const floor = !this.flying ? this.tower.floorAt(this.player.position.x, this.player.position.y, this.player.position.z) : null;
-    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/144  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)\ngpu ${gpuInfo().name}${gpuInfo().software ? ' (SOFTWARE)' : gpuInfo().integrated ? ' (integrated)' : ''}  hp-adapter ${hpAdapter() === undefined ? '…' : hpAdapter()?.vendor ?? 'n/a'}`);
+    this.hud.setStatus(`${this.flying ? 'FLY' : 'WALK'}${floor ? ' ' + floor : ''}  x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  z ${p.z.toFixed(1)}\nyaw ${yawDeg.toFixed(0)}°  ground ${w.groundY(p.x, p.z).toFixed(1)}\nchunks ${w.buildings.loadedCount}/${GRID_N * GRID_N}  pending ${w.pending}  bvh ${this.collision.colliderCount} walk ${this.collision.walkableCount}/${this.collision.pendingWalkCount} lift ${(this.player.position.y - w.groundY(this.player.position.x, this.player.position.z)).toFixed(2)}${w.marks ? '  ' + w.marks.stats : ''}${w.streets ? '  streets ' + w.streets.count : ''}\n${w.buildings.detailStats}${w.trees ? '  ' + w.trees.stats : ''}${w.life ? '\n' + w.life.stats : ''}${this.audio?.debug ? '\n' + this.audio.status() : ''}\ninput maxΔ ${this.input.maxDelta.toFixed(0)}px spikes ${this.input.spikes}  programs ${this.renderer.info.programs?.length ?? 0}  longtasks ${this.longTasks} (max ${this.longTaskMax.toFixed(0)} ms)\ngpu ${gpuInfo().name}${gpuInfo().software ? ' (SOFTWARE)' : gpuInfo().integrated ? ' (integrated)' : ''}  hp-adapter ${hpAdapter() === undefined ? '…' : hpAdapter()?.vendor ?? 'n/a'}`);
   }
 }

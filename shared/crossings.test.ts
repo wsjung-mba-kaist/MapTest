@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCrossings, pedestriansMayCross, type CrossingGraph, CROSSING_FLAG, SIGNAL_NODE } from './crossings.js';
-import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_RED } from './signals.js';
+import { buildCrossings, pedestriansMayCross, type CrossingGraph, CROSSING_FLAG, SIGNAL_NODE } from './crossings.ts';
+import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_RED } from './signals.ts';
 
 /**
  * Nodes: 0 --road-- 1 --road-- 2(junction, SIGNAL)   along +x, 1 is 12 m before the junction

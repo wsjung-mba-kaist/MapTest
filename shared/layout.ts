@@ -14,6 +14,13 @@ export const MASK_PX = 512;
 export const TERRAIN_STEP = 2;           // heightmap sample spacing
 export const TERRAIN_MESH_SEGMENTS = 64; // rendered ground mesh: 64 cells of 4 m per chunk (every other heightmap sample)
 export const TERRAIN_N = (WORLD_HALF * 2) / TERRAIN_STEP + 1; // 1537 samples per side
+/** size of one rendered ground cell (m); Heightmap.meshY samples the ground on this grid */
+export const TERRAIN_MESH_CELL_M = CHUNK_SIZE / TERRAIN_MESH_SEGMENTS; // 4
+
+/** Bump when the manifest layout or the meaning of a baked file changes; World.load refuses an older manifest. */
+export const MANIFEST_VERSION = 1;
+/** landmarks.json layout version (scripts/lib/landmarks.ts writes it, src/world/Landmarks.ts checks it). */
+export const LANDMARKS_VERSION = 1;
 
 export function chunkIndexOf(x: number, z: number): { i: number; j: number } {
   return {
@@ -27,8 +34,9 @@ export function chunkOrigin(i: number, j: number): { x: number; z: number } {
 export function chunkKey(i: number, j: number): string { return `${i}_${j}`; }
 export function inGrid(i: number, j: number): boolean { return i >= 0 && j >= 0 && i < GRID_N && j < GRID_N; }
 
+export interface ChunkInfo { buildings: number; bytes: number; tris: number; dsmTris?: number }
 export interface Manifest {
-  version: number;
+  version: typeof MANIFEST_VERSION;
   generated: string;
   origin: { lon: number; lat: number };
   datumAlt: number;
@@ -40,6 +48,8 @@ export interface Manifest {
   counts: Record<string, number>;
   heightSources?: Record<string, number>;
   files: Record<string, string>;
+  /** per building chunk, keyed by chunkKey */
+  chunks?: Record<string, ChunkInfo>;
 }
 
 /** Row layout of trees.bin (Float32): x, y, z, height, trunkRadius, species, seed */
@@ -54,6 +64,11 @@ export enum TreeSpecies { Platanus = 0, Tilia = 1, Aesculus = 2, Sophora = 3, Ac
  * people occupy `Person + variant` (20..23). Single kinds live below 10 or in the 18..19 gap.
  */
 export enum FurnitureKind { StreetLamp = 0, Bench = 1, Bollard = 2, MorrisColumn = 3, Fountain = 4, SubwayEntrance = 5, BusStop = 6, BikeRack = 7, WasteBasket = 8, Flagpole = 9, Car = 10, Statue = 18, Flame = 19, Person = 20, PeaceWall = 30 }
+/** Parked / moving car models (Kenney car kit names): `FurnitureKind.Car + index` is the furniture row kind. */
+export const CAR_VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'sedan-sports', 'police', 'delivery'] as const;
+export const CAR_VARIANT_COUNT = CAR_VARIANTS.length;   // 8: FurnitureKind.Car .. Car + 7
+/** Idle-person variants (`FurnitureKind.Person + index`). */
+export const PERSON_VARIANT_COUNT = 4;                   // FurnitureKind.Person .. Person + 3
 
 /** Roof furniture rows in details/{i}_{j}.bin (Float32): x, y, z (world), yaw, kind, sx, sy, sz, seed */
 export const DETAIL_STRIDE = 9;
@@ -72,6 +87,15 @@ export enum MarkKind { Zebra = 0, LaneDash = 1, CentreDash = 2, StopLine = 3 }
 
 /** COLOR_0 alpha flags packed into building vertices (stored as alpha*255). */
 export enum SurfaceFlag { Wall = 0, RoofSlope = 1, RoofTop = 2, Plinth = 3, RoofTopOverview = 4, RoofCurved = 5, RoofDsm = 6 }
+/** The flag back from a normalized COLOR_0 alpha (0..1); the facade shader does the same `floor(a * 255 + 0.5)`. */
+export function unpackSurfaceFlag(alpha: number): SurfaceFlag { return Math.floor(alpha * 255 + 0.5) as SurfaceFlag; }
+
+/**
+ * Facade style, packed with the seed into meta.w (see STYLE_SCALE below). The bake classifies buildings
+ * (scripts/lib/buildings.ts), the facade shader and BuildingDetails branch on it, roof furniture skips Modern /
+ * Industrial — every one of them must agree on these ids.
+ */
+export enum Style { Haussmann = 0, Modern = 1, Stone = 2, Industrial = 3, Monument = 4 }
 
 /** Landmarks (landmarks.json from `npm run bake:landmarks`): curated sites with names, a short description and a photo. */
 export type LandmarkCategory = 'monument' | 'museum' | 'palace' | 'bridge' | 'church' | 'park' | 'square' | 'military' | 'theatre' | 'institution';
@@ -102,7 +126,7 @@ export interface Landmark {
   links: { wiki?: { lang: string; url: string }; wikidata?: string; osm?: string };
   image?: LandmarkImage;
 }
-export interface LandmarksData { version: 1; generated: string; landmarks: Landmark[]; credits: string[] }
+export interface LandmarksData { version: typeof LANDMARKS_VERSION; generated: string; landmarks: Landmark[]; credits: string[] }
 
 /**
  * Facade style + per-building seed packed into the building vertices' `meta.w`.

@@ -1,5 +1,5 @@
 import { ihash } from '../../shared/hash.ts';
-import { DETAIL_STRIDE, RoofDetailKind } from '../../shared/layout.ts';
+import { DETAIL_STRIDE, RoofDetailKind, Style } from '../../shared/layout.ts';
 import { pointInRing, type Ring } from './polygons.ts';
 
 /**
@@ -30,7 +30,7 @@ export function placeRoofDetails(st: RoofStage, out: number[]) {
   const rise = yBreak - yEave;
   const slopeLen = Math.hypot(rise, insetD) || 1;
   // ---- dormers along the outer (eave) ring, 1.25 m up the slope; styles 1/2 (modern/industrial) never get them
-  if (style !== 1 && style !== 2 && rise > 2.2) {
+  if (style !== Style.Modern && style !== Style.Stone && rise > 2.2) {
     let u0 = 0;
     const n = outer.length;
     for (let i = 0; i < n; i++) {
@@ -56,7 +56,7 @@ export function placeRoofDetails(st: RoofStage, out: number[]) {
     }
   }
   // ---- chimney stacks along the break line (inner ring), set back onto the terrasson
-  if (style !== 1) {
+  if (style !== Style.Modern) {
     const m = inner.length;
     for (let i = 0; i < m; i++) {
       const a = inner[i], b = inner[(i + 1) % m];

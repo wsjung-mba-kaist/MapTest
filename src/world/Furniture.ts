@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CAR_VARIANTS, carColor, loadCarKit, makeCarMaterial } from './life/CarKit';
 import { makePeopleMaterial, walkerGeometry } from './life/PersonMesh';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { FURNITURE_STRIDE, FurnitureKind } from '../../shared/layout';
+import { FURNITURE_STRIDE, FurnitureKind, PERSON_VARIANT_COUNT } from '../../shared/layout';
 import type { SurfaceGrid } from '../../shared/surfacegrid';
 import { DATA_URL, fetchBuffer } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
@@ -34,6 +34,7 @@ export class Furniture {
   async load(surface: SurfaceGrid | null = null) {
     this.surface = surface;
     const data = new Float32Array(await fetchBuffer(`${DATA_URL}/furniture.bin`));
+    if (data.length % FURNITURE_STRIDE) throw new Error(`furniture.bin: ${data.length} floats is not a multiple of FURNITURE_STRIDE=${FURNITURE_STRIDE} — stale bake`);
     this.count = data.length / FURNITURE_STRIDE;
     const byKind = new Map<number, number[]>();
     for (let k = 0; k < this.count; k++) { const kind = data[k * FURNITURE_STRIDE + 4]; const arr = byKind.get(kind); if (arr) arr.push(k); else byKind.set(kind, [k]); }
@@ -121,7 +122,7 @@ export class Furniture {
 
     // ---- people: one instanced mesh with the same limb-tagged geometry/material as the walking crowd (idle sway only)
     const peopleIdx: number[] = [];
-    for (let v = 0; v < 4; v++) peopleIdx.push(...(byKind.get(FurnitureKind.Person + v) ?? []));
+    for (let v = 0; v < PERSON_VARIANT_COUNT; v++) peopleIdx.push(...(byKind.get(FurnitureKind.Person + v) ?? []));
     if (peopleIdx.length) {
       const geom = walkerGeometry();
       const anim = new THREE.InstancedBufferAttribute(new Float32Array(peopleIdx.length * 4), 4);

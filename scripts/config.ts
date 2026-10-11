@@ -76,6 +76,12 @@ export const ROOF_OVERRIDES: Record<string, { shape?: string; material?: string;
 };
 
 /** Paris building defaults (metres). */
+/**
+ * Hard cap on LiDAR roof-cap triangles across all chunks (a CLAUDE.md hard constraint): bake:build throws past it.
+ * Lower the grid step / raise the simplification error in dsmroof.ts rather than raising this casually.
+ */
+export const DSM_BUDGET = 1_200_000;
+
 export const HAUSSMANN = {
   groundFloor: 4.3,
   floor: 3.1,
