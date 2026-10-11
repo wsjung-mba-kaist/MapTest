@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
-import { NodeIO, type Accessor, type Node, type Primitive } from '@gltf-transform/core';
+import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, join, meshopt, prune, quantize, textureCompress } from '@gltf-transform/functions';
 import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
 import { log } from './log.ts';
 import { writeJson } from './http.ts';
+import { bakeTransforms } from './model_fit.ts';
 
 /**
  * Turn a photogrammetry scan of the tower (e.g. Sketchfab "Eiffel Tower, Paris, France" by Brian Trepanier, CC-BY 4.0)
@@ -24,13 +25,6 @@ const LEG_CORNER_RADIUS = 88.0;   // metres from the axis to a pillar's outer co
 const TOWER_HEIGHT = 330.0;       // metres to the antenna tip
 const SEINE_DIR = [-481.3, -421.1]; // world xz direction from the tower to the Trocadéro / Seine side
 
-function worldTransform(node: Node) {
-  const M = node.getWorldMatrix();
-  const mulP = (v: number[]) => [M[0] * v[0] + M[4] * v[1] + M[8] * v[2] + M[12], M[1] * v[0] + M[5] * v[1] + M[9] * v[2] + M[13], M[2] * v[0] + M[6] * v[1] + M[10] * v[2] + M[14]];
-  const mulN = (v: number[]) => { const n = [M[0] * v[0] + M[4] * v[1] + M[8] * v[2], M[1] * v[0] + M[5] * v[1] + M[9] * v[2], M[2] * v[0] + M[6] * v[1] + M[10] * v[2]]; const l = Math.hypot(...n) || 1; return [n[0] / l, n[1] / l, n[2] / l]; };
-  return { mulP, mulN };
-}
-
 function percentile(a: number[], p: number) { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 
 export async function processScan(src: string, fit: ScanFit, out: string, metaOut: string, textureSize = 4096, opts: { clean?: boolean } = {}): Promise<ScanResult> {
@@ -41,34 +35,10 @@ export async function processScan(src: string, fit: ScanFit, out: string, metaOu
   // Untextured CAD-style models carry no ground/neighbourhood garbage: only the radius/height crop applies.
   const clean = opts.clean ?? root.listTextures().length === 0;
   const extras = (root.getAsset().extras ?? {}) as Record<string, string>;
-  const scene = root.getDefaultScene() ?? root.listScenes()[0];
 
   // ---- 1. bake transforms, flatten the hierarchy under one node
-  const holder = doc.createNode('eiffel_scan');
-  const meshNodes = root.listNodes().filter(n => n.getMesh());
-  const seen = new Set<string>();
-  for (const node of meshNodes) {
-    const mesh = node.getMesh()!;
-    const { mulP, mulN } = worldTransform(node);
-    for (const prim of mesh.listPrimitives()) {
-      const pos = prim.getAttribute('POSITION')!;
-      if (seen.has(pos.getName() + pos.getCount() + mesh.getName())) continue; // shared accessor guard
-      seen.add(pos.getName() + pos.getCount() + mesh.getName());
-      const arr = pos.getArray() as Float32Array;
-      const v = [0, 0, 0];
-      for (let i = 0; i < arr.length; i += 3) { v[0] = arr[i]; v[1] = arr[i + 1]; v[2] = arr[i + 2]; const w = mulP(v); arr[i] = w[0]; arr[i + 1] = w[1]; arr[i + 2] = w[2]; }
-      const nrm = prim.getAttribute('NORMAL');
-      if (nrm) { const na = nrm.getArray() as Float32Array; for (let i = 0; i < na.length; i += 3) { v[0] = na[i]; v[1] = na[i + 1]; v[2] = na[i + 2]; const w = mulN(v); na[i] = w[0]; na[i + 1] = w[1]; na[i + 2] = w[2]; } }
-    }
-  }
-  for (const node of meshNodes) {
-    const parent = node.getParentNode();
-    if (parent) parent.removeChild(node); else scene.removeChild(node);
-    node.setMatrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    holder.addChild(node);
-  }
-  for (const child of scene.listChildren()) scene.removeChild(child);
-  scene.addChild(holder);
+  // (the hand-rolled walk with its (name, count, mesh name) shared-accessor guard lived here; see bakeTransforms)
+  const { holder, meshNodes } = await bakeTransforms(doc, 'eiffel_scan');
 
   // ---- 2. statistics in scan space
   const samples: number[][] = [];
@@ -200,5 +170,3 @@ export async function processScan(src: string, fit: ScanFit, out: string, metaOu
   log.info(`eiffel-scan: wrote ${(bin.byteLength / 1e6).toFixed(1)} MB -> ${out} (height ${result.height.toFixed(0)} m, ${textured ? 'textured' : 'untextured'})`);
   return result;
 }
-
-void (0 as unknown as Accessor); void (0 as unknown as Primitive);

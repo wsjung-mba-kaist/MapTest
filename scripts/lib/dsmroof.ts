@@ -107,8 +107,14 @@ export class DsmProvider {
   /** The fitted wall top of a part, computed once in `noteGroupHeights`. */
   partTops(b: BuildingSpec): ((p: Pt) => number) | null { const t = this.tops.get(b); return t === undefined ? dsmPartTops(b, this) : t; }
 
+  /** Caps whose `MeshoptSimplifier.simplify` threw and went out unsimplified; `build` reports the total. */
+  simplifyFailures = 0;
+
   static async load(): Promise<DsmProvider | null> {
     if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
+    // The simplifier is a WASM module: `simplify` before `ready` throws on every cap, which the per-cap catch below
+    // used to swallow one warning at a time while the raw grids blew past the triangle budget.
+    await MeshoptSimplifier.ready;
     const index = await readJson<DsmIndex>(DSM_INDEX);
     const windows = new Map<string, Window>();
     for (const win of index.windows) {
@@ -417,7 +423,7 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
       const [res] = MeshoptSimplifier.simplify(idx, pos, 3, target, 0.15 / Math.max(1, b.ridge), ['LockBorder']);
       if (res.length >= 3) idx = res;
     }
-  } catch (e) { log.warn(`dsm: simplify failed for ${b.id}: ${e instanceof Error ? e.message : e}`); }
+  } catch (e) { dsm.simplifyFailures++; log.warn(`dsm: simplify failed for ${b.id}: ${e instanceof Error ? e.message : e}`); }
 
   // ---- emit: keep the non-degenerate triangles, then compact the vertices they use
   const keep: number[] = [];

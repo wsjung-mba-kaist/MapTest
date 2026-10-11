@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
-import { NodeIO, getBounds } from '@gltf-transform/core';
+import { Node, NodeIO, getBounds, type Document } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { clearNodeTransform, dedup, dequantize, flatten, join, meshopt, prune, quantize, simplify, textureCompress, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder, MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer';
@@ -20,26 +20,27 @@ export interface ModelResult { tris: number; height: number; scale: number; yawD
 
 const percentile = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
-export async function processModel(src: string, entry: LandmarkModel, fit: FitInput, out: string, lodOut: string, metaOut: string): Promise<ModelResult> {
-  await MeshoptEncoder.ready; await MeshoptDecoder.ready; await MeshoptSimplifier.ready;
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder, 'meshopt.decoder': MeshoptDecoder });
-  const doc = await io.readBinary(new Uint8Array(await fs.readFile(src)));
+/**
+ * Bake every node transform into the vertices and hang all mesh nodes, now at identity, under one fresh `holder`
+ * node that replaces the scene's children (shared by the landmark models and the Eiffel scan).
+ *
+ * This used to walk the nodes by hand and skip any POSITION accessor whose (name, count, mesh name) triple had
+ * been seen before. Unnamed accessors of equal length collide under that key, so parts of a model silently kept
+ * their parent transform while the node that carried it was reset to identity — the Liberty scan came out with
+ * its arm floating beside the figure and its crown scattered into fragments. glTF-Transform's `flatten` lifts each
+ * node's world matrix into its local one and `clearNodeTransform` bakes that into the mesh, cloning primitives
+ * other meshes still reference; a mesh instanced by several nodes gets its own copy per node first, or it would be
+ * transformed once per instance.
+ */
+export async function bakeTransforms(doc: Document, holderName: string): Promise<{ holder: Node; meshNodes: Node[] }> {
   const root = doc.getRoot();
-  const clean = entry.crop?.clean ?? root.listTextures().length === 0;
-  const extras = (root.getAsset().extras ?? {}) as Record<string, string>;
   const scene = root.getDefaultScene() ?? root.listScenes()[0];
-
-  // ---- 1. bake transforms, flatten under one node
-  //
-  // This used to walk the nodes by hand and skip any POSITION accessor whose (name, count, mesh name) triple had
-  // been seen before. Unnamed accessors of equal length collide under that key, so parts of a model silently kept
-  // their parent transform while the node that carried it was reset to identity — the Liberty scan came out with
-  // its arm floating beside the figure and its crown scattered into fragments. glTF-Transform's own `flatten`
-  // does this correctly, cloning a mesh that several nodes share before baking each node's transform into it.
   await doc.transform(dequantize(), flatten());
-  const holder = doc.createNode(`${entry.id}_model`);
+  const holder = doc.createNode(holderName);
   const meshNodes = root.listNodes().filter(n => n.getMesh());
   for (const node of meshNodes) {
+    const mesh = node.getMesh()!;
+    if (mesh.listParents().filter(p => p instanceof Node).length > 1) node.setMesh(mesh.clone());
     clearNodeTransform(node);
     const parent = node.getParentNode();
     if (parent) parent.removeChild(node); else scene.removeChild(node);
@@ -47,6 +48,19 @@ export async function processModel(src: string, entry: LandmarkModel, fit: FitIn
   }
   for (const child of scene.listChildren()) scene.removeChild(child);
   scene.addChild(holder);
+  return { holder, meshNodes };
+}
+
+export async function processModel(src: string, entry: LandmarkModel, fit: FitInput, out: string, lodOut: string, metaOut: string): Promise<ModelResult> {
+  await MeshoptEncoder.ready; await MeshoptDecoder.ready; await MeshoptSimplifier.ready;
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder, 'meshopt.decoder': MeshoptDecoder });
+  const doc = await io.readBinary(new Uint8Array(await fs.readFile(src)));
+  const root = doc.getRoot();
+  const clean = entry.crop?.clean ?? root.listTextures().length === 0;
+  const extras = (root.getAsset().extras ?? {}) as Record<string, string>;
+
+  // ---- 1. bake transforms, flatten under one node (see bakeTransforms for the bug this replaced)
+  const { holder, meshNodes } = await bakeTransforms(doc, `${entry.id}_model`);
 
   // ---- 2. statistics: base level, centre, horizontal extents
   const { min, max } = getBounds(holder);
