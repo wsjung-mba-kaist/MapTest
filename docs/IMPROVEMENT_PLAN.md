@@ -17,19 +17,14 @@
 | 2 베이크 버그 | 완료 (리베이크 미실행) | A2(+재시도 테스트)·A3·A11·A12·A13·Overpass 테마별 summary |
 | 3 shared 계약 | 완료 | 버전 상수+리더 검사, 매니페스트 대조, Style·변형 수·플래그 공용화, GLSL define 주입, PBM1 라운드트립·hash·셰이더 동기화 테스트, `verify:data` |
 | 4 성능 | 완료 | World.load/Life 병렬, 로더 정렬, 핫루프 할당 제거, Traffic 캐시, 오디오 20 Hz, 터치 fullRadius 0, terrain_raw.bin 제거, Vite base·청크 분할·XR 지연 |
-| 5 구조 | 부분 완료 | 완료: `shared/urlparams.ts`(레지스트리+README 커버리지·라운드트립 테스트), `patch.ts`(앵커 검사·샘플러 가드), `edgeHeadingInto`, `radii.ts`, prefs v2 마이그레이션 + `storage.ts`, 패널 계약 2건, a11y 기본. **남음(아래)** |
+| 5 구조 | 완료 (소항목 4건 남음) | `shared/urlparams.ts`, `patch.ts`, `edgeHeadingInto`, `radii.ts`, prefs v2 + `storage.ts`; 2차: App 분해(`TimeController`·`QualityController`·`ModalManager`·`Keymap`, 733 → 647줄), `GlobalUniforms`(import 순환 해소), `ChunkRadius`·`AgentPool`(Cyclists도 카메라 콘 스폰 거부)·`gltf.ts`·Terrain 리스너·`fetchJson`·나무 피트 메시 청크당 1개, UI `dom.ts`·`strings.ts`·모달 포커스 트랩/복귀·메뉴 화살표 키 |
 | 6 파이프라인 | 완료 (리베이크 미실행) | `Step.requires`·알 수 없는 step 거부, 원자적 writeJson·캐시 전 validate, landmarks 열화 가드+병합, ortho/deshadow 타임스탬프, 중복 헬퍼 통합, `ENV` 집중, LICENSES 생성, 죽은 코드 제거 |
 
-### Phase 5에서 의도적으로 남긴 것 (다음 작업)
-자동 작업으로는 회귀 위험 대비 이득이 작다고 판단해 남겼다. 각각 독립 PR 하나 분량이다.
-1. **`App.ts` 분해** (Boot / TimeController / Navigator / Soundscape / QualityController / Diagnostics). 현재 App은 필드를 20개 넘게 공유하므로 단순 추출은 `app`을 넘겨 받는 얇은 래퍼가 될 뿐이다. 먼저 `TimeController`(env·hud·timePanel·weather만 참조)와 `QualityController`(prefs 품질 키·auto-quality 틱·`?quality/ao/post/refl`)를 떼어 내고, 부트 순서는 `Boot.ts`에서 이름 있는 단계 + dev assert로 고정한다.
-2. **`ModalManager`**: 현재 `openModal/closeModal/toggleModal`과 시간 패널·GPU 패널이 각자 언락/리락한다. 이번에 GPU 패널 닫힘·터치 모드 두 가지만 맞췄고, kind에 `'time' | 'gpu'`를 넣어 한 곳으로 모으는 작업이 남았다.
-3. **`Keymap` 단일 테이블**: `Input.onKey` 바인딩, 게임패드 맵(`Input.ts`), 터치 버튼, 도움말 표(`Menu.ts`), `index.html` 범례가 다섯 벌이다.
-4. **월드 레이어 공용화**: `ChunkRadius`(5개 레이어의 거리 스캔·히스테리시스), `AgentPool`(Crowd/Cyclists/Traffic의 swap-remove·despawn·카메라 콘 스폰 거부 — Cyclists는 콘 거부가 없음), `adoptGltfScene`(Eiffel/LandmarkModel), `terrain.onTileChanged` 리스너 목록화(Streets의 매 프레임 폴링 제거), `fetchJson` 미사용 5곳.
-5. **UI**: DOM id 레지스트리(`required(id)`), 한국어 카피 카탈로그(`strings.ts`), 모달 포커스 트랩/복귀, `user-scalable=no` 재검토(터치 조이스틱과 핀치 줌 충돌 때문에 유지 중).
-6. **`GlobalUniforms`**: `uNight/uHour/uTime/uWet` 소유권을 Environment에서 재질로 (FacadeMaterial↔GroundMaterial↔Environment 순환 import 해소).
-7. **`FacadeMaterial` 프로그램 캐시 키**가 `fragMain.length`(충돌 가능) — 이름/해시로.
-8. **Trees** 피트 메시를 청크당 1개로, 수종별 InstancedMesh 분할 축소.
+### 남은 소항목 (각각 작은 PR)
+1. **키 범례 세 번째 사본**: `index.html` 시작 화면의 `.keys` 격자는 아직 정적이다. `KeyRow`에 축약 라벨을 더해 `S.help.groups`에서 렌더하면 된다. `src/core/Keymap.ts`(바인딩·게임패드·라벨)와 `strings.ts`의 `HELP_GROUPS`(도움말 표 문장)는 역할이 달라 둘 다 두었다; 모든 바인딩 키가 도움말 표에 있는지 검사하는 테스트는 테스트 글롭이 `src/`를 포함하지 않아 미작성.
+2. **GpuPanel** 포커스 트랩/복귀 (Modal 베이스가 아님).
+3. **`ChunkRadius`·`AgentPool` 단위 테스트**: `src/world` 아래라 `npm test` 글롭 밖이다. 글롭을 `src/**/*.test.ts`로 넓히되 three.js를 import하는 파일은 node에서 로드되므로 순수 모듈만 테스트.
+4. **SwiftShader 컨텍스트 손실**: 모든 레이어를 켠 프로덕션 스모크에서 144 청크 스트리밍 뒤 WebGL 컨텍스트 손실 오버레이가 뜬다(변경 전 기준 커밋에서도 동일, 소프트웨어 렌더러의 한계). 하네스는 실패로 보지 않지만, `webglcontextrestored`를 받아 PMREM 환경맵과 반사 타깃을 다시 만들면 실제 기기에서도 이득이다.
 
 ### 베이크 운영자가 알아야 할 동작 변경
 - `bake:<step>`은 선행 산출물이 없으면 생산 단계를 이름으로 알려 주며 즉시 실패하고, `--step=오타`는 exit 1.
