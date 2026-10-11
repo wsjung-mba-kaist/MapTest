@@ -9,6 +9,7 @@ import { buildDetails, type DetailMeshes } from './BuildingDetails';
 import { buildRoofDetails, disposeRoofDetails, type RoofDetailMeshes } from './RoofDetails';
 import { fetchBuffer } from './DataLoader';
 import { localLights } from '../render/LocalLights';
+import type { Terrain } from './Terrain';
 
 type RoofTopMaterial = ReturnType<typeof createRoofTopMaterial>;
 const SKIP_ALT: ReadonlySet<string> = new Set(['roofs_alt', 'tops_alt']);
@@ -108,6 +109,13 @@ export class Buildings {
 
   setTile(i: number, j: number, tex: THREE.Texture | null) { this.chunks.get(chunkKey(i, j))?.topMat?.setTile(tex); }
   setOverview(tex: THREE.Texture | null) { this.overview = tex; for (const c of this.chunks.values()) c.topMat?.setOverview(tex); }
+  /** Roof tops are drawn from the ground's ortho tile / overview: take the current textures and follow the terrain's events. */
+  attachTerrain(terrain: Terrain) {
+    this.textureProvider = (i, j) => terrain.textureOf(i, j);
+    this.setOverview(terrain.overview);
+    terrain.onTileChanged.add((i, j, tex) => this.setTile(i, j, tex));
+    terrain.onOverview.add(tex => this.setOverview(tex));
+  }
 
   update(x: number, z: number, time = 0) {
     this.playerX = x; this.playerZ = z;

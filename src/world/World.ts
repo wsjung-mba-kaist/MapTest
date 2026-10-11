@@ -83,10 +83,7 @@ export class World {
     onProgress(0.4, '건물 불러오는 중…');
     this.buildings = new Buildings();
     this.buildings.dsmEnabled = this.dsmEnabled;
-    this.buildings.textureProvider = (i, j) => this.terrain.textureOf(i, j);
-    this.buildings.setOverview(this.terrain.overview);
-    this.terrain.onTileChanged = (i, j, tex) => { this.buildings.setTile(i, j, tex); this.bridges?.setTile(i, j, tex); };
-    this.terrain.onOverview = tex => { this.buildings.setOverview(tex); this.bridges?.setOverview(tex); };
+    this.buildings.attachTerrain(this.terrain);
     this.buildings.start();
     this.group.add(this.buildings.group);
     onProgress(0.6, '센강·다리·탑·가로수 불러오는 중…');
@@ -108,7 +105,7 @@ export class World {
     void landmarksDone;
     if (water) { this.water = water; this.group.add(water.group); }
     if (fountains) { this.fountains = fountains; this.group.add(fountains.group); }
-    if (bridges) { this.bridges = bridges; bridges.setOverview(this.terrain.overview); bridges.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(bridges.group); }
+    if (bridges) { this.bridges = bridges; bridges.attachTerrain(this.terrain); this.group.add(bridges.group); }
     this.eiffel = eiffel;
     this.group.add(this.eiffel.group);
     this.models.group.name = 'models';

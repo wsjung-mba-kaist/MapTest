@@ -7,7 +7,7 @@ import { createGroundMaterial, type GroundMaterial } from '../materials/GroundMa
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import type { Terrain } from './Terrain';
 
-interface StreetChunk { mesh: THREE.Mesh; mat: GroundMaterial; walk: THREE.BufferGeometry; i: number; j: number; tile: THREE.Texture | null; mask: THREE.Texture | null; overview: THREE.Texture | null; walkReg: boolean }
+interface StreetChunk { mesh: THREE.Mesh; mat: GroundMaterial; walk: THREE.BufferGeometry; i: number; j: number; walkReg: boolean }
 
 export interface WalkableSink { register(key: string, geom: THREE.BufferGeometry, origin: THREE.Vector3): void; unregister(key: string): void }
 
@@ -28,7 +28,14 @@ export class Streets {
   count = 0;
 
   /** `debug` (?streetsdebug=1) draws the slabs with a normal material: tops green, kerb faces by facing. */
-  constructor(private readonly terrain: Terrain, private readonly debug = false) { this.group.name = 'streets'; }
+  constructor(private readonly terrain: Terrain, private readonly debug = false) {
+    this.group.name = 'streets';
+    // the slabs are shaded from the terrain chunk's own ortho tile / mask / overview: follow the terrain's texture events
+    // (a slab that lands later is primed from the current state in `request`)
+    terrain.onTileChanged.add((i, j, tex) => this.chunks.get(chunkKey(i, j))?.mat.setTile(tex));
+    terrain.onMask.add((i, j, tex) => this.chunks.get(chunkKey(i, j))?.mat.setMask(tex));
+    terrain.onOverview.add(tex => { for (const c of this.chunks.values()) c?.mat.setOverview(tex); });
+  }
 
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
@@ -40,12 +47,6 @@ export class Streets {
     for (const c of this.chunks.values()) {
       if (!c) continue;
       const k = chunkKey(c.i, c.j), d2 = (chunkCentreX(c.i) - x) ** 2 + (chunkCentreZ(c.j) - z) ** 2;
-      // share the terrain chunk's textures
-      const tile = this.terrain.textureOf(c.i, c.j), mask = this.terrain.maskOf(c.i, c.j), ov = this.terrain.overview;
-      if (tile !== c.tile) { c.tile = tile; c.mat.setTile(tile); }
-      if (mask !== c.mask) { c.mask = mask; c.mat.setMask(mask); }
-      if (ov !== c.overview) { c.overview = ov; c.mat.setOverview(ov); }
-      // walkable registration near the player only
       if (!c.walkReg && d2 < wd2 && this.walkables) { this.walkables.register(`street:${k}`, c.walk, new THREE.Vector3(c.mesh.position.x, 0, c.mesh.position.z)); c.walkReg = true; }
       else if (c.walkReg && d2 > wu2) { this.walkables?.unregister(`street:${k}`); c.walkReg = false; }
     }
@@ -60,13 +61,16 @@ export class Streets {
         const s = bm.sections.get('slab');
         if (!s) { this.chunks.set(k, null); return; }
         const mat = createGroundMaterial({ street: true });
+        // textures the terrain already holds (setTile(null) would only force a needless program update on the fresh material)
+        const tile = this.terrain.textureOf(i, j), mask = this.terrain.maskOf(i, j), ov = this.terrain.overview;
+        if (tile) mat.setTile(tile); if (mask) mat.setMask(mask); if (ov) mat.setOverview(ov);
         const mesh = new THREE.Mesh(s.geometry, this.debug ? new THREE.MeshNormalMaterial() : mat);
         mesh.position.set(o.x, 0, o.z); mesh.matrixAutoUpdate = false; mesh.updateMatrix();
         mesh.receiveShadow = true; mesh.castShadow = true; mesh.renderOrder = 1;   // kerbs throw their own 14 cm shadow
         mesh.layers.enable(REFLECT_LAYER);
         mesh.name = `streets_${k}`;
         this.group.add(mesh);
-        this.chunks.set(k, { mesh, mat, walk: topOnly(s.geometry), i, j, tile: null, mask: null, overview: null, walkReg: false });
+        this.chunks.set(k, { mesh, mat, walk: topOnly(s.geometry), i, j, walkReg: false });
         this.count++;
       } catch (e) { console.warn('streets load failed', k, e); this.chunks.set(k, null); }
     });
