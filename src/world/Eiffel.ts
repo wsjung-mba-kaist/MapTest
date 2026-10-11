@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MODELS_URL } from './DataLoader';
+import { MODELS_URL, fetchJson } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -44,7 +44,7 @@ export class Eiffel {
   kind: 'lattice' | 'scan' = 'scan';
 
   async load(): Promise<void> {
-    try { this.meta = await (await fetch(`${MODELS_URL}/eiffel.json`)).json(); } catch { this.meta = {}; }
+    try { this.meta = await fetchJson<EiffelMeta>(`${MODELS_URL}/eiffel.json`); } catch { this.meta = {}; }
     this.top = this.meta.top ?? this.meta.height ?? 300;
     if (this.meta.centre) this.centre.set(this.meta.centre[0], 0, this.meta.centre[1]);
     this.uniforms.uCentre.value.copy(this.centre);   // fixed for the session: no per-frame copy

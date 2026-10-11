@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DATA_URL } from './DataLoader';
+import { DATA_URL, fetchJson } from './DataLoader';
 import { buildingUniforms } from '../materials/FacadeMaterial';
 
 interface Jet { x: number; y: number; z: number; vx: number; vy: number; vz: number; n: number; w: number }
@@ -19,9 +19,7 @@ export class Fountains {
   constructor() { this.group.name = 'fountains'; }
 
   async load() {
-    const res = await fetch(`${DATA_URL}/fountains.json`);
-    if (!res.ok) throw new Error(`fountains.json ${res.status}`);
-    const data = await res.json() as { jets: Jet[]; sites: FountainSite[] };
+    const data = await fetchJson<{ jets: Jet[]; sites: FountainSite[] }>(`${DATA_URL}/fountains.json`);
     this.sites = data.sites;
     const total = data.jets.reduce((s, j) => s + j.n, 0);
     this.count = data.jets.length;

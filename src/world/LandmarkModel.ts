@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RADII } from './radii';
-import { MODELS_URL } from './DataLoader';
+import { MODELS_URL, fetchJson } from './DataLoader';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { withLamps } from '../render/LocalLights';
@@ -47,11 +47,11 @@ export class LandmarkModel {
 
   static async loadAll(url: string, groundY: (x: number, z: number) => number, lodOnly = false): Promise<LandmarkModel[]> {
     let index: { models: { id: string; glb: string; lod?: string; json: string }[] };
-    try { index = await (await fetch(url)).json(); } catch { return []; }
+    try { index = await fetchJson(url); } catch { return []; }
     // Load them side by side: awaiting each in turn made boot wait for the sum of every model's fetch and parse.
     const loaded = await Promise.all((index.models ?? []).filter(m => m.id !== 'eiffel').map(async m => {
       try {
-        const meta = await (await fetch(`${MODELS_URL}/${m.json}`)).json() as LandmarkModelMeta;
+        const meta = await fetchJson<LandmarkModelMeta>(`${MODELS_URL}/${m.json}`);
         const lm = new LandmarkModel({ ...meta, id: m.id, lod: m.lod }, groundY);
         await lm.load(`${MODELS_URL}/${m.glb}`, m.lod ? `${MODELS_URL}/${m.lod}` : undefined, lodOnly);
         return lm;
