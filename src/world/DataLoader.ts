@@ -3,7 +3,10 @@ import { parseBinMesh, type BinMeshHeader } from '../../shared/binmesh';
 import { Heightmap } from '../../shared/heightmap';
 import type { Manifest } from '../../shared/layout';
 
-export const DATA_URL = '/data';
+/** URL of a file under public/ honouring Vite's `base`, so the app can be deployed under a sub-path. */
+export function assetUrl(rel: string): string { return `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${rel.replace(/^\//, '')}`; }
+export const DATA_URL = assetUrl('data');
+export const MODELS_URL = assetUrl('models');
 
 export async function fetchJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -91,23 +94,29 @@ export function loadTexture(url: string, srgb = true): Promise<THREE.Texture> {
  */
 export class PriorityLoader {
   private queue: { key: string; prio: () => number; job: () => Promise<void> }[] = [];
+  private dirty = false;
   private readonly inflight = new Set<string>();
   constructor(private readonly concurrency = 4) {}
   add(key: string, prio: () => number, job: () => Promise<void>) {
     if (this.has(key)) return;
     this.queue.push({ key, prio, job });
+    this.dirty = true;
     this.pump();
   }
   /** True while a request for this key is queued or running. */
   has(key: string) { return this.inflight.has(key) || this.queue.some(q => q.key === key); }
+  /** The priorities depend on the player: call once per frame (cheap flag) so the next pump re-sorts. */
+  reprioritise() { this.dirty = true; }
   /** Drop a queued request that has not started yet (the chunk went out of range before its turn came up). */
   cancel(key: string) {
     const i = this.queue.findIndex(q => q.key === key);
     if (i >= 0) this.queue.splice(i, 1);
   }
   private pump() {
+    // Sorting on every pump made the 144-chunk boot O(n² log n); sort once per batch of adds instead (a finished job
+    // re-enters pump with the same order, only a new add or a moved player changes it — see reprioritise()).
+    if (this.dirty && this.queue.length) { this.queue.sort((a, b) => a.prio() - b.prio()); this.dirty = false; }
     while (this.inflight.size < this.concurrency && this.queue.length) {
-      this.queue.sort((a, b) => a.prio() - b.prio());
       const next = this.queue.shift()!;
       this.inflight.add(next.key);
       next.job().catch(e => console.warn(`load ${next.key} failed`, e)).finally(() => { this.inflight.delete(next.key); this.pump(); });

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, GRID_N, MarkKind, chunkKey, chunkOrigin } from '../../shared/layout';
+import { GRID_N, MarkKind, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 
@@ -56,14 +56,16 @@ export class Markings {
 
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
+    this.loader.reprioritise();
     const ld2 = this.loadDistance ** 2, ud2 = this.unloadDistance ** 2;
     for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
       const k = chunkKey(i, j);
-      const o = chunkOrigin(i, j);
-      const d2 = (o.x + CHUNK_SIZE / 2 - x) ** 2 + (o.z + CHUNK_SIZE / 2 - z) ** 2;
+      const cx = chunkCentreX(i), cz = chunkCentreZ(j);
+      const d2 = (cx - x) ** 2 + (cz - z) ** 2;
       if (d2 < ld2 && !this.requested.has(k)) {
         this.requested.add(k);
-        this.loader.add(k, () => (o.x + CHUNK_SIZE / 2 - this.playerX) ** 2 + (o.z + CHUNK_SIZE / 2 - this.playerZ) ** 2, async () => {
+        const o = chunkOrigin(i, j);
+        this.loader.add(k, () => (cx - this.playerX) ** 2 + (cz - this.playerZ) ** 2, async () => {
           try {
             const bm = await loadBinMesh(`${DATA_URL}/marks/${k}.bin`);
             if (!this.requested.has(k)) return;   // unloaded while the fetch was in flight: drop it

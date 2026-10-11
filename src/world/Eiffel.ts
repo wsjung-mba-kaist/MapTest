@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MODELS_URL } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -7,6 +8,7 @@ import { buildLattice } from './EiffelLattice';
 
 /** lighthouse beams: length rendered (m), half-width at the lamp and at the far end (m), elevation (deg), seconds per turn */
 const BEAM_LEN = 1600, BEAM_W0 = 2.2, BEAM_W1 = 70, BEAM_ELEV = 3, BEAM_PERIOD = 40;
+const BEAM_COS_E = Math.cos(BEAM_ELEV * Math.PI / 180), BEAM_SIN_E = Math.sin(BEAM_ELEV * Math.PI / 180), BEAM_DIRS = [0, Math.PI];
 
 interface EiffelMeta { kind?: 'scan' | '3dmr'; textured?: boolean; top?: number; height?: number; centre?: [number, number]; author?: string; license?: string; source?: string; title?: string }
 
@@ -41,9 +43,10 @@ export class Eiffel {
   kind: 'lattice' | 'scan' = 'scan';
 
   async load(): Promise<void> {
-    try { this.meta = await (await fetch('/models/eiffel.json')).json(); } catch { this.meta = {}; }
+    try { this.meta = await (await fetch(`${MODELS_URL}/eiffel.json`)).json(); } catch { this.meta = {}; }
     this.top = this.meta.top ?? this.meta.height ?? 300;
     if (this.meta.centre) this.centre.set(this.meta.centre[0], 0, this.meta.centre[1]);
+    this.uniforms.uCentre.value.copy(this.centre);   // fixed for the session: no per-frame copy
     if (this.kind === 'lattice') {
       const lat = buildLattice();
       lat.mesh.position.copy(this.centre);
@@ -66,7 +69,7 @@ export class Eiffel {
     try {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const gltf = await loader.loadAsync('/models/eiffel.glb');
+      const gltf = await loader.loadAsync(`${MODELS_URL}/eiffel.glb`);
       const positions: THREE.Vector3[] = [];
       gltf.scene.updateMatrixWorld(true);
       gltf.scene.traverse(o => {
@@ -264,7 +267,6 @@ export class Eiffel {
     const on = night * this.lit;
     this.uniforms.uNight.value = night; this.uniforms.uTime.value = time;
     this.uniforms.uTowerLit.value = on; this.uniforms.uSparkle.value = this.sparkle * this.lit;
-    this.uniforms.uCentre.value.copy(this.centre);
     // Sodium-gold floodlighting: the CAD model shades it per normal in its shader (userData.floodlit); the photo scan
     // modulates its texture, and the procedural lattice glows a little more on beams than on the see-through panels.
     for (const m of this.materials) {
@@ -280,9 +282,9 @@ export class Eiffel {
     // lamp-head glare: how squarely either beam is aimed at the camera
     if (this.glare && this.beams) {
       const dx = camX - this.centre.x, dy = camY - (this.top + 2), dz = camZ - this.centre.z, l = Math.hypot(dx, dy, dz) || 1;
-      const yaw = this.beams.rotation.y, cosE = Math.cos(THREE.MathUtils.degToRad(BEAM_ELEV)), sinE = Math.sin(THREE.MathUtils.degToRad(BEAM_ELEV));
+      const yaw = this.beams.rotation.y, cosE = BEAM_COS_E, sinE = BEAM_SIN_E;
       let best = 0;
-      for (const d of [0, Math.PI]) { const bx = Math.cos(yaw + d) * cosE, bz = -Math.sin(yaw + d) * cosE; best = Math.max(best, (bx * dx + sinE * dy + bz * dz) / l); }
+      for (const d of BEAM_DIRS) { const bx = Math.cos(yaw + d) * cosE, bz = -Math.sin(yaw + d) * cosE; best = Math.max(best, (bx * dx + sinE * dy + bz * dz) / l); }
       (this.glare.material as THREE.SpriteMaterial).opacity = on * (0.12 + 0.88 * Math.pow(Math.max(0, best), 24));
     }
   }

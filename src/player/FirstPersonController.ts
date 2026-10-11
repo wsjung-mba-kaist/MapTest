@@ -14,6 +14,7 @@ const segStart = new THREE.Vector3();
 const segEnd = new THREE.Vector3();
 const correction = new THREE.Vector3();
 const wish = new THREE.Vector3();
+const fwdTmp = new THREE.Vector3(), rightTmp = new THREE.Vector3(), nTmp = new THREE.Vector3();
 
 /** Walking controller: capsule collision against buildings, feet clamped to terrain / walkable decks. */
 export class FirstPersonController {
@@ -69,8 +70,8 @@ export class FirstPersonController {
     }
     const { f, s, sprint } = this.input.axes();
     const yaw = this.input.yaw;
-    const fwd = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+    const fwd = fwdTmp.set(Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = rightTmp.set(Math.cos(yaw), 0, Math.sin(yaw));
     wish.set(0, 0, 0).addScaledVector(fwd, f).addScaledVector(right, s);
     if (wish.lengthSq() > 1) wish.normalize();
     const speed = sprint ? SPRINT : WALK;
@@ -125,7 +126,7 @@ export class FirstPersonController {
     }
     // Remove velocity into walls so we slide.
     if (correction.lengthSq() > 1e-10) {
-      const n = correction.clone().setY(0).normalize();
+      const n = nTmp.copy(correction).setY(0).normalize();
       const into = this.vel.dot(n);
       if (into < 0) this.vel.addScaledVector(n, -into);
     }

@@ -81,7 +81,10 @@ export async function run(ctx: BakeContext) {
   const towerY = out[((n - 1) / 2) * n + (n - 1) / 2] / 100;
   log.info(`terrain: ${n}x${n} @ ${TERRAIN_STEP} m, y range ${min.toFixed(2)}..${max.toFixed(2)} m, tower base y=${towerY.toFixed(2)}, nodata ${bad}`);
   await fs.writeFile(binOut, Buffer.from(out.buffer));
-  await fs.writeFile(path.join(OUT_DIR, 'terrain_raw.bin'), Buffer.from(out.buffer)); // untouched copy; build.ts lowers river beds into terrain.bin
+  // untouched copy for build.ts / dsm (they lower river beds into terrain.bin): a bake intermediate, so it lives in cache/,
+  // not in the 4.7 MB the runtime would otherwise ship for nothing
+  await fs.mkdir(CACHE_DIR, { recursive: true });
+  await fs.writeFile(path.join(CACHE_DIR, 'terrain_raw.bin'), Buffer.from(out.buffer));
   await writeJson(jsonOut, { n, step: TERRAIN_STEP, origin: -WORLD_HALF, format: 'int16cm', minY: min, maxY: max });
 
   // Debug preview.

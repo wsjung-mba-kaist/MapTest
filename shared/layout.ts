@@ -32,6 +32,9 @@ export function chunkOrigin(i: number, j: number): { x: number; z: number } {
   return { x: GRID_ORIGIN + i * CHUNK_SIZE, z: GRID_ORIGIN + j * CHUNK_SIZE };
 }
 export function chunkKey(i: number, j: number): string { return `${i}_${j}`; }
+/** Centre of chunk column i / row j (scalars: the per-frame streaming loops call this 144× per layer, no object). */
+export function chunkCentreX(i: number): number { return GRID_ORIGIN + (i + 0.5) * CHUNK_SIZE; }
+export function chunkCentreZ(j: number): number { return GRID_ORIGIN + (j + 0.5) * CHUNK_SIZE; }
 export function inGrid(i: number, j: number): boolean { return i >= 0 && j >= 0 && i < GRID_N && j < GRID_N; }
 
 export interface ChunkInfo { buildings: number; bytes: number; tris: number; dsmTris?: number }

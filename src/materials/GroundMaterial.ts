@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { loadTexture } from '../world/DataLoader';
+import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { buildingUniforms } from './FacadeMaterial';
 import { ORTHO_MARGIN, ORTHO_TILE_M, WORLD_HALF } from '../../shared/layout';
@@ -32,7 +32,7 @@ let detailPromise: Promise<void> | null = null;
 export function loadGroundDetail(): Promise<void> {
   if (detailPromise) return detailPromise;
   const rep = (t: THREE.Texture, srgb: boolean) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 16; return t; };
-  const tex = (name: string, srgb: boolean) => loadTexture(`/textures/pbr/${name}.jpg`, srgb).then(t => rep(t, srgb));
+  const tex = (name: string, srgb: boolean) => loadTexture(assetUrl(`textures/pbr/${name}.jpg`), srgb).then(t => rep(t, srgb));
   detailPromise = Promise.all([
     tex('Asphalt033_color', true), tex('Asphalt033_normal', false),
     tex('PavingStones138_color', true), tex('PavingStones138_normal', false),

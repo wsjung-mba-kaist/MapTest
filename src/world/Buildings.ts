@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { REFLECT_LAYER } from '../render/WaterReflection';
-import { CHUNK_SIZE, GRID_N, chunkKey, chunkOrigin } from '../../shared/layout';
+import { GRID_N, chunkKey, chunkOrigin, chunkCentreX, chunkCentreZ } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader, type LoadedBinMesh } from './DataLoader';
 import { buildingUniforms, createRoofSlopeMaterial, createRoofTopMaterial, createWallMaterial } from '../materials/FacadeMaterial';
 import { buildDetails, type DetailMeshes } from './BuildingDetails';
@@ -24,6 +24,8 @@ export interface BuildingChunk {
   details?: DetailMeshes | null;
   roof?: RoofDetailMeshes | null;
   roofLoading?: boolean;
+  /** every LOD0 mesh whose castShadow follows shadowDistance (built once in populate: no per-frame array) */
+  shadowMeshes: THREE.Mesh[];
   loaded: boolean;
 }
 
@@ -59,7 +61,7 @@ export class Buildings {
       lod1.visible = false;
       group.add(lod0, lod1);
       this.group.add(group);
-      const c: BuildingChunk = { i, j, group, lod0, lod1, loaded: false };
+      const c: BuildingChunk = { i, j, group, lod0, lod1, shadowMeshes: [], loaded: false };
       this.chunks.set(chunkKey(i, j), c);
       this.loader.add(chunkKey(i, j), () => this.dist2(c), async () => {
         const bm = await loadBinMesh(`${DATA_URL}/chunks/${chunkKey(i, j)}.bin`, this.dsmEnabled ? SKIP_ALT : SKIP_DSM);
@@ -68,10 +70,7 @@ export class Buildings {
     }
   }
 
-  private dist2(c: BuildingChunk) {
-    const o = chunkOrigin(c.i, c.j);
-    return (o.x + CHUNK_SIZE / 2 - this.playerX) ** 2 + (o.z + CHUNK_SIZE / 2 - this.playerZ) ** 2;
-  }
+  private dist2(c: BuildingChunk) { return (chunkCentreX(c.i) - this.playerX) ** 2 + (chunkCentreZ(c.j) - this.playerZ) ** 2; }
 
   private populate(c: BuildingChunk, bm: LoadedBinMesh) {
     const mk = (name: string, mat: THREE.Material, parent: THREE.Group) => {
@@ -97,6 +96,7 @@ export class Buildings {
       c.roofsAlt = mk('roofs_alt', this.roofMaterial, c.lod0);
       c.topsAlt = mk('tops_alt', c.topMat, c.lod0);
     }
+    c.shadowMeshes = [c.walls, c.roofs, c.tops, c.dsm, c.roofsAlt, c.topsAlt].filter((m): m is THREE.Mesh => !!m);
     c.loaded = true;
     this.onChunkLoaded(c);
   }
@@ -106,6 +106,7 @@ export class Buildings {
 
   update(x: number, z: number, time = 0) {
     this.playerX = x; this.playerZ = z;
+    this.loader.reprioritise();
     buildingUniforms.uTime.value = time;
     const lod2 = this.lodDistance ** 2, sh2 = this.shadowDistance ** 2;
     let next: BuildingChunk | null = null, nextD2 = Infinity;
@@ -115,7 +116,7 @@ export class Buildings {
       const near = d2 < lod2;
       if (c.lod0.visible !== near) { c.lod0.visible = near; c.lod1.visible = !near; }
       const shadows = d2 < sh2;
-      for (const m of [c.walls, c.roofs, c.tops, c.dsm, c.roofsAlt, c.topsAlt]) if (m && m.castShadow !== shadows) m.castShadow = shadows;
+      for (const m of c.shadowMeshes) if (m.castShadow !== shadows) m.castShadow = shadows;
       // Facade details: build lazily near the viewer (one chunk per frame, nearest first), drop them again far away.
       if (c.details === undefined && d2 < this.detailDistance ** 2 && c.walls) {
         if (d2 < nextD2) { next = c; nextD2 = d2; }

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { FeatureCollection, Geometry } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { DSM_BUDGET, OUT_DIR } from '../config.ts';
+import { CACHE_DIR, DSM_BUDGET, OUT_DIR } from '../config.ts';
 import { ensureDir, exists, readJson, writeJson, fmtBytes } from './http.ts';
 import { loadTheme, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
@@ -23,8 +23,11 @@ import { area, clipToBox, cleanRing, orient, pointInPoly, type Poly, type Ring }
 
 export async function loadHeightmap(raw = false): Promise<Heightmap> {
   const meta = await readJson<{ n: number; step: number; origin: number }>(path.join(OUT_DIR, 'terrain.json'));
-  const rawFile = path.join(OUT_DIR, 'terrain_raw.bin');
-  const buf = await fs.readFile(raw && await exists(rawFile) ? rawFile : path.join(OUT_DIR, 'terrain.bin'));
+  // the raw copy moved from public/data to cache/ (bake intermediate); an older checkout may still have it next to terrain.bin
+  const rawFiles = [path.join(CACHE_DIR, 'terrain_raw.bin'), path.join(OUT_DIR, 'terrain_raw.bin')];
+  let file = path.join(OUT_DIR, 'terrain.bin');
+  if (raw) for (const f of rawFiles) if (await exists(f)) { file = f; break; }
+  const buf = await fs.readFile(file);
   return Heightmap.fromBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), meta);
 }
 

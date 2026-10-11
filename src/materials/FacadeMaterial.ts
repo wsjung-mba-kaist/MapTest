@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import facadeGlsl from './shaders/facade.glsl?raw';
-import { loadTexture } from '../world/DataLoader';
+import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { ORTHO_MARGIN, ORTHO_TILE_M, STYLE_SCALE, Style, SurfaceFlag, WORLD_HALF } from '../../shared/layout';
 import { litProbabilityGlsl } from '../../shared/nightlife';
@@ -50,7 +50,7 @@ export function loadFacadeDetail(): Promise<void> {
   if (detailPromise) return detailPromise;
   if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('facadetex') === '0') return (detailPromise = Promise.resolve()); // debug: procedural only
   const rep = (t: THREE.Texture) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 16; return t; };
-  const tex = (name: string, srgb: boolean) => loadTexture(`/textures/pbr/${name}.jpg`, srgb).then(rep);
+  const tex = (name: string, srgb: boolean) => loadTexture(assetUrl(`textures/pbr/${name}.jpg`), srgb).then(rep);
   detailPromise = Promise.all([
     tex('plaster_grey_04_color', true), tex('plaster_grey_04_roughness', false), tex('plaster_grey_04_normal', false),
     tex('large_sandstone_blocks_color', true), tex('large_sandstone_blocks_normal', false),

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MODELS_URL } from '../DataLoader';
 import { CAR_VARIANTS } from '../../../shared/layout';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -121,7 +122,7 @@ function paintMask(g: THREE.BufferGeometry, tex: THREE.Texture): Float32Array {
 }
 
 export async function loadCarModel(name: string, targetLength: number): Promise<CarModel> {
-  const gltf = await new GLTFLoader().loadAsync(`/models/cars/${name}.glb`);
+  const gltf = await new GLTFLoader().loadAsync(`${MODELS_URL}/cars/${name}.glb`);
   gltf.scene.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(gltf.scene);
   const size = box.getSize(new THREE.Vector3());

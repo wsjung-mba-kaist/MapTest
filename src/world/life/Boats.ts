@@ -76,9 +76,10 @@ export class Boats {
     }
   }
 
+  private readonly aheadTmp = new THREE.Vector3();
   update(_dt: number, night: number) {
     const t = this.clock.time;
-    const ahead = new THREE.Vector3();
+    const ahead = this.aheadTmp;
     for (const b of this.boats) {
       const loop = this.loops[b.loop];
       const s = b.s0 + b.speed * t;

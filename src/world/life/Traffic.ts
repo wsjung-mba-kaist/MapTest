@@ -41,6 +41,9 @@ export class Traffic {
   private readonly vCruise = new Float32Array(CAP);
   private readonly variant = new Uint8Array(CAP);
   private readonly seed = new Uint32Array(CAP);
+  /** paint colour per car, computed once at spawn (bit 24 set = valid) — carColor() + setHex per car per frame was pure waste */
+  private readonly colHex = new Uint32Array(CAP);
+  private readonly slotCounts = new Uint16Array(64);
   private readonly hop = new Uint16Array(CAP);
   private readonly nextE = new Int32Array(CAP);
   private readonly nextDir = new Int8Array(CAP);
@@ -186,7 +189,7 @@ export class Traffic {
           let vi = busLane && hash32(seed, 26) < 0.12 ? BUS : pickVariant(hash32(seed, 25));
           if (vi === BUS && !busLane) vi = 0;
           const sp = vi === BUS ? speed * 0.85 : speed;
-          this.v[i] = sp; this.vCruise[i] = sp; this.variant[i] = vi; this.seed[i] = seed; this.hop[i] = 0;
+          this.v[i] = sp; this.vCruise[i] = sp; this.variant[i] = vi; this.seed[i] = seed; this.hop[i] = 0; this.colHex[i] = 0;
           this.px[i] = this.tmp.x; this.pz[i] = this.tmp.z; this.hx[i] = dir * this.tmp.ux; this.hz[i] = dir * this.tmp.uz;
           this.jt[i] = -1; this.ident[i] = id; this.alive.add(id);
           this.chooseNext(i);
@@ -206,7 +209,7 @@ export class Traffic {
       for (const a of [this.lane, this.variant] as Uint8Array[]) a[i] = a[last];
       for (const a of [this.s, this.v, this.vCruise, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen] as Float32Array[]) a[i] = a[last];
       for (const a of [this.j0, this.jc, this.j1]) { a[i * 3] = a[last * 3]; a[i * 3 + 1] = a[last * 3 + 1]; a[i * 3 + 2] = a[last * 3 + 2]; }
-      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last];
+      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last]; this.colHex[i] = this.colHex[last];
     }
     this.count = last;
   }
@@ -235,7 +238,8 @@ export class Traffic {
   }
 
   private rebuildLanes() {
-    this.laneLists.clear();
+    // keep the per-lane arrays and empty them: ~150 fresh arrays per frame otherwise
+    for (const arr of this.laneLists.values()) arr.length = 0;
     for (let i = 0; i < this.count; i++) {
       const key = this.laneKey(this.edge[i], this.dir[i], this.lane[i]);
       const arr = this.laneLists.get(key); if (arr) arr.push(i); else this.laneLists.set(key, [i]);
@@ -301,7 +305,7 @@ export class Traffic {
       }
     }
     // ---- write instances per variant
-    const counts = new Array<number>(this.meshes.length).fill(0);
+    const counts = this.slotCounts; counts.fill(0, 0, this.meshes.length);
     for (let i = 0; i < this.count; i++) {
       const vi = this.variant[i]; const mesh = this.meshes[vi]; if (!mesh) continue;
       let x: number, y: number, z: number, hx: number, hz: number;
@@ -325,7 +329,8 @@ export class Traffic {
       const a = mesh.instanceMatrix.array as Float32Array, o = slot * 16;
       a[o] = c; a[o + 1] = 0; a[o + 2] = -sn; a[o + 3] = 0; a[o + 4] = 0; a[o + 5] = 1; a[o + 6] = 0; a[o + 7] = 0;
       a[o + 8] = sn; a[o + 9] = 0; a[o + 10] = c; a[o + 11] = 0; a[o + 12] = x; a[o + 13] = y; a[o + 14] = z; a[o + 15] = 1;
-      mesh.setColorAt(slot, this.color.setHex(vi === BUS ? 0xffffff : carColor(hash32(this.seed[i], 27), vi)));
+      if (!(this.colHex[i] & 0x1000000)) this.colHex[i] = 0x1000000 | (vi === BUS ? 0xffffff : carColor(hash32(this.seed[i], 27), vi));
+      mesh.setColorAt(slot, this.color.setHex(this.colHex[i] & 0xffffff));
       const st = this.stateAttrs[vi].array as Float32Array, remain = g.eLen[this.edge[i]] - this.progress(i);
       const indicating = this.lightFx && this.turn[i] !== 0 && (remain < 25 || this.jt[i] >= 0);
       st[slot * 3] = this.lightFx ? this.brake[i] : 0; st[slot * 3 + 1] = indicating ? this.turn[i] : 0; st[slot * 3 + 2] = this.odo[i];
@@ -348,13 +353,24 @@ export class Traffic {
 
   /** The n nearest moving cars (position, speed) for positional audio. */
   nearest(x: number, z: number, n: number): { x: number; y: number; z: number; v: number }[] {
-    const best: { d2: number; i: number }[] = [];
+    const m = this.selectNearest(x, z, n), out: { x: number; y: number; z: number; v: number }[] = [];
+    for (let k = 0; k < m; k++) { const i = this.bestI[k]; out.push({ x: this.px[i], y: this.py[i] + 0.5, z: this.pz[i], v: this.v[i] }); }
+    return out;
+  }
+
+  private readonly bestI = new Int32Array(8); private readonly bestD = new Float64Array(8);
+  /** Insertion-select the n (≤ 8) nearest cars into bestI/bestD without allocating; returns how many were found. */
+  private selectNearest(x: number, z: number, n: number): number {
+    n = Math.min(n, this.bestI.length);
+    let m = 0;
     for (let i = 0; i < this.count; i++) {
       const d2 = (this.px[i] - x) ** 2 + (this.pz[i] - z) ** 2;
-      if (best.length < n) { best.push({ d2, i }); best.sort((a, b) => a.d2 - b.d2); }
-      else if (d2 < best[n - 1].d2) { best[n - 1] = { d2, i }; best.sort((a, b) => a.d2 - b.d2); }
+      if (m === n && d2 >= this.bestD[m - 1]) continue;
+      let k = m < n ? m++ : n - 1;
+      while (k > 0 && this.bestD[k - 1] > d2) { this.bestD[k] = this.bestD[k - 1]; this.bestI[k] = this.bestI[k - 1]; k--; }
+      this.bestD[k] = d2; this.bestI[k] = i;
     }
-    return best.map(b => ({ x: this.px[b.i], y: this.py[b.i] + 0.5, z: this.pz[b.i], v: this.v[b.i] }));
+    return m;
   }
 
   /**
@@ -362,12 +378,10 @@ export class Traffic {
    * pair merged into one 35-degree spot tilted 8 degrees down, and a short red glow behind the car.
    */
   dynamicLights(out: LocalLight[], camX: number, camZ: number, maxCars: number) {
-    const order: { d2: number; i: number }[] = [];
-    for (let i = 0; i < this.count; i++) { const dx = this.px[i] - camX, dz = this.pz[i] - camZ; order.push({ d2: dx * dx + dz * dz, i }); }
-    order.sort((a, b) => a.d2 - b.d2);
+    const m = this.selectNearest(camX, camZ, maxCars);
     const tilt = Math.sin(8 * Math.PI / 180), ct = Math.cos(8 * Math.PI / 180);
-    for (let k = 0; k < Math.min(maxCars, order.length); k++) {
-      const i = order[k].i;
+    for (let k = 0; k < m; k++) {
+      const i = this.bestI[k];
       const hx = this.hx[i], hz = this.hz[i], len = this.models[this.variant[i]]?.length ?? 4.4;
       out.push({ x: this.px[i] + hx * len * 0.45, y: this.py[i] + 0.7, z: this.pz[i] + hz * len * 0.45, radius: 28, r: 1.0, g: 0.95, b: 0.85, intensity: 45, kind: 'dynamic', dx: hx * ct, dy: -tilt, dz: hz * ct, cone: 35 * Math.PI / 180 });
       out.push({ x: this.px[i] - hx * len * 0.5, y: this.py[i] + 0.8, z: this.pz[i] - hz * len * 0.5, radius: 5, r: 1.0, g: 0.08, b: 0.03, intensity: 6, kind: 'dynamic', dx: -hx, dy: -0.2, dz: -hz, cone: 60 * Math.PI / 180 });

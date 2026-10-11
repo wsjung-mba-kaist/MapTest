@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Stats from 'stats-gl';
 import { Loop } from './Loop';
+import { assetUrl } from '../world/DataLoader';
 import { setSignageDebug, setSignageEnabled } from '../world/Signage';
 import { setShopLights } from '../world/BuildingDetails';
 import { shopOpen, towerLit, towerSparkle } from '../../shared/nightlife';
@@ -8,7 +9,7 @@ import type { SpatialSource } from '../audio/Spatial';
 import { setWet } from '../materials/GroundMaterial';
 import { seasonState } from '../../shared/season';
 import { Rain } from '../render/Rain';
-import { XRMode } from './XR';
+import type { XRMode } from './XR';
 import { localHour, todayParis, type Weather } from '../render/Environment';
 import { Minimap } from '../ui/Minimap';
 import { TouchControls } from '../ui/TouchControls';
@@ -163,7 +164,7 @@ export class App {
       if (!this.prefs.life && !life) this.world.lifeOptions = null;
       if (q.get('labels') !== '1') this.world.labelsEnabled = this.prefs.labels;
     }
-    void this.env.loadHdri('/textures/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr');
+    void this.env.loadHdri(assetUrl('textures/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr'));
     await this.world.load((f, m) => this.hud.progress(f, m));
     if (this.world.furniture) localLights.setLamps(this.world.furniture.lampPositions);
     this.world.eiffel.enableReflection();
@@ -230,6 +231,7 @@ export class App {
       this.env.sun.shadow.mapSize.set(2048, 2048);
       if (this.env.sun.shadow.map) { this.env.sun.shadow.map.dispose(); this.env.sun.shadow.map = null; }
       this.world.buildings.detailDistance = 320;
+      this.world.terrain.fullRadius = 0;   // one full-res ground tile (9.4 MB each) instead of nine
       if (this.world.trees) this.world.trees.lodDistance = 160;
       localLights.setBudget(16, 8);   // half the lamp slots: the per-fragment loop is the main mobile cost
     }
@@ -258,20 +260,9 @@ export class App {
       const p = this.camera.position;
       this.minimap.update(p.x, p.z, this.input.yaw, performance.now());
       this.compass.update(p.x, p.z, this.input.yaw, this.currentLandmark?.id ?? null, performance.now());
-      // positional sources: nearest cars / boats, open café terraces (17-01h)
-      const src: SpatialSource[] = [];
-      const life = this.world.life;
-      if (life?.traffic) for (const c of life.traffic.nearest(p.x, p.z, 4)) src.push({ kind: 'car', x: c.x, y: c.y, z: c.z, level: 0.6, speed: c.v });
-      if (life?.boats) for (const b of life.boats.nearest(p.x, p.z, 2)) src.push({ kind: 'boat', x: b.x, y: b.y, z: b.z, level: 0.5 });
-      if (shopOpen(this.env.hour, true) > 0.3) for (const l of localLights.nearestOfKind('restaurant', p.x, p.z, 3)) src.push({ kind: 'terrace', x: l.x, y: l.y, z: l.z, level: 0.35 });
-      // fountains: the big basins (jets) first, then Wallace / drinking fountains, nearest two within earshot
-      const fps: { x: number; y: number; z: number; level: number; reach: number }[] = [];
-      for (const st of this.world.fountains?.sites ?? []) fps.push({ x: st.x, y: st.y, z: st.z, level: st.jets >= 10 ? 0.8 : 0.45, reach: st.jets >= 10 ? 140 : 60 });
-      const fp = this.world.furniture?.fountainPositions;
-      if (fp) for (let i = 0; i < fp.length / 3; i++) fps.push({ x: fp[i * 3], y: fp[i * 3 + 1], z: fp[i * 3 + 2], level: 0.35, reach: 40 });
-      fps.sort((a, b) => ((a.x - p.x) ** 2 + (a.z - p.z) ** 2) / (a.reach * a.reach) - ((b.x - p.x) ** 2 + (b.z - p.z) ** 2) / (b.reach * b.reach));
-      for (const f of fps.slice(0, 2)) if (Math.hypot(f.x - p.x, f.z - p.z) < f.reach) src.push({ kind: 'fountain', x: f.x, y: f.y, z: f.z, level: f.level });
-      if (life?.metro) for (const h of life.metro.heads) if (Math.hypot(h.x - p.x, h.z - p.z) < 260 && h.v > 0.5) src.push({ kind: 'train', x: h.x, y: h.y, z: h.z, level: 0.25 + 0.55 * Math.min(1, h.v / 11.5) });
+      // positional sources (nearest cars / boats, terraces, fountains, the métro) at 4 Hz: Spatial smooths them anyway
+      if (t - this.sourcesAt > 0.25) { this.sourcesAt = t; this.gatherSources(p); }
+      const src = this.sources;
       this.camera.getWorldDirection(this.fwdTmp);
       this.audio.setListener(p.x, p.y, p.z, this.fwdTmp.x, this.fwdTmp.y, this.fwdTmp.z);
       this.audio.update(dt, p.x, p.z, this.env.hour, p.y - this.world.groundY(p.x, p.z), this.world.surface, src);
@@ -383,6 +374,25 @@ export class App {
     };
     this.hud.setReady(this.touch.enabled ? '왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 오른쪽 아래 버튼' : undefined);
     this.applyUrlParams();
+  }
+
+  private readonly sources: SpatialSource[] = [];
+  private sourcesAt = -1;
+  /** Positional audio sources around the camera: nearest cars / boats, open café terraces (17-01h), fountains, trains. */
+  private gatherSources(p: THREE.Vector3) {
+    const src = this.sources; src.length = 0;
+    const life = this.world.life;
+      if (life?.traffic) for (const c of life.traffic.nearest(p.x, p.z, 4)) src.push({ kind: 'car', x: c.x, y: c.y, z: c.z, level: 0.6, speed: c.v });
+    if (life?.boats) for (const b of life.boats.nearest(p.x, p.z, 2)) src.push({ kind: 'boat', x: b.x, y: b.y, z: b.z, level: 0.5 });
+    if (shopOpen(this.env.hour, true) > 0.3) for (const l of localLights.nearestOfKind('restaurant', p.x, p.z, 3)) src.push({ kind: 'terrace', x: l.x, y: l.y, z: l.z, level: 0.35 });
+    // fountains: the big basins (jets) first, then Wallace / drinking fountains, nearest two within earshot
+    const fps: { x: number; y: number; z: number; level: number; reach: number }[] = [];
+    for (const st of this.world.fountains?.sites ?? []) fps.push({ x: st.x, y: st.y, z: st.z, level: st.jets >= 10 ? 0.8 : 0.45, reach: st.jets >= 10 ? 140 : 60 });
+    const fp = this.world.furniture?.fountainPositions;
+    if (fp) for (let i = 0; i < fp.length / 3; i++) fps.push({ x: fp[i * 3], y: fp[i * 3 + 1], z: fp[i * 3 + 2], level: 0.35, reach: 40 });
+    fps.sort((a, b) => ((a.x - p.x) ** 2 + (a.z - p.z) ** 2) / (a.reach * a.reach) - ((b.x - p.x) ** 2 + (b.z - p.z) ** 2) / (b.reach * b.reach));
+    for (const f of fps.slice(0, 2)) if (Math.hypot(f.x - p.x, f.z - p.z) < f.reach) src.push({ kind: 'fountain', x: f.x, y: f.y, z: f.z, level: f.level });
+    if (life?.metro) for (const h of life.metro.heads) if (Math.hypot(h.x - p.x, h.z - p.z) < 260 && h.v > 0.5) src.push({ kind: 'train', x: h.x, y: h.y, z: h.z, level: 0.25 + 0.55 * Math.min(1, h.v / 11.5) });
   }
 
   /** T while walking: release the pointer (and show the panel) so the slider can be dragged; T again hides it and grabs the pointer back. */
@@ -605,7 +615,7 @@ export class App {
     if (q.has('timepanel')) this.hud.toggleTimePanel(q.get('timepanel') !== '0');
     if (q.get('auto') === '1') { this.hud.showOverlay(false); this.gpuNotice(); }
     if (hasNum(q, 'fov')) { this.camera.fov = queryNum(q, 'fov', 70, 20, 130); this.camera.updateProjectionMatrix(); }
-    if (q.get('xr') === '1' && 'xr' in navigator) this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input);   // experimental WebXR
+    if (q.get('xr') === '1' && 'xr' in navigator) void import('./XR').then(({ XRMode }) => { this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input); });   // experimental WebXR, loaded on demand
     if (q.get('post') === '0') this.post.enabled = false;
     if (q.get('ao') === '0') this.post.setAo(false);                          // no ambient occlusion (A/B)
     if (q.get('clouds') === '0') this.env.setClouds(false);

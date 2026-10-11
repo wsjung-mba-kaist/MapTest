@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, GRID_N, StreetFlag, chunkKey, chunkOrigin } from '../../shared/layout';
+import { GRID_N, StreetFlag, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { createGroundMaterial, type GroundMaterial } from '../materials/GroundMaterial';
 import { REFLECT_LAYER } from '../render/WaterReflection';
@@ -31,14 +31,15 @@ export class Streets {
 
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
+    this.loader.reprioritise();
     const ld2 = this.loadDistance ** 2, ud2 = this.unloadDistance ** 2, wd2 = this.walkDistance ** 2, wu2 = (this.walkDistance + 120) ** 2;
     for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
       const k = chunkKey(i, j);
-      const o = chunkOrigin(i, j);
-      const d2 = (o.x + CHUNK_SIZE / 2 - x) ** 2 + (o.z + CHUNK_SIZE / 2 - z) ** 2;
+      const d2 = (chunkCentreX(i) - x) ** 2 + (chunkCentreZ(j) - z) ** 2;
       if (d2 < ld2 && !this.requested.has(k)) {
         this.requested.add(k);
-        this.loader.add(k, () => (o.x + CHUNK_SIZE / 2 - this.playerX) ** 2 + (o.z + CHUNK_SIZE / 2 - this.playerZ) ** 2, async () => {
+        const o = chunkOrigin(i, j), cx = chunkCentreX(i), cz = chunkCentreZ(j);
+        this.loader.add(k, () => (cx - this.playerX) ** 2 + (cz - this.playerZ) ** 2, async () => {
           try {
             const bm = await loadBinMesh(`${DATA_URL}/streets/${k}.bin`);
             if (!this.requested.has(k)) return;   // unloaded while the fetch was in flight: drop it
@@ -75,7 +76,7 @@ export class Streets {
       if (mask !== c.mask) { c.mask = mask; c.mat.setMask(mask); }
       if (ov !== c.overview) { c.overview = ov; c.mat.setOverview(ov); }
       // walkable registration near the player only
-      if (!c.walkReg && d2 < wd2 && this.walkables) { this.walkables.register(`street:${k}`, c.walk, new THREE.Vector3(o.x, 0, o.z)); c.walkReg = true; }
+      if (!c.walkReg && d2 < wd2 && this.walkables) { this.walkables.register(`street:${k}`, c.walk, new THREE.Vector3(c.mesh.position.x, 0, c.mesh.position.z)); c.walkReg = true; }
       else if (c.walkReg && d2 > wu2) { this.walkables?.unregister(`street:${k}`); c.walkReg = false; }
     }
   }

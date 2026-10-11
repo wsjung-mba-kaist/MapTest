@@ -5,6 +5,7 @@
  * Redrawn at 10 Hz from a plain <img>, so it costs nothing on the GPU side.
  */
 import { WORLD_HALF } from '../../shared/layout';
+import { DATA_URL } from '../world/DataLoader';
 
 export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number; /** site radius (m): bigger sites get their label first */ weight?: number }
 
@@ -26,7 +27,7 @@ export class Minimap {
   onPick: ((x: number, z: number) => void) | null = null;
   private centre = { x: 0, z: 0 };
 
-  constructor(parent: HTMLElement, private readonly markers: MapMarker[], overviewUrl = '/data/ground/overview.jpg') {
+  constructor(parent: HTMLElement, private readonly markers: MapMarker[], overviewUrl = `${DATA_URL}/ground/overview.jpg`) {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'minimap';
     this.canvas.width = this.canvas.height = this.size * 2;   // 2x for crisp text on hi-dpi screens

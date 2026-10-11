@@ -37,8 +37,6 @@
     "verify:data": "tsx scripts/verify-data.ts"
   },
   "dependencies": {
-    "clipper-lib": "^6.4.2",
-    "lil-gui": "^0.21.0",
     "n8ao": "^2.0.1",
     "postprocessing": "^6.39.4",
     "stats-gl": "^4.2.0",
@@ -55,6 +53,7 @@
     "@types/node": "^24.0.0",
     "@types/suncalc": "^1.9.2",
     "@types/three": "~0.185.0",
+    "clipper-lib": "^6.4.2",
     "earcut": "^3.2.3",
     "eslint": "^10.12.0",
     "fflate": "^0.8.2",

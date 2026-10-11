@@ -149,6 +149,7 @@ export class Terrain {
   /** Call every frame with the player position; streams full-res tiles around it. */
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
+    this.loader.reprioritise();
     const { i: ci, j: cj } = chunkIndexOf(x, z);
     for (const t of this.tiles.values()) {
       const near = Math.abs(t.i - ci) <= this.fullRadius && Math.abs(t.j - cj) <= this.fullRadius;

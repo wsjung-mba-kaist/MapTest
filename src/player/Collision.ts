@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
-import { CHUNK_SIZE, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
+import { chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
 
 interface Collider { bvh: MeshBVH; origin: THREE.Vector3; box: THREE.Box3 }
 
@@ -9,6 +9,8 @@ const tmpSeg = new THREE.Line3();
 const triPoint = new THREE.Vector3();
 const capPoint = new THREE.Vector3();
 const tmpVec = new THREE.Vector3();
+const localBoxTmp = new THREE.Box3();
+const rayTmp = new THREE.Ray(new THREE.Vector3(), new THREE.Vector3(0, -1, 0));
 
 /**
  * Capsule-vs-world collision using per-chunk BVHs (built lazily for chunks near the player).
@@ -77,12 +79,12 @@ export class Collision {
    */
   resolveCapsule(start: THREE.Vector3, end: THREE.Vector3, radius: number, out: THREE.Vector3): THREE.Vector3 {
     out.set(0, 0, 0);
-    tmpBox.makeEmpty(); tmpBox.expandByPoint(start); tmpBox.expandByPoint(end); tmpBox.expandByScalar(radius + CHUNK_SIZE * 0);
+    tmpBox.makeEmpty(); tmpBox.expandByPoint(start); tmpBox.expandByPoint(end); tmpBox.expandByScalar(radius);
     for (const c of this.colliders.values()) {
       if (!c.box.intersectsBox(tmpBox)) continue;
       tmpSeg.start.copy(start).sub(c.origin);
       tmpSeg.end.copy(end).sub(c.origin);
-      const localBox = tmpBox.clone().translate(tmpVec.copy(c.origin).negate());
+      const localBox = localBoxTmp.copy(tmpBox).translate(tmpVec.copy(c.origin).negate());
       c.bvh.shapecast({
         intersectsBounds: box => box.intersectsBox(localBox),
         intersectsTriangle: tri => {
@@ -106,7 +108,7 @@ export class Collision {
   /** Highest walkable surface below (x, y+probeUp, z) within maxDrop; NaN when none. */
   walkableY(x: number, y: number, z: number, probeUp = 1.0, maxDrop = 3.0): number {
     let best = NaN;
-    const ray = new THREE.Ray(new THREE.Vector3(x, y + probeUp, z), new THREE.Vector3(0, -1, 0));
+    const ray = rayTmp; ray.direction.set(0, -1, 0);
     for (const c of this.walkables.values()) {
       if (x < c.box.min.x - 1 || x > c.box.max.x + 1 || z < c.box.min.z - 1 || z > c.box.max.z + 1) continue;
       ray.origin.set(x - c.origin.x, y + probeUp - c.origin.y, z - c.origin.z);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MODELS_URL } from './DataLoader';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { withLamps } from '../render/LocalLights';
@@ -48,9 +49,9 @@ export class LandmarkModel {
     // Load them side by side: awaiting each in turn made boot wait for the sum of every model's fetch and parse.
     const loaded = await Promise.all((index.models ?? []).filter(m => m.id !== 'eiffel').map(async m => {
       try {
-        const meta = await (await fetch(`/models/${m.json}`)).json() as LandmarkModelMeta;
+        const meta = await (await fetch(`${MODELS_URL}/${m.json}`)).json() as LandmarkModelMeta;
         const lm = new LandmarkModel({ ...meta, id: m.id, lod: m.lod }, groundY);
-        await lm.load(`/models/${m.glb}`, m.lod ? `/models/${m.lod}` : undefined, lodOnly);
+        await lm.load(`${MODELS_URL}/${m.glb}`, m.lod ? `${MODELS_URL}/${m.lod}` : undefined, lodOnly);
         return lm;
       } catch (e) { console.warn(`landmark model ${m.id} failed`, e); return null; }
     }));

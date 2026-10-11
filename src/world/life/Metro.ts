@@ -80,10 +80,11 @@ export class Metro {
     dir.set(b[0] - a[0], 0, b[2] - a[2]).normalize();
   }
 
+  private readonly dirTmp = new THREE.Vector3(); private readonly posTmp = new THREE.Vector3();
   update(night: number) {
     if (this.mat) this.mat.emissiveIntensity = night;
     const time = this.clock.time;
-    const dir = new THREE.Vector3(), pos = new THREE.Vector3();
+    const dir = this.dirTmp, pos = this.posTmp;
     this.trains.forEach((tr, k) => {
       const { s, v } = this.headAt(tr.len, time + tr.offset);
       const sign = v >= 0 ? 1 : -1;

@@ -4,7 +4,7 @@ import type { Season } from '../../shared/season';
 import { withLamps } from '../render/LocalLights';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CHUNK_SIZE, GRID_N, KERB_H, SurfaceClass, TREE_STRIDE, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
-import { DATA_URL, fetchBuffer, loadTexture } from './DataLoader';
+import { DATA_URL, fetchBuffer, loadTexture, assetUrl } from './DataLoader';
 import type { SurfaceGrid } from '../../shared/surfacegrid';
 
 /**
@@ -37,7 +37,7 @@ export class Trees {
     this.surface = surface; this.groundY = groundY;
     const [buf, bark] = await Promise.all([
       fetchBuffer(`${DATA_URL}/trees.bin`),
-      loadTexture('/textures/pbr/Bark014_color.jpg').catch(() => null),
+      loadTexture(assetUrl('textures/pbr/Bark014_color.jpg')).catch(() => null),
     ]);
     const data = new Float32Array(buf);
     if (data.length % TREE_STRIDE) throw new Error(`trees.bin: ${data.length} floats is not a multiple of TREE_STRIDE=${TREE_STRIDE} — stale bake`);

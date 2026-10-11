@@ -13,7 +13,7 @@ import { Furniture } from './Furniture';
 import { FarRing } from './FarRing';
 import { Life } from './life/Life';
 import { Markings } from './Markings';
-import { DATA_URL, fetchBuffer, fetchJson, loadHeightmap, loadManifest } from './DataLoader';
+import { DATA_URL, fetchBuffer, fetchJson, loadHeightmap, loadManifest, MODELS_URL } from './DataLoader';
 import { setPlaques } from './Signage';
 import { Streets } from './Streets';
 import { SurfaceGrid } from '../../shared/surfacegrid';
@@ -89,27 +89,38 @@ export class World {
     this.terrain.onOverview = tex => { this.buildings.setOverview(tex); this.bridges?.setOverview(tex); };
     this.buildings.start();
     this.group.add(this.buildings.group);
-    onProgress(0.6, '센강과 다리 놓는 중…');
-    try { const w = new Water(); await w.load(); this.water = w; this.group.add(w.group); } catch (e) { console.warn('water layer missing', e); }
-    try { const f = new Fountains(); await f.load(); this.fountains = f; this.group.add(f.group); } catch (e) { console.warn('fountains missing', e); }
-    try { const b = new Bridges(); await b.load(); this.bridges = b; b.setOverview(this.terrain.overview); b.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(b.group); } catch (e) { console.warn('bridges missing', e); }
-    onProgress(0.7, '에펠탑 세우는 중…');
-    this.eiffel = new Eiffel();
-    this.eiffel.kind = this.towerKind;
-    await this.eiffel.load();
+    onProgress(0.6, '센강·다리·탑·가로수 불러오는 중…');
+    // Independent layers load together (each is best-effort): the sum of ten fetch latencies used to be the boot time.
+    // Only the order of `group.add` is kept deterministic (it is the draw order within a render pass).
+    const opt = async <T>(what: string, make: () => Promise<T>): Promise<T | undefined> => { try { return await make(); } catch (e) { console.warn(`${what} missing`, e); return undefined; } };
+    const [water, fountains, bridges, eiffel, heroModels, trees, furniture, far, plaques, landmarksDone] = await Promise.all([
+      opt('water layer', async () => { const w = new Water(); await w.load(); return w; }),
+      opt('fountains', async () => { const f = new Fountains(); await f.load(); return f; }),
+      opt('bridges', async () => { const b = new Bridges(); await b.load(); return b; }),
+      (async () => { const e = new Eiffel(); e.kind = this.towerKind; await e.load(); return e; })(),
+      LandmarkModel.loadAll(`${MODELS_URL}/landmarks.json`, (x, z) => this.heightmap.sample(x, z), this.heroLodOnly),
+      opt('trees', async () => { const t = new Trees(); await t.load(this.surface, (x, z) => this.heightmap.meshY(x, z)); return t; }),
+      opt('furniture', async () => { const fu = new Furniture(); await fu.load(this.surface); return fu; }),
+      opt('far ring', async () => { const far = new FarRing(); await far.load(); return far; }),
+      opt('plaques.json (no street-name plaques)', () => fetchJson<PlaquesData>(`${DATA_URL}/plaques.json`)),
+      this.landmarks.load(),
+    ]);
+    void landmarksDone;
+    if (water) { this.water = water; this.group.add(water.group); }
+    if (fountains) { this.fountains = fountains; this.group.add(fountains.group); }
+    if (bridges) { this.bridges = bridges; bridges.setOverview(this.terrain.overview); bridges.primeTiles((i, j) => this.terrain.textureOf(i, j)); this.group.add(bridges.group); }
+    this.eiffel = eiffel;
     this.group.add(this.eiffel.group);
     this.models.group.name = 'models';
-    this.heroModels = await LandmarkModel.loadAll('/models/landmarks.json', (x, z) => this.heightmap.sample(x, z), this.heroLodOnly);
+    this.heroModels = heroModels;
     for (const m of this.heroModels) this.models.group.add(m.group);
     this.group.add(this.models.group);
-    onProgress(0.75, '가로수와 시설물 심는 중…');
-    try { const t = new Trees(); await t.load(this.surface, (x, z) => this.heightmap.meshY(x, z)); this.trees = t; this.group.add(t.group); } catch (e) { console.warn('trees missing', e); }
-    try { const fu = new Furniture(); await fu.load(this.surface); this.furniture = fu; this.group.add(fu.group); } catch (e) { console.warn('furniture missing', e); }
-    try { const far = new FarRing(); await far.load(); this.far = far; this.group.add(far.group); } catch (e) { console.warn('far ring missing', e); }
+    if (trees) { this.trees = trees; this.group.add(trees.group); }
+    if (furniture) { this.furniture = furniture; this.group.add(furniture.group); }
+    if (far) { this.far = far; this.group.add(far.group); }
+    if (plaques) setPlaques(plaques);
     if (this.marksEnabled) { const mk = new Markings(this.marksDebug); this.marks = mk; this.group.add(mk.group); }
     if (this.streetsEnabled) { const st = new Streets(this.terrain, this.streetsDebug); this.streets = st; this.group.add(st.group); }
-    try { setPlaques(await fetchJson<PlaquesData>(`${DATA_URL}/plaques.json`)); } catch (e) { console.warn('plaques.json missing: no street-name plaques', e); }
-    await this.landmarks.load();
     if (this.labelsEnabled && this.landmarks.baked) {
       this.labels = new LandmarkLabels(this.landmarks.visible.filter(l => l.id !== 'eiffel'), (x, z) => this.heightmap.sample(x, z));
       this.group.add(this.labels.group);
