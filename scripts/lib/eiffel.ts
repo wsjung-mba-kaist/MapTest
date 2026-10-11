@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { NodeIO, getBounds, type Document } from '@gltf-transform/core';
+import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, weld, simplify, unpartition } from '@gltf-transform/functions';
 import { MeshoptSimplifier } from 'meshoptimizer';
@@ -11,17 +11,10 @@ import { cachedBytes, ensureDir, exists, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
 import { minAreaRect, type Ring } from './polygons.ts';
+import { countTris } from './model_fit.ts';
 
 const LEG_SPREAD = 124.9;   // metres between opposite pillar outer edges
 const TARGET_TRIS = 600_000;
-
-function countTris(doc: Document): number {
-  let n = 0;
-  for (const mesh of doc.getRoot().listMeshes()) for (const prim of mesh.listPrimitives()) {
-    const idx = prim.getIndices(); n += (idx ? idx.getCount() : prim.getAttribute('POSITION')?.getCount() ?? 0) / 3;
-  }
-  return n;
-}
 
 export async function run(ctx: BakeContext) {
   await ensureDir(MODELS_DIR);

@@ -1,4 +1,6 @@
 import polygonClipping from 'polygon-clipping';
+import type { Geometry, MultiPolygon, Polygon } from 'geojson';
+import { frame } from '../../shared/geo.ts';
 
 export type Pt = [number, number];      // [x, z] world metres
 export type Ring = Pt[];                // closed or open; functions tolerate a repeated last point
@@ -260,4 +262,35 @@ export function clipToBand(polys: Poly[], centre: Pt, axis: Pt, perp: Pt, lo: nu
     const res = polygonClipping.intersection(input as polygonClipping.MultiPolygon, [band as unknown as polygonClipping.Polygon]);
     return res.map(poly => poly.map(r => openRing(r as Ring)));
   } catch { return []; }
+}
+
+// ------------------------------------------------------------------------------------------------ GeoJSON -> world
+
+/** GeoJSON lon/lat positions -> world [x, z]; every vertex kept (line work and masks rasterise exactly what OSM has). */
+export const toWorldPts = (coords: number[][]): Pt[] => coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
+
+/** A (Multi)Polygon's rings in world space exactly as mapped: no cleaning, source orientation (for rasterising and clipping). */
+export function toWorldPolysRaw(g: Polygon | MultiPolygon): Poly[] {
+  return g.type === 'Polygon' ? [g.coordinates.map(toWorldPts)] : g.coordinates.map(p => p.map(toWorldPts));
+}
+
+/**
+ * A (Multi)Polygon as the extruders want it: rings cleaned of near-duplicate vertices, those left with fewer than three
+ * dropped, the outer ring with negative signed area and the holes positive. Any other geometry type yields [].
+ */
+export function toWorldPolys(geom: Geometry): Poly[] {
+  const out: Poly[] = [];
+  const push = (coords: number[][][]) => {
+    const rings = coords.map(r => cleanRing(toWorldPts(r))).filter(r => r.length >= 3);
+    if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]);
+  };
+  if (geom.type === 'Polygon') push(geom.coordinates); else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(push);
+  return out;
+}
+
+/** Rank quantile: the value at floor(p * n) of the sorted list (p in 0..1), NaN for an empty list. */
+export function percentile(values: number[], p: number): number {
+  if (!values.length) return NaN;
+  const s = values.slice().sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 }

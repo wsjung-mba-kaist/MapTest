@@ -1,15 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { FeatureCollection, Geometry, LineString, MultiPolygon, Polygon } from 'geojson';
+import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { OUT_DIR } from '../config.ts';
 import { ensureDir, exists } from './http.ts';
 import { loadTheme, type OsmProps } from './overpass.ts';
-import { frame } from '../../shared/geo.ts';
 import { GRID_N, MASK_PX, ORTHO_MARGIN, ORTHO_TILE_M, chunkKey, chunkOrigin } from '../../shared/layout.ts';
-import type { Pt } from './polygons.ts';
+import { pointInPoly, toWorldPolysRaw, toWorldPts, type Pt } from './polygons.ts';
+import { carriagewayWidth } from './roadnet.ts';
 
 /**
  * Ground surface masks per chunk (RGBA PNG, same extent as the ortho tile):
@@ -28,20 +28,6 @@ const PAVE_ROAD_SURF = /sett|cobble|unhewn|paving_stones/;
 const GRAVEL_SURF = /gravel|compacted|ground|dirt|sand|unpaved|earth|fine_gravel|pebble/;
 const PAVED_SURF = /asphalt|paving|concrete|sett|paved|cobble|stone|wood|metal/;
 
-function carriageway(t: Record<string, string>): number {
-  const w = parseFloat(t.width ?? ''); if (w > 1) return w;
-  const lanes = parseFloat(t.lanes ?? ''); if (lanes > 0) return lanes * 3.2;
-  switch (t.highway) {
-    case 'motorway': case 'trunk': return 14; case 'primary': return 12; case 'secondary': return 10; case 'tertiary': return 8;
-    case 'residential': case 'unclassified': return 6.5; case 'living_street': return 5; case 'service': return 4;
-    case 'pedestrian': return 6; case 'footway': case 'path': case 'cycleway': case 'bridleway': return 2.6; case 'steps': return 2.2;
-    default: return 5;
-  }
-}
-
-function toPts(coords: number[][]): Pt[] { return coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }); }
-function polysOf(g: Polygon | MultiPolygon): Pt[][][] { return g.type === 'Polygon' ? [g.coordinates.map(toPts)] : g.coordinates.map(p => p.map(toPts)); }
-
 export async function run(ctx: BakeContext) {
   const outDir = path.join(OUT_DIR, 'ground', 'mask');
   await ensureDir(outDir);
@@ -54,7 +40,7 @@ export async function run(ctx: BakeContext) {
   for (const f of land.features) {
     const t = f.properties.tags ?? {};
     if (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon') continue;
-    const polys = polysOf(f.geometry);
+    const polys = toWorldPolysRaw(f.geometry);
     const surface = t.surface ?? '';
     let ch: Area['channel'] | null = null;
     if (t.leisure === 'park' || t.leisure === 'garden' || t.landuse === 'grass' || t.landuse === 'flowerbed' || t.landuse === 'cemetery' || t.landuse === 'forest' || t.natural === 'wood' || t.natural === 'grassland' || t.natural === 'scrub' || t.leisure === 'pitch' && !surface) ch = 'B';
@@ -66,15 +52,15 @@ export async function run(ctx: BakeContext) {
     if (!ch) continue;
     for (const rings of polys) areas.push({ rings, channel: ch });
   }
-  const inPark = (p: Pt) => parks.some(poly => pointInRings(p, poly));
+  const inPark = (p: Pt) => parks.some(poly => pointInPoly(p[0], p[1], poly));
   for (const f of roads.features) {
     const t = f.properties.tags ?? {};
     if (!t.highway || t.highway === 'proposed' || t.highway === 'construction') continue;
     if (t.tunnel && t.tunnel !== 'no') continue;
     if (t.layer && parseFloat(t.layer) < 0) continue;
     if (f.geometry.type === 'LineString') {
-      const pts = toPts((f.geometry as LineString).coordinates);
-      const w = carriageway(t);
+      const pts = toWorldPts((f.geometry as LineString).coordinates);
+      const w = carriagewayWidth(t);   // the same carriageway the slabs and lane markings use, so the R channel matches them
       const surface = t.surface ?? '';
       const foot = ['footway', 'path', 'cycleway', 'steps', 'bridleway', 'pedestrian'].includes(t.highway);
       if (foot) {
@@ -86,7 +72,7 @@ export async function run(ctx: BakeContext) {
       }
     } else if ((f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') && t.area === 'yes') {
       const ch: Area['channel'] = t.highway === 'pedestrian' || t.highway === 'footway' ? (GRAVEL_SURF.test(t.surface ?? '') ? 'A' : 'G') : 'R';
-      for (const rings of polysOf(f.geometry)) areas.push({ rings, channel: ch });
+      for (const rings of toWorldPolysRaw(f.geometry)) areas.push({ rings, channel: ch });
     }
   }
   log.info(`masks: ${lines.length} road lines, ${areas.length} areas, ${parks.length} park polygons`);
@@ -118,12 +104,5 @@ export async function run(ctx: BakeContext) {
   }
   log.info(`masks: ${written} written, ${skipped} cached`);
   void fs;
-}
-
-function pointInRings(p: Pt, poly: Pt[][]): boolean {
-  const inRing = (r: Pt[]) => { let ins = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, zi] = r[i], [xj, zj] = r[j]; if ((zi > p[1]) !== (zj > p[1]) && p[0] < ((xj - xi) * (p[1] - zi)) / (zj - zi) + xi) ins = !ins; } return ins; };
-  if (!inRing(poly[0])) return false;
-  for (let k = 1; k < poly.length; k++) if (inRing(poly[k])) return false;
-  return true;
 }
 void (0 as unknown as Geometry); void (0 as unknown as FeatureCollection<Geometry, OsmProps>);

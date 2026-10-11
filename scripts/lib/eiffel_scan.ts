@@ -7,6 +7,7 @@ import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
 import { log } from './log.ts';
 import { writeJson } from './http.ts';
 import { bakeTransforms } from './model_fit.ts';
+import { percentile } from './polygons.ts';
 
 /**
  * Turn a photogrammetry scan of the tower (e.g. Sketchfab "Eiffel Tower, Paris, France" by Brian Trepanier, CC-BY 4.0)
@@ -24,8 +25,6 @@ export interface ScanResult { tris: number; height: number; scale: number; yawDe
 const LEG_CORNER_RADIUS = 88.0;   // metres from the axis to a pillar's outer corner
 const TOWER_HEIGHT = 330.0;       // metres to the antenna tip
 const SEINE_DIR = [-481.3, -421.1]; // world xz direction from the tower to the Trocadéro / Seine side
-
-function percentile(a: number[], p: number) { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 
 export async function processScan(src: string, fit: ScanFit, out: string, metaOut: string, textureSize = 4096, opts: { clean?: boolean } = {}): Promise<ScanResult> {
   await MeshoptEncoder.ready; await MeshoptDecoder.ready;
