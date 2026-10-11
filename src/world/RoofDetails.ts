@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../materials/patch';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DETAIL_STRIDE, RoofDetailKind } from '../../shared/layout';
 import { buildingUniforms } from '../materials/FacadeMaterial';
@@ -61,6 +62,7 @@ function materials() {
     dormerMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.25 });
     dormerMat.customProgramCacheKey = () => 'dormer';
     dormerMat.onBeforeCompile = shader => {
+  assertAnchors('RoofDetails', shader.vertexShader, shader.fragmentShader, ['begin_vertex', 'common'], ['common', 'emissivemap_fragment']);
       Object.assign(shader.uniforms, buildingUniforms);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aGlass; attribute float aLit; varying float vGlow;')

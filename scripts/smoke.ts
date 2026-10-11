@@ -167,9 +167,11 @@ async function main() {
       })()`).catch(e => `error: ${e.message}`);
       note(`ui: ${ui}`);
       if (!ui.includes('"a":"settings"') || !ui.includes('"b":null') || !ui.includes('"c":"places"') || !ui.includes('"d":true')) failures.push(`modal contract broken: ${ui}`);
-      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
-      await writeFile(path.join(OUT, 'screenshot.png'), Buffer.from(shot.data, 'base64'));
-      note(`screenshot: ${path.join(OUT, 'screenshot.png')}`);
+      // SwiftShader with every layer on can take tens of seconds per frame: the capture is a best-effort artefact, not a criterion
+      let shot: { data: string } | null = null;
+      for (let k = 0; k < 3 && !shot; k++) { shot = await cdp.send('Page.captureScreenshot', { format: 'png' }).catch(() => null); if (!shot) await new Promise(r => setTimeout(r, 4000)); }
+      if (shot) { await writeFile(path.join(OUT, 'screenshot.png'), Buffer.from(shot.data, 'base64')); note(`screenshot: ${path.join(OUT, 'screenshot.png')}`); }
+      else note('screenshot: capture timed out (software rendering), skipped');
     }
   } catch (e) {
     failures.push(`smoke harness: ${e instanceof Error ? e.message : String(e)}`);

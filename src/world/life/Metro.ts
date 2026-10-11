@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../../materials/patch';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SimClock } from './SimClock';
 import { DATA_URL } from '../DataLoader';
@@ -33,6 +34,7 @@ export class Metro {
     // (= night) × the vertex colour, so the body never glows and the discs fade in with dusk.
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.35, emissive: 0xffffff, emissiveIntensity: 0 });
     mat.onBeforeCompile = shader => {
+      assertAnchors('Metro', shader.vertexShader, shader.fragmentShader, ['begin_vertex', 'common'], ['common', 'emissivemap_fragment']);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aEmit; varying float vEmit;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEmit = aEmit;');

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors } from './patch';
 import facadeGlsl from './shaders/facade.glsl?raw';
 import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
@@ -46,9 +47,12 @@ function meanLinear(tex: THREE.Texture): THREE.Vector3 {
 }
 
 /** Load the CC0 detail sets once (2K plaster grain, rusticated ashlar trim sheet, slates) and enable normal mapping. */
+let photoTextures = true;
+/** ?facadetex=0: skip the photographic detail sets (call before the first material is created). */
+export function setFacadeTextures(on: boolean) { photoTextures = on; }
 export function loadFacadeDetail(): Promise<void> {
   if (detailPromise) return detailPromise;
-  if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('facadetex') === '0') return (detailPromise = Promise.resolve()); // debug: procedural only
+  if (!photoTextures) return (detailPromise = Promise.resolve()); // debug (?facadetex=0 via App): procedural only
   const rep = (t: THREE.Texture) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 16; return t; };
   const tex = (name: string, srgb: boolean) => loadTexture(assetUrl(`textures/pbr/${name}.jpg`), srgb).then(rep);
   detailPromise = Promise.all([
@@ -113,6 +117,7 @@ function patch(mat: THREE.MeshStandardMaterial, fragMain: string, extraHooks?: H
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (shader, renderer) => {
     prev?.call(mat, shader, renderer);
+    assertAnchors('FacadeMaterial', shader.vertexShader, shader.fragmentShader, ['common', 'uv_vertex'], ['color_fragment', 'common', 'map_fragment', 'metalnessmap_fragment', 'normal_fragment_begin', 'normal_fragment_maps', 'roughnessmap_fragment']);
     Object.assign(shader.uniforms, buildingUniforms, facadeTex);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${VERT_DECL}`)

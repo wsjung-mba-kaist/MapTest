@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../../materials/patch';
 import { MODELS_URL } from '../DataLoader';
 import { CAR_VARIANTS } from '../../../shared/layout';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -216,6 +217,7 @@ export function makeCarMaterial(uniforms: CarUniforms): THREE.MeshStandardMateri
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.55, metalness: 0.12 });
   mat.customProgramCacheKey = () => 'carkit-v5';
   mat.onBeforeCompile = shader => {
+  assertAnchors('CarKit', shader.vertexShader, shader.fragmentShader, ['common'], ['color_fragment', 'common', 'emissivemap_fragment', 'metalnessmap_fragment', 'roughnessmap_fragment']);
     Object.assign(shader.uniforms, uniforms);
     carVertexPatch(shader);
     shader.fragmentShader = shader.fragmentShader

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from '../radii';
 import type { SurfaceGrid } from '../../../shared/surfacegrid';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
@@ -102,7 +103,7 @@ export class Crowd {
     const next = new Set<number>();
     for (const e of edges) if (this.graph.walkable(e)) next.add(e);
     // despawn beyond radius + 60
-    const far2 = (radius + 60) * (radius + 60);
+    const far2 = (radius + RADII.lifeDespawn) ** 2;
     for (let i = this.count - 1; i >= 0; i--) {
       const dx = this.px[i] - x, dz = this.pz[i] - z;
       if (dx * dx + dz * dz > far2) this.remove(i);

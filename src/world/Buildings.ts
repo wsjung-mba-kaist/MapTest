@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GRID_N, chunkKey, chunkOrigin, chunkCentreX, chunkCentreZ } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader, type LoadedBinMesh } from './DataLoader';
@@ -35,9 +36,9 @@ export class Buildings {
   readonly chunks = new Map<string, BuildingChunk>();
   private readonly loader = new PriorityLoader(4);
   private playerX = 0; private playerZ = 0;
-  lodDistance = 800;
-  shadowDistance = 600;
-  detailDistance = 520;      // balconies / cornices / awnings exist only this close
+  lodDistance: number = RADII.buildingLod;
+  shadowDistance: number = RADII.buildingShadow;
+  detailDistance: number = RADII.buildingDetail;      // balconies / cornices / awnings exist only this close
   onChunkLoaded: (c: BuildingChunk) => void = () => {};
   /** Supplies the current ortho texture for a chunk (set by World). */
   textureProvider: (i: number, j: number) => THREE.Texture | null = () => null;
@@ -120,7 +121,7 @@ export class Buildings {
       // Facade details: build lazily near the viewer (one chunk per frame, nearest first), drop them again far away.
       if (c.details === undefined && d2 < this.detailDistance ** 2 && c.walls) {
         if (d2 < nextD2) { next = c; nextD2 = d2; }
-      } else if ((c.details || c.roof) && d2 > (this.detailDistance + 350) ** 2) {
+      } else if ((c.details || c.roof) && d2 > (this.detailDistance + (RADII.buildingDetailUnload - RADII.buildingDetail)) ** 2) {
         // `c.details` is null for a chunk without facade work, so the roof furniture has to be checked on its own or
         // its chimney / dormer instances stay resident for the session
         if (c.details) { c.lod0.remove(...c.details.meshes); c.details.dispose(); localLights.removeLights(`shop:${chunkKey(c.i, c.j)}`); }

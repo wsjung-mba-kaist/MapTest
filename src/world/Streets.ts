@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
 import { GRID_N, StreetFlag, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { createGroundMaterial, type GroundMaterial } from '../materials/GroundMaterial';
@@ -20,9 +21,9 @@ export class Streets {
   private readonly chunks = new Map<string, StreetChunk | null>();
   private readonly requested = new Set<string>();
   private playerX = 0; private playerZ = 0;
-  loadDistance = 620;
-  unloadDistance = 900;
-  walkDistance = 330;
+  loadDistance: number = RADII.streetsLoad;
+  unloadDistance: number = RADII.streetsUnload;
+  walkDistance: number = RADII.streetsWalk;
   walkables: WalkableSink | null = null;
   count = 0;
 
@@ -32,7 +33,7 @@ export class Streets {
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
     this.loader.reprioritise();
-    const ld2 = this.loadDistance ** 2, ud2 = this.unloadDistance ** 2, wd2 = this.walkDistance ** 2, wu2 = (this.walkDistance + 120) ** 2;
+    const ld2 = this.loadDistance ** 2, ud2 = this.unloadDistance ** 2, wd2 = this.walkDistance ** 2, wu2 = (this.walkDistance + (RADII.streetsWalkUnload - RADII.streetsWalk)) ** 2;
     for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
       const k = chunkKey(i, j);
       const d2 = (chunkCentreX(i) - x) ** 2 + (chunkCentreZ(j) - z) ** 2;

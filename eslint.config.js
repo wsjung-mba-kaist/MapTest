@@ -39,13 +39,18 @@ export default tseslint.config(
   {
     // URL flags are parsed by App (and the few modules the README documents); new readers belong there too
     files: ['src/**/*.ts'],
-    ignores: ['src/core/App.ts', 'src/core/UrlParams.ts', 'src/world/life/SimClock.ts', 'src/materials/FacadeMaterial.ts', 'src/render/WaterReflection.ts'],
+    ignores: ['src/core/App.ts'],
     rules: {
       'no-restricted-syntax': ['error', {
         selector: "NewExpression[callee.name='URLSearchParams'] > MemberExpression[object.name='location'][property.name='search']",
-        message: 'Parse URL parameters in src/core/App.ts (applyUrlParams / boot), not per module — see the README flag table.',
+        message: 'URL parameters are parsed once by App (shared/urlparams.ts is the registry); pass the value in, do not read location.search here.',
       }],
     },
+  },
+  {
+    // every stored key is listed in src/ui/storage.ts, so "reset to defaults" can clear all of them
+    files: ['src/**/*.ts'], ignores: ['src/ui/storage.ts'],
+    rules: { 'no-restricted-globals': ['error', { name: 'localStorage', message: 'Use the helpers in src/ui/storage.ts (keys are registered there).' }] },
   },
   // node:test's `test()` returns a promise that the runner collects itself
   { files: ['**/*.test.ts'], rules: { '@typescript-eslint/no-floating-promises': 'off' } },

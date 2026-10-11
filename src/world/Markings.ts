@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../materials/patch';
+import { RADII } from './radii';
 import { GRID_N, MarkKind, chunkCentreX, chunkCentreZ, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadBinMesh, PriorityLoader } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
@@ -15,8 +17,8 @@ export class Markings {
   private readonly meshes = new Map<string, THREE.Mesh | null>();
   private readonly requested = new Set<string>();
   private playerX = 0; private playerZ = 0;
-  loadDistance = 460;
-  unloadDistance = 720;
+  loadDistance: number = RADII.marksLoad;
+  unloadDistance: number = RADII.marksUnload;
   count = 0;
   lastError = '';
 
@@ -29,6 +31,7 @@ export class Markings {
     });
     this.material.customProgramCacheKey = () => `road-marks${debug ? '-dbg' : ''}`;
     this.material.onBeforeCompile = shader => {
+  assertAnchors('Markings', shader.vertexShader, shader.fragmentShader, ['begin_vertex', 'common'], ['common']);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute vec2 muv; attribute float mkind; varying vec2 vMuv; varying float vKind; varying vec2 vWorldXZm;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMuv = muv; vKind = mkind; vWorldXZm = (modelMatrix * vec4(position, 1.0)).xz;');

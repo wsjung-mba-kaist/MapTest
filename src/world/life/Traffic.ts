@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from '../radii';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
 import { EdgeFlag, NodeFlag } from '../../../shared/paths';
@@ -43,6 +44,7 @@ export class Traffic {
   private readonly seed = new Uint32Array(CAP);
   /** paint colour per car, computed once at spawn (bit 24 set = valid) — carColor() + setHex per car per frame was pure waste */
   private readonly colHex = new Uint32Array(CAP);
+  private readonly hdg = { x: 0, z: 0 };
   private readonly slotCounts = new Uint16Array(64);
   private readonly hop = new Uint16Array(CAP);
   private readonly nextE = new Int32Array(CAP);
@@ -133,7 +135,7 @@ export class Traffic {
   setActive(edges: number[], x: number, z: number, radius: number) {
     const next = new Set<number>();
     for (const e of edges) if (this.graph.drivable(e)) next.add(e);
-    const far2 = (radius + 60) * (radius + 60);
+    const far2 = (radius + RADII.lifeDespawn) ** 2;
     for (let i = this.count - 1; i >= 0; i--) { const dx = this.px[i] - x, dz = this.pz[i] - z; if (dx * dx + dz * dz > far2) this.remove(i); }
     for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
     this.rebuildLanes();
@@ -219,12 +221,10 @@ export class Traffic {
     const g = this.graph;
     const e = this.edge[i], dir = this.dir[i] as 1 | -1;
     const node = g.nodeOf(e, dir, true);
-    // heading at the end of the edge
-    const v0 = g.eV0[e], nv = g.eNv[e];
-    const a = dir > 0 ? v0 + nv - 2 : v0 + 1, b = dir > 0 ? v0 + nv - 1 : v0;
-    const dx = g.vPos[b * 3] - g.vPos[a * 3], dz = g.vPos[b * 3 + 2] - g.vPos[a * 3 + 2], l = Math.hypot(dx, dz) || 1;
+    // heading at the end of the edge (into the node)
+    const h = g.headingInto(e, node, this.hdg);
     const rnd = hash32(this.seed[i], this.hop[i], 26);
-    const next = g.nodeFlag(node, NodeFlag.CAR_SINK) ? null : g.pickNext(node, e, dx / l, dz / l, g.driveAllowed, rnd, 0.7);
+    const next = g.nodeFlag(node, NodeFlag.CAR_SINK) ? null : g.pickNext(node, e, h.x, h.z, g.driveAllowed, rnd, 0.7);
     this.nextE[i] = next ? next.e : -1; this.nextDir[i] = next ? next.dir : 0;
     // turn direction for the indicators: heading of the next edge's first segment vs. this edge's last
     this.turn[i] = 0;
@@ -232,7 +232,7 @@ export class Traffic {
       const nv0 = g.eV0[next.e], nnv = g.eNv[next.e];
       const p = next.dir > 0 ? nv0 : nv0 + nnv - 1, q = next.dir > 0 ? nv0 + 1 : nv0 + nnv - 2;
       const ndx = g.vPos[q * 3] - g.vPos[p * 3], ndz = g.vPos[q * 3 + 2] - g.vPos[p * 3 + 2], nl = Math.hypot(ndx, ndz) || 1;
-      const cross = (ndx / nl) * (-dz / l) + (ndz / nl) * (dx / l);   // dot with the right-hand normal of the current heading
+      const cross = (ndx / nl) * (-h.z) + (ndz / nl) * h.x;   // dot with the right-hand normal of the current heading
       if (Math.abs(cross) > 0.35) this.turn[i] = cross > 0 ? 1 : -1;
     }
   }
@@ -429,17 +429,16 @@ export class Traffic {
 /** Phase of the signal facing each drivable arm, indexed e*2 + (arriving at b ? 1 : 0); -1 where there is none. */
 function buildSignalTable(g: PathGraph): Float32Array {
   const t = new Float32Array(g.eLen.length * 2).fill(-1);
-  const inc: number[] = [];
+  const inc: number[] = [], hdg = { x: 0, z: 0 };
   for (let n = 0; n < g.nodeCount; n++) {
     if (!g.nodeFlag(n, NodeFlag.SIGNAL)) continue;
     for (const e of g.incident(n, inc)) {
       if (!g.drivable(e)) continue;
-      const v0 = g.eV0[e], nv = g.eNv[e]; if (nv < 2) continue;
+      if (g.eNv[e] < 2) continue;
       const atEnd = g.eB[e] === n;
       if (g.isOneway(e) && !atEnd) continue;
-      const i = atEnd ? v0 + nv - 2 : v0 + 1, j = atEnd ? v0 + nv - 1 : v0;
-      const dx = g.vPos[j * 3] - g.vPos[i * 3], dz = g.vPos[j * 3 + 2] - g.vPos[i * 3 + 2], l = Math.hypot(dx, dz) || 1;
-      t[e * 2 + (atEnd ? 1 : 0)] = armPhase(n, dx / l, dz / l);
+      const h = g.headingInto(e, n, hdg);   // the Signals posts use the very same vector
+      t[e * 2 + (atEnd ? 1 : 0)] = armPhase(n, h.x, h.z);
     }
   }
   return t;

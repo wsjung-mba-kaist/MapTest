@@ -81,6 +81,7 @@ export class Hud {
       menu.appendChild(b); this.menuButtons.set(m.action, b);
     }
     this.clock?.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
+    this.clock?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
     this.timeSlider?.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
     this.setPresets(TIME_PRESETS);
   }

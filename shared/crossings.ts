@@ -1,5 +1,5 @@
 import { armPhase, signalState, SIGNAL_RED } from './signals.ts';
-import { EdgeFlag, NodeFlag } from './paths.ts';
+import { EdgeFlag, NodeFlag, edgeHeadingInto } from './paths.ts';
 
 /**
  * Pedestrian crossings on the path graph. OSM `footway=crossing` ways share a node with the road they cross, and the
@@ -32,12 +32,11 @@ export interface CrossingTable {
   signalled: number;
 }
 
-/** Direction of travel along e from node `from` toward its other end, as (ux, uz) at the far end. */
+const hdg = { x: 0, z: 0 };
+/** Direction of travel along e from node `from` toward its other end, as (ux, uz) at the far end (shared/paths.ts edgeHeadingInto). */
 function dirInto(g: CrossingGraph, e: number, from: number): [number, number] {
-  const v0 = g.eV0[e], nv = g.eNv[e];
-  const i = g.eA[e] === from ? v0 + nv - 2 : v0 + 1, j = g.eA[e] === from ? v0 + nv - 1 : v0;
-  const dx = g.vPos[j * 3] - g.vPos[i * 3], dz = g.vPos[j * 3 + 2] - g.vPos[i * 3 + 2], l = Math.hypot(dx, dz) || 1;
-  return [dx / l, dz / l];
+  const h = edgeHeadingInto(g, e, g.eA[e] === from ? g.eB[e] : g.eA[e], hdg);
+  return [h.x, h.z];
 }
 
 export function buildCrossings(g: CrossingGraph): CrossingTable {

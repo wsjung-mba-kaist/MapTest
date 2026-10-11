@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
 import { buildingUniforms } from '../materials/FacadeMaterial';
 import type { Season } from '../../shared/season';
 import { withLamps } from '../render/LocalLights';
@@ -14,7 +15,7 @@ import type { SurfaceGrid } from '../../shared/surfacegrid';
 export class Trees {
   readonly group = new THREE.Group();
   count = 0;
-  lodDistance = 240;
+  lodDistance: number = RADII.treesLod;
   private cells = new Map<string, { lod0: THREE.Group; lod1: THREE.Group; cx: number; cz: number }>();
   private readonly uniforms = { uTime: { value: 0 }, uWind: { value: 0.7 }, uNight: buildingUniforms.uNight, uCoverage: { value: 1 }, uAutumn: { value: 0 }, uFresh: { value: 0 } };
   /** Foliage by date (shared/season.ts): coverage drops cards, autumn/fresh retint the rest. */

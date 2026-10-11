@@ -1,6 +1,6 @@
 import { DATA_URL, fetchBuffer } from '../DataLoader';
 import { parseBinMesh } from '../../../shared/binmesh';
-import { EdgeFlag, NodeFlag, laneOffset, rightNormal, type PathsMeta, PATHS_VERSION } from '../../../shared/paths';
+import { EdgeFlag, NodeFlag, edgeHeadingInto, laneOffset, rightNormal, type PathsMeta, PATHS_VERSION } from '../../../shared/paths';
 
 /** A point on the network: position, unit heading (x/z) and the segment index used as a search hint. */
 export interface EdgePoint { x: number; y: number; z: number; ux: number; uz: number; seg: number }
@@ -146,6 +146,8 @@ export class PathGraph {
     for (const cnd of cand) { r -= cnd.w; if (r <= 0) return { e: cnd.e, dir: cnd.dir }; }
     return { e: cand[cand.length - 1].e, dir: cand[cand.length - 1].dir };
   }
+  /** Unit direction of travel along `e` on arriving at `node` (shared/paths.ts edgeHeadingInto: signals, cars and crossings agree). */
+  headingInto(e: number, node: number, out: { x: number; z: number }) { return edgeHeadingInto(this, e, node, out); }
   readonly driveAllowed = (e: number, dir: 1 | -1) => this.drivable(e) && !(dir < 0 && this.isOneway(e));
   readonly walkAllowed = (e: number, _dir: 1 | -1) => this.walkable(e);
   readonly flags = EdgeFlag;

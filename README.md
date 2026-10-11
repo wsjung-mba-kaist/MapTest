@@ -93,7 +93,7 @@ npm run dev:lan   # LAN에 공개 (vite --host); 터미널에 뜨는 Network 주
 
 URL 파라미터로 디버그 시점을 지정할 수 있습니다:
 `?auto=1&fly=1&x=-480&z=-409&y=28&yaw=130&pitch=2&hour=19.5&quality=medium&post=0&tower=lattice&hide=trees,furniture&details=0&timepanel=0&facadetex=0&noenv=1`
-(`facadetex=0`은 사진 텍스처 없이 절차 파사드만, `noenv=1`은 환경맵 없이 렌더링해 비교할 때 씁니다.)
+(`facadetex=0`은 사진 텍스처 없이 절차 파사드만, `noenv=1`은 환경맵 없이, `skyenv=1`은 HDRI 대신 하늘 돔을 환경맵으로 써서 렌더링해 비교할 때 씁니다.)
 움직이는 도시: `life=0`(끄기) / `life=crowd,traffic,boats`(선택) / `lifedebug=1`(활성 경로 그래프 표시) / `sim=0`(정지, `sim=4` 4배속) / `simt=240`(시뮬레이션 시각 고정 → 재현 가능한 스크린샷).
 빛·물: `lamps=0`(가로등 광원 끄기) / `lampsdebug=1`(광원 마젠타) / `refl=0|1|2`(반사 끄기·절반·1/4 해상도) / `refldbg=uv|uv2|noclip|noshadow|norender`(반사 패스 디버그) / `noshadow=1`(그림자 끄기) / `skydim=1.0`(하늘 밝기 배율, 콘솔에 하늘 유니폼 출력) / `clear=rrggbb`(배경 클리어 색) / `fov=70`(시야각 20–130) / `stars=0` / `glow=0`(광공해 끄기) / `headlights=0` / `shoplights=0` / `signals=0`(신호등 끄기) / `fartraffic=0`(원경 차량 불빛 끄기) / `wet=1`(비 온 뒤 노면) / `tower=lit`(탑 조명 밤새 유지) / `ao=0`(AO 끄기) / `clouds=0`(구름 끄기) / `crossings=0`(횡단보도 신호·양보 끄기) / `carlights=0`(브레이크등·방향지시등 끄기).
 움직이는 도시 추가 토글: `metro=0`(6호선 열차 끄기) / `cyclists=0`(자전거 끄기).

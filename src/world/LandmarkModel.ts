@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
 import { MODELS_URL } from './DataLoader';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
@@ -33,13 +34,13 @@ export class LandmarkModel {
   private full?: THREE.Object3D;
   private lod?: THREE.Object3D;
   private readonly materials: THREE.MeshStandardMaterial[] = [];
-  private lodAt = 900;
+  private lodAt: number = RADII.heroLod;
   private centre = new THREE.Vector3();
 
   constructor(meta: LandmarkModelMeta, private readonly groundY: (x: number, z: number) => number) {
     this.meta = meta;
     this.group.name = `landmark:${meta.id}`;
-    this.lodAt = meta.runtime?.lodAtM ?? 900;
+    this.lodAt = meta.runtime?.lodAtM ?? RADII.heroLod;
     if (meta.centre) this.centre.set(meta.centre[0], 0, meta.centre[1]);
   }
 

@@ -19,20 +19,19 @@ export class Signals {
   constructor(graph: PathGraph) {
     this.group.name = 'signals';
     const posts: { x: number; y: number; z: number; yaw: number; phase: number }[] = [];
-    const inc: number[] = [];
+    const inc: number[] = [], hdg = { x: 0, z: 0 };
     const seen = new Set<string>();
     for (let n = 0; n < graph.nodeCount; n++) {
       if (!graph.nodeFlag(n, NodeFlag.SIGNAL)) continue;
       for (const e of graph.incident(n, inc)) {
         if (!graph.drivable(e)) continue;
-        // direction of travel INTO the node along this edge, from the last / first segment
+        // direction of travel INTO the node along this edge (the same vector the car signal table keys on)
         const v0 = graph.eV0[e], nv = graph.eNv[e];
         if (nv < 2) continue;
         const atEnd = graph.eB[e] === n;
         if (graph.isOneway(e) && !atEnd) continue;              // one-way arms only carry traffic in one direction
-        const i = atEnd ? v0 + nv - 2 : v0 + 1, j = atEnd ? v0 + nv - 1 : v0;
-        const dx = graph.vPos[j * 3] - graph.vPos[i * 3], dz = graph.vPos[j * 3 + 2] - graph.vPos[i * 3 + 2], l = Math.hypot(dx, dz) || 1;
-        const ux = dx / l, uz = dz / l;                          // toward the node
+        const j = atEnd ? v0 + nv - 1 : v0;
+        const { x: ux, z: uz } = graph.headingInto(e, n, hdg);   // toward the node
         const rx = -uz, rz = ux;                                 // right of travel
         const off = graph.eWidth[e] / 2 + 0.7;
         const x = graph.nodeX(n) - ux * 4.5 + rx * off, z = graph.nodeZ(n) - uz * 4.5 + rz * off;

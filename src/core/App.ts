@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import Stats from 'stats-gl';
 import { Loop } from './Loop';
+import { STORAGE_KEYS, storageGet, storageSet } from '../ui/storage';
+import { MOBILE_RADII } from '../world/radii';
 import { assetUrl } from '../world/DataLoader';
 import { setSignageDebug, setSignageEnabled } from '../world/Signage';
 import { setShopLights } from '../world/BuildingDetails';
@@ -26,7 +28,7 @@ import { type Prefs } from '../../shared/prefs';
 import { pickQuality, type QualityLevel } from '../../shared/quality';
 import { copyText, saveCanvas, shareUrl } from '../ui/Share';
 import { localLights } from '../render/LocalLights';
-import { buildingUniforms } from '../materials/FacadeMaterial';
+import { buildingUniforms, setFacadeTextures } from '../materials/FacadeMaterial';
 import { WaterReflection } from '../render/WaterReflection';
 import { Input } from '../player/Input';
 import { FlyControls } from '../player/FlyControls';
@@ -39,12 +41,15 @@ import { Glide } from '../player/Glide';
 import { PlacePanel, CATEGORY_COLOR } from '../ui/PlacePanel';
 import { PlaceList } from '../ui/PlaceList';
 import { Compass } from '../ui/Compass';
-import { GRID_N, WORLD_HALF, hasNum, queryNum, type Landmark } from '../../shared/layout';
+import { GRID_N, WORLD_HALF, type Landmark } from '../../shared/layout';
+import { UrlParams } from '../../shared/urlparams';
 
 /** yaw so that the camera at (x,z) faces (tx,tz); yaw 0 = north (-z), clockwise positive. */
 export const yawTo = (x: number, z: number, tx = 0, tz = 0) => Math.atan2(tx - x, -(tz - z));
 
 export class App {
+  /** every URL flag the runtime reads, parsed once (shared/urlparams.ts is the registry; the README is the reference) */
+  readonly params = new UrlParams(location.search);
   readonly canvas: HTMLCanvasElement;
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -98,6 +103,7 @@ export class App {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.2, 9000);
     this.input = new Input(this.canvas);
     this.gpuPanel.onOpen = () => this.input.unlock();
+    this.gpuPanel.onClose = () => { if (!this.modal && !this.hud.timePanelOpen && !this.input.locked && !this.input.touchMode && this.hud.started) this.input.lock(); };
     this.fly = new FlyControls(this.camera, this.input);
     this.scene.add(this.world.group);
     this.env = new Environment(this.scene, this.renderer);
@@ -120,20 +126,23 @@ export class App {
   }
 
   async boot() {
-    const tower = new URLSearchParams(location.search).get('tower');
+    const q = this.params;
+    if (q.unknown.length) console.warn(`[url] unknown parameter(s): ${q.unknown.join(', ')} — see the README table`);
+    const tower = q.get('tower');
     if (tower === 'lattice') this.world.towerKind = 'lattice';
     else if (tower === 'scan' || tower === 'model' || tower === 'glb') this.world.towerKind = 'scan';
-    if (new URLSearchParams(location.search).get('skyenv') === '1') this.env.useHdri = false;
+    if (q.on('skyenv')) this.env.useHdri = false;
+    if (q.off('facadetex')) setFacadeTextures(false);   // debug: procedural facades only
     {
       // ?life=0 disables the moving city; ?life=crowd,traffic,boats picks layers; ?lifedebug=1 draws the active path graph.
-      const q = new URLSearchParams(location.search);
       const life = q.get('life');
       // ?date=YYYY-MM-DD: calendar day for the sun path (default: today in Paris)
-      const dateS = q.get('date');
-      if (dateS && /^\d{4}-\d{2}-\d{2}$/.test(dateS)) { const [y, m, d] = dateS.split('-').map(Number); this.env.setDate([y, m, d]); }
+      const ymd = q.date('date');
+      if (ymd) this.env.setDate(ymd);
       if (life === '0') this.world.lifeOptions = null;
       else if (life) { const set = new Set(life.split(',')); this.world.lifeOptions = { crowd: set.has('crowd'), traffic: set.has('traffic'), boats: set.has('boats'), signals: set.has('signals') || set.has('traffic'), farTraffic: set.has('traffic'), crossings: set.has('crowd'), metro: set.has('traffic'), cyclists: set.has('crowd'), debug: q.get('lifedebug') === '1' }; }
       else if (this.world.lifeOptions) this.world.lifeOptions.debug = q.get('lifedebug') === '1';
+      if (this.world.lifeOptions) { this.world.lifeOptions.simScale = q.has('sim') ? q.num('sim', 1, 0, 100) : 1; this.world.lifeOptions.simTime = q.num('simt', 0, 0, 1e7); }
       // ?marks=0 road markings, ?streets=0 sidewalk slabs, ?signs=0 shop signs + plaques; *debug=1 variants paint them magenta / log placements
       if (q.get('marks') === '0') this.world.marksEnabled = false;
       if (q.get('streets') === '0') this.world.streetsEnabled = false;
@@ -169,7 +178,7 @@ export class App {
     if (this.world.furniture) localLights.setLamps(this.world.furniture.lampPositions);
     this.world.eiffel.enableReflection();
     if (this.world.water) {
-      const refl = new WaterReflection(this.renderer, this.world.manifest.waterLevelY + 0.3, window.innerWidth, window.innerHeight);
+      const refl = new WaterReflection(this.renderer, this.world.manifest.waterLevelY + 0.3, window.innerWidth, window.innerHeight, 2, q.get('refldbg') ?? '');
       this.reflection = refl;
       this.post.reflection = refl;
       this.world.water.setReflection(refl.target.texture, refl.textureMatrix);
@@ -191,7 +200,6 @@ export class App {
     for (const m of this.world.heroModels) { const fl = m.floodlights(); if (fl.length) localLights.addLights(`hero:${m.meta.id}`, fl); }
     this.glide = new Glide(this.camera, this.input);
     const hudEl = document.getElementById('hud') as HTMLElement;
-    const q = new URLSearchParams(location.search);
     const touchUi = q.get('touch') === '1' || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
     this.placePanel = new PlacePanel(hudEl, touchUi);
     this.placeList = new PlaceList(hudEl, lm => { this.closeModal(false); this.goTo(lm); if (!this.input.touchMode) this.input.lock(); }, () => this.closeModal());
@@ -215,7 +223,7 @@ export class App {
     this.compass = new Compass(hudEl, this.world.landmarks.visible);
     this.compass.colors = CATEGORY_COLOR;
     this.placePanel.onGo = lm => { this.goTo(lm); if (!this.input.touchMode) this.input.lock(); };
-    this.audio = new AudioEngine(q.get('audio'));
+    this.audio = new AudioEngine(q.get('audio'), this.prefs.muted);
     const wake = () => this.audio.ensure();
     // capture phase: the panels stop pointerdown from bubbling (so a drag does not reach the canvas), which used to
     // leave the AudioContext suspended when the first gesture landed on a panel instead of the scene
@@ -230,9 +238,9 @@ export class App {
       // shadow map, facade details only nearby, half the lamp slots
       this.env.sun.shadow.mapSize.set(2048, 2048);
       if (this.env.sun.shadow.map) { this.env.sun.shadow.map.dispose(); this.env.sun.shadow.map = null; }
-      this.world.buildings.detailDistance = 320;
+      this.world.buildings.detailDistance = MOBILE_RADII.buildingDetail;
       this.world.terrain.fullRadius = 0;   // one full-res ground tile (9.4 MB each) instead of nine
-      if (this.world.trees) this.world.trees.lodDistance = 160;
+      if (this.world.trees) this.world.trees.lodDistance = MOBILE_RADII.treesLod;
       localLights.setBudget(16, 8);   // half the lamp slots: the per-fragment loop is the main mobile cost
     }
     this.settingsPanel = new SettingsPanel(hudEl, () => this.closeModal(),
@@ -337,7 +345,7 @@ export class App {
       if (code === 'KeyL') this.toggleModal('places');
       if (code === 'KeyI') this.placePanel.toggle();
       if (code === 'KeyE' && !this.flying && this.hotspot && !this.player.riding) { this.player.startRide(this.hotspot.to, this.hotspot.seconds); this.audio.lift(this.hotspot.seconds); this.hud.prompt(null); }
-      if (code === 'KeyV') this.hud.toast(this.audio.toggleMute() ? '소리 끔' : '소리 켬');
+      if (code === 'KeyV') { const m = this.audio.toggleMute(); this.prefs = { ...this.prefs, muted: m }; savePrefs(this.prefs); this.hud.toast(m ? '소리 끔' : '소리 켬'); }
       if (code === 'Comma' || code === 'Period') { this.stepTime((code === 'Comma' ? -1 : 1) * (e.shiftKey ? 1 : 0.25)); this.hud.toast(formatHour(this.env.hour), 1200); }
       const digit = /^Digit([1-8])$/.exec(code);
       if (digit) { const lm = this.world.landmarks.byHotkey(Number(digit[1])); if (lm) this.goTo(lm); }
@@ -368,7 +376,7 @@ export class App {
       this.hud.markStarted(this.touch.enabled ? '탭하면 계속 걷습니다' : undefined);
       if (this.touch.enabled) {   // phones: no pointer lock
         this.input.touchMode = true; this.hud.showOverlay(false);
-        try { if (!localStorage.getItem('paris.touchHint')) { localStorage.setItem('paris.touchHint', '1'); this.hud.toast('왼쪽을 눌러 이동 · 끝까지 밀면 달리기 · 오른쪽을 끌어 시점 · ⋯ 메뉴', 7000); } } catch { /* no storage */ }
+        if (!storageGet(STORAGE_KEYS.touchHint)) { storageSet(STORAGE_KEYS.touchHint, '1'); this.hud.toast('왼쪽을 눌러 이동 · 끝까지 밀면 달리기 · 오른쪽을 끌어 시점 · ⋯ 메뉴', 7000); }
       }
       else this.input.lock();
     };
@@ -400,7 +408,7 @@ export class App {
     this.hud.toggleTimePanel(open);
     if (open && this.touch?.enabled) this.placePanel.fold();   // phones: one bottom sheet at a time
     if (open) this.input.unlock();
-    else if (!this.input.locked) this.input.lock();
+    else if (!this.input.locked && !this.input.touchMode) this.input.lock();   // phones never hold the pointer
   }
   helpPanel!: HelpPanel;
   infoPanel!: InfoPanel;
@@ -471,6 +479,7 @@ export class App {
       else if (k === 'fov') { this.camera.fov = p.fov; this.camera.updateProjectionMatrix(); }
       else if (k === 'headBob') this.player.headBob = p.headBob && !this.noGlide;
       else if (k === 'volume') this.audio?.setVolume(p.volume);
+      else if (k === 'muted') { if (this.audio && this.audio.muted !== p.muted) this.audio.setMuted(p.muted); }
       else if (k === 'minimap') { if (this.minimap && this.minimap.visible !== p.minimap) this.minimap.toggle(p.minimap); }
       else if (k === 'labels') this.world.setLabels(p.labels);
       else if (k === 'compass') this.compass?.setVisible(p.compass);
@@ -525,7 +534,7 @@ export class App {
   private gpuNotice() {
     if (this.gpuNoticed) return;
     this.gpuNoticed = true;
-    if (new URLSearchParams(location.search).get('gpu') === '0') return;   // headless screenshots: no panel / toast
+    if (this.params.off('gpu')) return;   // headless screenshots: no panel / toast
 
     const g = gpuInfo();
     void probeHighPerfAdapter().then(hp => {
@@ -552,10 +561,20 @@ export class App {
   }
   /** P: copy a link that reproduces this view. */
   async share() {
-    const url = shareUrl(this);
+    const url = shareUrl(this.shareState());
     const ok = await copyText(url);
     this.hud.toast(ok ? '링크를 복사했습니다' : '복사 실패 · 콘솔에 링크를 출력했습니다');
     if (!ok) console.log(url);
+  }
+  /** What `P` puts into the link: the view, the time of day and the world choices that change what is seen. */
+  shareState() {
+    const p = this.flying ? this.camera.position : this.player.position;
+    const [y, m, d] = this.env.ymd, t = todayParis();
+    return {
+      flying: this.flying, x: p.x, y: p.y, z: p.z, yawDeg: THREE.MathUtils.radToDeg(this.input.yaw), pitchDeg: THREE.MathUtils.radToDeg(this.input.pitch), hour: this.env.hour,
+      date: y !== t[0] || m !== t[1] || d !== t[2] ? [y, m, d] as [number, number, number] : undefined,
+      tower: this.world.towerKind, weather: this.weather, at: this.currentLandmark?.id,
+    };
   }
   stepTime(dh: number) { this.timePanel.stop(); this.setHour(this.env.hour + dh); }
   /** N: jump to the next preset after the current time (dawn, noon, afternoon, sunset, night, late night). */
@@ -588,33 +607,33 @@ export class App {
 
   /** Debug helpers: ?auto=1 skips the overlay; ?fly=1&x=..&y=..&z=..&yaw=deg&pitch=deg places the camera; ?hour=19.5 sets the time. */
   private applyUrlParams() {
-    const q = new URLSearchParams(location.search);
+    const q = this.params;
     // Every number here is clamped: a malformed share link (or `?hour=` with no value) used to put NaN into the
     // camera, the sun and the sky shader, and the whole frame went black with nothing in the console.
     const HALF = 4000;   // generous: the world square is +/-1536 m but the fly camera may sit outside it
-    if (q.get('walk') === '1' && hasNum(q, 'x')) {
+    if (q.get('walk') === '1' && q.hasNum('x')) {
       // Walk-mode placement (share links): feet at (x,z), optional y to probe a deck at that height.
       this.flying = false;
-      const x = queryNum(q, 'x', 0, -HALF, HALF), z = queryNum(q, 'z', -409, -HALF, HALF);
-      const yaw = hasNum(q, 'yaw') ? THREE.MathUtils.degToRad(queryNum(q, 'yaw', 0, -3600, 3600)) : yawTo(x, z);
-      this.player.place(x, z, yaw, hasNum(q, 'y') ? queryNum(q, 'y', 0, -100, 1000) : undefined);
-      if (hasNum(q, 'pitch')) { this.input.pitch = THREE.MathUtils.degToRad(queryNum(q, 'pitch', 0, -89, 89)); this.player.apply(); }
-    } else if (hasNum(q, 'x') || q.has('fly')) {
+      const x = q.num('x', 0, -HALF, HALF), z = q.num('z', -409, -HALF, HALF);
+      const yaw = q.hasNum('yaw') ? THREE.MathUtils.degToRad(q.num('yaw', 0, -3600, 3600)) : yawTo(x, z);
+      this.player.place(x, z, yaw, q.hasNum('y') ? q.num('y', 0, -100, 1000) : undefined);
+      if (q.hasNum('pitch')) { this.input.pitch = THREE.MathUtils.degToRad(q.num('pitch', 0, -89, 89)); this.player.apply(); }
+    } else if (q.hasNum('x') || q.has('fly')) {
       this.flying = true;
-      const x = queryNum(q, 'x', -480, -HALF, HALF), z = queryNum(q, 'z', -409, -HALF, HALF);
-      const y = hasNum(q, 'y') ? queryNum(q, 'y', 0, -100, 3000) : this.world.groundY(x, z) + 1.7;
+      const x = q.num('x', -480, -HALF, HALF), z = q.num('z', -409, -HALF, HALF);
+      const y = q.hasNum('y') ? q.num('y', 0, -100, 3000) : this.world.groundY(x, z) + 1.7;
       this.fly.position.set(x, y, z);
-      this.input.yaw = hasNum(q, 'yaw') ? THREE.MathUtils.degToRad(queryNum(q, 'yaw', 0, -3600, 3600)) : yawTo(x, z);
-      this.input.pitch = THREE.MathUtils.degToRad(queryNum(q, 'pitch', 0, -89, 89));
+      this.input.yaw = q.hasNum('yaw') ? THREE.MathUtils.degToRad(q.num('yaw', 0, -3600, 3600)) : yawTo(x, z);
+      this.input.pitch = THREE.MathUtils.degToRad(q.num('pitch', 0, -89, 89));
       this.fly.apply();
     }
     // ?at=<landmark id>: land there (unless x/z were given) and open its card
     const at = q.get('at') ? this.world.landmarks.byId.get(q.get('at')!) : undefined;
     if (at) { if (!q.has('x')) this.goTo(at, { instant: true, quiet: true }); this.currentLandmark = at.hidden ? null : at; this.placePanel.show(at, 'manual'); }   // a shared link keeps the card open until I
-    if (hasNum(q, 'hour')) this.setHour(queryNum(q, 'hour', 12, 0, 24));
+    if (q.hasNum('hour')) this.setHour(q.num('hour', 12, 0, 24));
     if (q.has('timepanel')) this.hud.toggleTimePanel(q.get('timepanel') !== '0');
     if (q.get('auto') === '1') { this.hud.showOverlay(false); this.gpuNotice(); }
-    if (hasNum(q, 'fov')) { this.camera.fov = queryNum(q, 'fov', 70, 20, 130); this.camera.updateProjectionMatrix(); }
+    if (q.hasNum('fov')) { this.camera.fov = q.num('fov', 70, 20, 130); this.camera.updateProjectionMatrix(); }
     if (q.get('xr') === '1' && 'xr' in navigator) void import('./XR').then(({ XRMode }) => { this.xr = new XRMode(this.renderer, this.scene, this.camera, this.input); });   // experimental WebXR, loaded on demand
     if (q.get('post') === '0') this.post.enabled = false;
     if (q.get('ao') === '0') this.post.setAo(false);                          // no ambient occlusion (A/B)
@@ -631,7 +650,7 @@ export class App {
     if (q.get('stars') === '0') { this.env.starsOn = false; (this.env.sky.material as THREE.ShaderMaterial).uniforms.uStarsOn.value = 0; }
     if (q.get('lampsdebug') === '1') localLights.debug = true;        // magenta lamps: spot materials that miss the hook
     if (q.has('clear')) this.renderer.setClearColor(new THREE.Color('#' + q.get('clear')));
-    if (q.has('skydim')) { const u = (this.env.sky.material as THREE.ShaderMaterial).uniforms; u.uDim.value = queryNum(q, 'skydim', 1, 0, 10); console.log('sky uniforms', JSON.stringify({ dim: u.uDim.value, sun: u.sunPosition.value, turb: u.turbidity.value, ray: u.rayleigh.value, mie: u.mieCoefficient.value, night: this.env.night })); }
+    if (q.has('skydim')) { const u = (this.env.sky.material as THREE.ShaderMaterial).uniforms; u.uDim.value = q.num('skydim', 1, 0, 10); console.log('sky uniforms', JSON.stringify({ dim: u.uDim.value, sun: u.sunPosition.value, turb: u.turbidity.value, ray: u.rayleigh.value, mie: u.mieCoefficient.value, night: this.env.night })); }
     // ?hide=far,eiffel,trees,buildings,terrain,water,bridges,furniture,sky  (debugging)
     for (const name of (q.get('hide') ?? '').split(',').filter(Boolean)) {
       const w = this.world as unknown as Record<string, { group?: THREE.Object3D } | undefined>;

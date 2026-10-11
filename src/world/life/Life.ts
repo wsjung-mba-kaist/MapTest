@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from '../radii';
 import type { SurfaceGrid } from '../../../shared/surfacegrid';
 import { PathGraph } from './PathGraph';
 import { SimClock } from './SimClock';
@@ -22,7 +23,7 @@ import { buildCrossings } from '../../../shared/crossings';
 export class Life {
   readonly group = new THREE.Group();
   readonly graph = new PathGraph();
-  readonly clock = new SimClock();
+  clock = new SimClock();
   crowd?: Crowd;
   traffic?: Traffic;
   boats?: Boats;
@@ -31,8 +32,8 @@ export class Life {
   metro?: Metro;
   cyclists?: Cyclists;
   /** activation radii (metres) */
-  walkRadius = 220;
-  driveRadius = 350;
+  walkRadius: number = RADII.lifeWalk;
+  driveRadius: number = RADII.lifeDrive;
   private lastX = NaN; private lastZ = NaN;
   private debug?: THREE.LineSegments;
   private debugOn = false;
@@ -43,7 +44,8 @@ export class Life {
   constructor() { this.group.name = 'life'; }
 
   crossingStats = '';
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; cyclists?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; cyclists?: boolean; debug?: boolean; simScale?: number; simTime?: number } = {}, surface: SurfaceGrid | null = null) {
+    this.clock = new SimClock(opts.simScale ?? 1, opts.simTime ?? 0);
     // the module imports do not depend on each other or on the graph: in `vite dev` each is a round-trip
     const [graphDone, mods] = await Promise.all([this.graph.load(), Promise.all([
       opts.crowd ? import('./Crowd') : null, opts.traffic ? import('./Traffic') : null, opts.boats ? import('./Boats') : null,

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from '../radii';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { PathGraph } from './PathGraph';
 import type { SimClock } from './SimClock';
@@ -57,7 +58,7 @@ export class Cyclists {
   setActive(edges: number[], x: number, z: number, radius: number) {
     this.camX = x; this.camZ = z;
     const next = new Set(edges.filter(e => this.rideable(e)));
-    const far2 = (radius + 60) ** 2;
+    const far2 = (radius + RADII.lifeDespawn) ** 2;
     for (let i = this.count - 1; i >= 0; i--) { const dx = this.px[i] - x, dz = this.pz[i] - z; if (dx * dx + dz * dz > far2) this.remove(i); }
     for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
     for (const e of next) if (!this.seeded.has(e)) { this.seedEdge(e); this.seeded.add(e); }

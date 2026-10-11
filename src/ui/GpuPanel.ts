@@ -1,6 +1,6 @@
 import type { GpuInfo, HpAdapter } from '../core/Renderer';
+import { STORAGE_KEYS, storageGet, storageSet } from './storage';
 
-const NEVER_KEY = 'paris.gpuPanel.never';
 const VENDOR_LABEL: Record<string, string> = { nvidia: 'NVIDIA', amd: 'AMD', intel: 'Intel', apple: 'Apple', qualcomm: 'Qualcomm', software: '소프트웨어', unknown: '알 수 없음' };
 
 /**
@@ -12,6 +12,8 @@ const VENDOR_LABEL: Record<string, string> = { nvidia: 'NVIDIA', amd: 'AMD', int
 export class GpuPanel {
   private readonly el: HTMLDivElement;
   onOpen: () => void = () => {};
+  /** after hide(): App grabs the pointer back unless another panel is up */
+  onClose: () => void = () => {};
 
   constructor() {
     let el = document.getElementById('gpupanel') as HTMLDivElement | null;
@@ -20,9 +22,9 @@ export class GpuPanel {
   }
 
   get open() { return !this.el.hidden; }
-  static get suppressed(): boolean { try { return localStorage.getItem(NEVER_KEY) === '1'; } catch { return false; } }
+  static get suppressed(): boolean { return storageGet(STORAGE_KEYS.gpuPanelNever) === '1'; }
 
-  hide() { this.el.hidden = true; }
+  hide() { if (this.el.hidden) return; this.el.hidden = true; this.onClose(); }
 
   show(info: GpuInfo, hp: HpAdapter | null | undefined) {
     this.el.replaceChildren(...this.build(info, hp));
@@ -74,7 +76,7 @@ export class GpuPanel {
 
     const close = h('button', null, '닫기 (G)') as HTMLButtonElement; close.type = 'button'; close.addEventListener('click', () => this.hide());
     const never = h('button', null, '다시 보지 않기') as HTMLButtonElement; never.type = 'button';
-    never.addEventListener('click', () => { try { localStorage.setItem(NEVER_KEY, '1'); } catch { /* private mode */ } this.hide(); });
+    never.addEventListener('click', () => { storageSet(STORAGE_KEYS.gpuPanelNever, '1'); this.hide(); });
     out.push(h('div', 'foot', never, close));
     return out;
   }

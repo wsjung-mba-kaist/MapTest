@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors, checkSamplerBudget } from './patch';
 import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { buildingUniforms } from './FacadeMaterial';
@@ -68,6 +69,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
   if (opts.street) mat.defines = { STREET_SLAB: '' };
   mat.customProgramCacheKey = () => opts.street ? 'ground-v3-street' : 'ground-v3';
   mat.onBeforeCompile = shader => {
+    assertAnchors('GroundMaterial', shader.vertexShader, shader.fragmentShader, ['common', 'uv_vertex'], ['common']);
     Object.assign(shader.uniforms, shared, own, { uNight: buildingUniforms.uNight });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 uvOv;\nvarying vec3 vWorldPosG; varying vec3 vNormalWG; varying vec2 vUvOv; varying vec2 vUvG;\n#ifdef STREET_SLAB\nattribute float sflag; varying float vSFlag;\n#endif')
@@ -200,6 +202,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, gRough, uHasDetail);')
       // kerb faces sit in the slab's own shadow most of the day: a little ambient lift keeps them readable stone grey
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef STREET_SLAB\nif (vSFlag > 0.5) totalEmissiveRadiance += diffuseColor.rgb * 0.08;\n#endif');
+    checkSamplerBudget('GroundMaterial', shader.fragmentShader);
   };
   withLamps(mat);
   mat.setTile = t => { mat.map = t; own.uHasTile.value = t ? 1 : 0; mat.needsUpdate = true; };

@@ -61,7 +61,7 @@ export class World {
   /** floodlight schedule shared with the tower (nightlife.towerLit): 1 lit, 0 off after 23:45; set by App each frame */
   heroLit = 1;
   /** Which moving layers to start (set from the URL before load); null disables the moving city. */
-  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
+  lifeOptions: { crowd: boolean; traffic: boolean; boats: boolean; signals: boolean; farTraffic: boolean; crossings: boolean; metro: boolean; cyclists: boolean; debug: boolean; simScale?: number; simTime?: number } | null = { crowd: true, traffic: true, boats: true, signals: true, farTraffic: true, crossings: true, metro: true, cyclists: true, debug: false };
 
   async load(onProgress: (frac: number, msg: string) => void) {
     onProgress(0.05, '지도 정보 읽는 중…');
