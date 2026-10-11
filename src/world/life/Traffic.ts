@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
-import { EdgeFlag, NodeFlag } from '../../../shared/paths';
+import { NodeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shared/signals';
 import type { CrossingTable } from '../../../shared/crossings';
@@ -431,4 +431,3 @@ function pickVariant(r: number): number {
   return 0;
 }
 
-void EdgeFlag;

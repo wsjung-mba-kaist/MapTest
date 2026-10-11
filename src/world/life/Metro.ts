@@ -89,9 +89,7 @@ export class Metro {
       const { s, v } = this.headAt(tr.len, time + tr.offset);
       const sign = v >= 0 ? 1 : -1;
       for (let c = 0; c < CARS; c++) {
-        const sc = s - sign * c * (CAR_LEN + CAR_GAP) * (v >= 0 ? 1 : -1) * 1;   // cars trail the head
-        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);
-        void sc;
+        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);   // cars trail the head
         // the car faces -z at yaw 0: yaw = atan2(-hx, -hz); when running backwards flip the heading so headlights lead
         const hx = dir.x * sign, hz = dir.z * sign;
         this.Q.setFromAxisAngle(this.up, Math.atan2(-hx, -hz));
