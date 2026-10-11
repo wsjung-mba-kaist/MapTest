@@ -1,11 +1,10 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import osmtogeojson from 'osmtogeojson';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { BBOX_PADDED, CACHE_DIR, OVERPASS_ENDPOINTS } from '../config.ts';
-import { ensureDir, exists, fetchRetry, sleep, writeJson, readJson, fmtBytes } from './http.ts';
+import { ensureDir, exists, fetchRetry, sleep, writeJson, writeFileAtomic, readJson, fmtBytes } from './http.ts';
 
 export const THEMES: Record<string, string> = {
   buildings: `( way["building"]; relation["building"]; way["building:part"]; relation["building:part"]; relation["type"="building"]; );`,
@@ -54,8 +53,7 @@ async function fetchTheme(theme: string, force: boolean): Promise<{ raw: any; fr
       let raw: any;
       try { raw = JSON.parse(text); } catch { throw new Error(`non-JSON response (${text.slice(0, 120)})`); }
       if (raw.remark && /timed out|runtime error/i.test(raw.remark)) throw new Error(`overpass remark: ${raw.remark}`);
-      await ensureDir(rawDir);
-      await fs.writeFile(file, text);
+      await writeFileAtomic(file, text);   // the response text as received: re-serialising 100+ MB of JSON buys nothing
       log.info(`overpass ${theme}: ${raw.elements?.length ?? 0} elements, ${fmtBytes(text.length)}, db ${raw.osm3s?.timestamp_osm_base}`);
       return { raw, fromCache: false };
     } catch (e) {
@@ -152,8 +150,7 @@ async function fetchThemeTiled(theme: string, force: boolean): Promise<{ raw: an
   ok.sort((a, b) => a - b);
   const coverage: Coverage = { n: TILE_N, ok, boxes };
   const raw = { version: 0.6, generator: 'tiled-fetch', osm3s, elements: [...elements.values()], coverage };
-  await ensureDir(rawDir);
-  await fs.writeFile(file, JSON.stringify(raw));
+  await writeJson(file, raw);
   log.info(`overpass ${theme}: ${raw.elements.length} elements from ${ok.length}/${boxes.length} cells`);
   return { raw, fromCache: false };
 }

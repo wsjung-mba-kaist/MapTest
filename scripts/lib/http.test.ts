@@ -1,6 +1,10 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchRetry } from './http.ts';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { CACHE_DIR } from '../config.ts';
+import { cachedBytes, exists, fetchRetry, writeJson } from './http.ts';
 
 // fetchRetry resolves the global fetch at call time, so swapping globalThis.fetch per test drives it offline.
 const realFetch = globalThis.fetch;
@@ -43,4 +47,41 @@ test('a network error is retried and the last one is thrown', async () => {
   globalThis.fetch = (async () => { calls++; throw new TypeError('fetch failed'); }) as typeof fetch;
   await assert.rejects(fetchRetry('http://x/down', { retries: 2, backoffMs: [0] }), /fetch failed/);
   assert.equal(calls, 3);
+});
+
+test('writeJson lands atomically: content round-trips and no .part is left behind', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'http-test-'));
+  try {
+    const file = path.join(dir, 'nested', 'out.json');
+    await writeJson(file, { a: 1, b: [2, 3] });
+    assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), { a: 1, b: [2, 3] });
+    assert.deepEqual(await fs.readdir(path.dirname(file)), ['out.json']);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});
+
+// cachedBytes writes under the real cache/ (config.ts fixes CACHE_DIR), so each test uses its own throw-away subfolder.
+const testRel = (name: string) => `test-http-${process.pid}/${name}`;
+const rmTestCache = () => fs.rm(path.join(CACHE_DIR, `test-http-${process.pid}`), { recursive: true, force: true });
+
+test('cachedBytes: a rejected validate throws its reason and caches nothing', async () => {
+  globalThis.fetch = (async () => new Response('<ServiceExceptionReport/>', { status: 200 })) as typeof fetch;
+  const rel = testRel('bad.bin');
+  try {
+    await assert.rejects(cachedBytes('http://x/bil', rel, { validate: b => b.length === 16 ? true : `unexpected ${b.length} bytes` }), /unexpected 25 bytes/);
+    assert.equal(await exists(path.join(CACHE_DIR, rel)), false);
+    assert.equal(await exists(path.join(CACHE_DIR, rel + '.part')), false);
+  } finally { await rmTestCache(); }
+});
+
+test('cachedBytes: an accepted validate caches the bytes and the second call reads them without fetching', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response(Buffer.alloc(16, 7), { status: 200 }); }) as typeof fetch;
+  const rel = testRel('good.bin');
+  try {
+    const a = await cachedBytes('http://x/bil', rel, { validate: b => b.length === 16 ? true : 'short' });
+    const b = await cachedBytes('http://x/bil', rel, { validate: () => 'would reject, but the cache is not re-validated' });
+    assert.equal(a.length, 16); assert.ok(a.equals(b));
+    assert.equal(calls, 1);
+    assert.equal(await exists(path.join(CACHE_DIR, rel + '.part')), false);
+  } finally { await rmTestCache(); }
 });
