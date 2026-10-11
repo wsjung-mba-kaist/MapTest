@@ -2,13 +2,14 @@ import type { Landmark } from '../../shared/layout';
 import { CATEGORY_LABEL, bearingDeg, fmtDistance } from '../../shared/landmarks';
 import { CATEGORY_COLOR } from './PlacePanel';
 import { DATA_URL } from '../world/DataLoader';
-import { kbdNodes } from './dom';
+import { kbdNodes, restoreFocus, trapTab } from './dom';
 import { S } from './strings';
 
 /**
  * L: the landmark list (#places), nearest first, with a search box, category chips, thumbnails, hotkey chips and a
  * heading arrow; click a row to glide there. While it is open App calls `update` so distances and arrows follow
- * the player; the order stays as it was on opening so rows do not move under the cursor.
+ * the player; the order stays as it was on opening so rows do not move under the cursor. Focus goes to the first
+ * row (or the search box) on show, Tab stays inside, and hide() returns it to the opener.
  */
 export class PlaceList {
   private readonly root = document.createElement('div');
@@ -19,6 +20,7 @@ export class PlaceList {
   private items: { lm: Landmark; row: HTMLButtonElement; dist: HTMLSpanElement; arrow: HTMLSpanElement }[] = [];
   private category: string | null = null;
   private currentId: string | null = null;
+  private returnTo: Element | null = null;
   open = false;
 
   constructor(parent: HTMLElement, private readonly onPick: (lm: Landmark) => void, private readonly onClose: () => void) {
@@ -39,6 +41,7 @@ export class PlaceList {
     this.root.append(head, tools, this.rows);
     this.root.addEventListener('pointerdown', e => e.stopPropagation());
     this.root.addEventListener('keydown', e => {
+      trapTab(this.root, e);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         const btns = this.items.map(i => i.row).filter(b => !b.hidden);
         if (!btns.length) return;
@@ -52,6 +55,7 @@ export class PlaceList {
 
   show(list: { landmark: Landmark; dist: number }[], x: number, z: number, yaw: number, currentId: string | null = null) {
     this.list = list; this.currentId = currentId;
+    if (!this.open) this.returnTo = document.activeElement;   // a re-show while open (refresh) keeps the original opener
     this.buildChips();
     this.rebuild();
     this.update(x, z, yaw);
@@ -59,7 +63,11 @@ export class PlaceList {
     (this.items.find(i => !i.row.hidden)?.row ?? this.search).focus();
   }
 
-  hide() { this.root.hidden = true; this.open = false; }
+  hide() {
+    const was = this.open;
+    this.root.hidden = true; this.open = false;
+    if (was) { restoreFocus(this.returnTo); this.returnTo = null; }
+  }
 
   /** 4 Hz while open: distances and arrows follow the player */
   update(x: number, z: number, yaw: number) {

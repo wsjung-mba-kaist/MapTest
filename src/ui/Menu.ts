@@ -1,15 +1,17 @@
-import { kbdNodes } from './dom';
+import { kbdNodes, restoreFocus, trapTab } from './dom';
 import { S } from './strings';
 
 /**
  * Centred modal panels opened from the pause menu / shortcuts: the help (full shortcut table) and the info panel
  * (what this is, data sources, model and photo credits). Same pointer-lock contract as the landmark list: App
  * releases the pointer while one is open and grabs it back on close. One modal at a time (App.openModal).
+ * Focus: show() moves it to the close button and traps Tab inside; hide() hands it back to whatever had it.
  */
 export class Modal {
   readonly root = document.createElement('div');
   readonly body = document.createElement('div');
   open = false;
+  private returnTo: Element | null = null;
 
   /** `hint` is in the `[key]` notation of strings.ts (kbdNodes), not HTML */
   constructor(parent: HTMLElement, id: string, title: string, hint: string, private readonly onClose: () => void, wide = false) {
@@ -25,11 +27,16 @@ export class Modal {
     this.body.className = 'body';
     r.append(head, this.body);
     r.addEventListener('pointerdown', e => e.stopPropagation());
+    r.addEventListener('keydown', e => trapTab(r, e));
     parent.appendChild(r);
   }
 
-  show() { this.root.hidden = false; this.open = true; (this.root.querySelector('.close') as HTMLElement | null)?.focus(); }
-  hide() { this.root.hidden = true; this.open = false; }
+  show() { this.returnTo = document.activeElement; this.root.hidden = false; this.open = true; (this.root.querySelector('.close') as HTMLElement | null)?.focus(); }
+  hide() {
+    const was = this.open;
+    this.root.hidden = true; this.open = false;
+    if (was) { restoreFocus(this.returnTo); this.returnTo = null; }   // only a real close moves focus; a defensive hide() of a closed panel must not steal it
+  }
 }
 
 /** The shortcut table (H), built from the key legend in strings.ts, which the bottom-left hint bar is also drawn from. */

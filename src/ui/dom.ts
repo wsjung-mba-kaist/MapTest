@@ -10,6 +10,25 @@ export function required<T extends HTMLElement>(id: string): T {
 }
 export function optional<T extends HTMLElement>(id: string): T | null { return document.getElementById(id) as T | null; }
 
+/** The controls Tab would visit inside `root`: enabled form controls and links that are not under a `hidden` ancestor (hidden list rows, menu entries). */
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+export function focusables(root: HTMLElement): HTMLElement[] { return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(el => !el.closest('[hidden]')); }
+
+/** Modal focus trap: Tab / Shift+Tab wrap around the panel's own controls instead of wandering into the HUD or the browser chrome. */
+export function trapTab(root: HTMLElement, e: KeyboardEvent) {
+  if (e.key !== 'Tab') return;
+  const list = focusables(root);
+  if (!list.length) { e.preventDefault(); return; }
+  const i = list.indexOf(document.activeElement as HTMLElement);   // -1: focus is outside the panel (body) → enter it at the matching end
+  if (e.shiftKey ? i <= 0 : i < 0 || i === list.length - 1) { e.preventDefault(); list[e.shiftKey ? list.length - 1 : 0].focus(); }
+}
+
+/** After a modal closes: back to the element that opened it; if that is gone or no longer rendered (a pause-menu entry once the overlay hid), the canvas. */
+export function restoreFocus(el: Element | null) {
+  if (el instanceof HTMLElement && el.isConnected) { el.focus(); if (document.activeElement === el) return; }
+  optional<HTMLCanvasElement>('app')?.focus();
+}
+
 /** `'[Esc] 메뉴 · [1]–[8] 명소'` → text with every `[X]` as a <kbd>: the key-cap notation of strings.ts, so copy never becomes innerHTML. */
 export function kbdNodes(spec: string): (string | HTMLElement)[] {
   const out: (string | HTMLElement)[] = []; let last = 0;
