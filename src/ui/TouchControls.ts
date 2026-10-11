@@ -1,4 +1,6 @@
 import type { Input } from '../player/Input';
+import { required } from './dom';
+import { S } from './strings';
 
 /**
  * Touch UI for coarse pointers: a virtual joystick anywhere on the left 40 % of the screen (pushed to the rim = run),
@@ -34,21 +36,21 @@ export class TouchControls {
       if (opts.hold) { const up = () => { opts.hold!(false); b.classList.remove('on'); }; b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up); }
       row.appendChild(b); return b;
     };
-    this.flyOnly.push(btn('▲', () => {}, { hold: d => { this.input.touchV = d ? 1 : 0; }, title: '상승 (비행 중)' }));
-    this.flyOnly.push(btn('▼', () => {}, { hold: d => { this.input.touchV = d ? -1 : 0; }, title: '하강 (비행 중)' }));
-    btn('비행', () => this.input.emitKey('KeyF'), { title: '비행 모드 (F)' });
-    btn('명소', () => this.input.emitKey('KeyL'), { title: '명소 목록 (L)' });
-    btn('지도', () => this.input.emitKey('KeyM'), { title: '미니맵 (M)' });
-    btn('⋯', () => this.input.emitKey('Menu'), { title: '메뉴: 시간 · 날씨 · 설정 · 도움말' });
+    this.flyOnly.push(btn('▲', () => {}, { hold: d => { this.input.touchV = d ? 1 : 0; }, title: S.touch.up }));
+    this.flyOnly.push(btn('▼', () => {}, { hold: d => { this.input.touchV = d ? -1 : 0; }, title: S.touch.down }));
+    btn(S.touch.fly, () => this.input.emitKey('KeyF'), { title: S.touch.flyTitle });
+    btn(S.touch.places, () => this.input.emitKey('KeyL'), { title: S.touch.placesTitle });
+    btn(S.touch.map, () => this.input.emitKey('KeyM'), { title: S.touch.mapTitle });
+    btn(S.touch.more, () => this.input.emitKey('Menu'), { title: S.touch.moreTitle });
     this.root.appendChild(row);
     parent.appendChild(this.root);
     this.setFlying(false);
     this.hideStick();
     // the lift prompt ("E · 1층으로") doubles as the E button
-    const prompt = document.getElementById('prompt');
-    if (prompt) { prompt.style.pointerEvents = 'auto'; prompt.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); this.input.emitKey('KeyE'); }); }
+    const prompt = required<HTMLDivElement>('prompt');
+    prompt.style.pointerEvents = 'auto'; prompt.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); this.input.emitKey('KeyE'); });
 
-    const surface = document.getElementById('app') as HTMLCanvasElement;
+    const surface = required<HTMLCanvasElement>('app');
     surface.style.touchAction = 'none';
     surface.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse') return;

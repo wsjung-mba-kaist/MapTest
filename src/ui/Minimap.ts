@@ -6,6 +6,7 @@
  */
 import { WORLD_HALF } from '../../shared/layout';
 import { DATA_URL } from '../world/DataLoader';
+import { S } from './strings';
 
 export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number; /** site radius (m): bigger sites get their label first */ weight?: number }
 
@@ -38,7 +39,7 @@ export class Minimap {
     img.onload = () => { this.img = img; this.last = 0; };
     img.src = overviewUrl;
     this.canvas.style.pointerEvents = 'auto'; this.canvas.style.cursor = 'crosshair';
-    this.canvas.title = '클릭: 그곳으로 이동 · 휠: 축척';
+    this.canvas.title = S.minimap.title;
     this.canvas.addEventListener('pointerdown', e => e.stopPropagation());
     this.canvas.addEventListener('click', e => {
       if (!this.onPick) return;

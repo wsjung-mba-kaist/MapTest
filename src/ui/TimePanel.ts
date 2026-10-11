@@ -1,9 +1,12 @@
 import type { Weather } from '../render/Environment';
+import { required } from './dom';
+import { S, fmt } from './strings';
 
-export const WEATHER_LABEL: Record<Weather, string> = { clear: '맑음', overcast: '흐림', rain: '비', fog: '안개' };
+/** re-exported from the catalogue: App builds the clock chip and weather toasts from it */
+export const WEATHER_LABEL: Record<Weather, string> = S.time.weather;
 /** Season presets: a representative day each (leaves: mid-April budding, mid-October colour, mid-January bare). */
 export const SEASONS: { label: string; month: number; day: number }[] = [
-  { label: '봄', month: 4, day: 20 }, { label: '여름', month: 7, day: 15 }, { label: '가을', month: 10, day: 20 }, { label: '겨울', month: 1, day: 15 },
+  { label: S.time.seasons.spring, month: 4, day: 20 }, { label: S.time.seasons.summer, month: 7, day: 15 }, { label: S.time.seasons.autumn, month: 10, day: 20 }, { label: S.time.seasons.winter, month: 1, day: 15 },
 ];
 export const PLAY_RATES = [60, 600] as const;
 
@@ -25,28 +28,27 @@ export class TimePanel {
   onSeason: (s: { label: string; month: number; day: number } | null) => void = () => {};
 
   constructor(panel: HTMLElement) {
-    const slider = panel.querySelector('#timeslider');
     this.ticks.className = 'ticks';
-    slider?.after(this.ticks);
+    required<HTMLInputElement>('timeslider').after(this.ticks);
     const presets = panel.querySelector('.presets');
     const row = (cls: string, ...kids: HTMLElement[]) => { const d = document.createElement('div'); d.className = cls; d.append(...kids); return d; };
     const btn = (label: string, title: string, on: () => void) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.title = title; b.addEventListener('click', () => { on(); b.blur(); }); return b; };
-    const now = btn('지금', '파리의 현재 날짜와 시각', () => this.onNow());
-    for (const r of PLAY_RATES) { const b = btn(`▶ ×${r}`, `시간 흐름 재생 (${r === 60 ? '1분 = 1시간' : '6초 = 1시간'})`, () => this.play(this.rate === r ? 0 : r)); this.playBtns.push(b); }
+    const now = btn(S.time.now, S.time.nowTitle, () => this.onNow());
+    for (const r of PLAY_RATES) { const b = btn(fmt(S.time.play, { rate: r }), fmt(S.time.playTitle, { scale: S.time.playScale[r] }), () => this.play(this.rate === r ? 0 : r)); this.playBtns.push(b); }
     const flow = row('presets flow', now, ...this.playBtns);
     const weather = row('presets weather');
-    for (const w of Object.keys(WEATHER_LABEL) as Weather[]) { const b = btn(WEATHER_LABEL[w], `날씨 · ${WEATHER_LABEL[w]}`, () => this.onWeather(w)); this.weatherBtns.set(w, b); weather.appendChild(b); }
+    for (const w of Object.keys(WEATHER_LABEL) as Weather[]) { const b = btn(WEATHER_LABEL[w], fmt(S.time.weatherTitle, { label: WEATHER_LABEL[w] }), () => this.onWeather(w)); this.weatherBtns.set(w, b); weather.appendChild(b); }
     const season = row('presets season');
-    for (const s of SEASONS) { const b = btn(s.label, `${s.month}월 ${s.day}일`, () => this.onSeason(s)); this.seasonBtns.push(b); season.appendChild(b); }
-    this.todayBtn = btn('오늘', '오늘 날짜', () => this.onSeason(null)); season.appendChild(this.todayBtn);
+    for (const s of SEASONS) { const b = btn(s.label, fmt(S.time.seasonTitle, s), () => this.onSeason(s)); this.seasonBtns.push(b); season.appendChild(b); }
+    this.todayBtn = btn(S.time.today, S.time.todayTitle, () => this.onSeason(null)); season.appendChild(this.todayBtn);
     const lbl = (t: string) => { const s = document.createElement('span'); s.className = 'lbl'; s.textContent = t; return s; };
-    (presets ?? panel).after(flow, row('row sub', lbl('날씨'), weather), row('row sub', lbl('계절'), season));
+    (presets ?? panel).after(flow, row('row sub', lbl(S.time.weatherRow), weather), row('row sub', lbl(S.time.seasonRow), season));
   }
 
   /** sunrise / sunset marks under the 0-24 h slider */
   setSun(sunrise: number, sunset: number) {
     this.ticks.replaceChildren();
-    for (const [h, t] of [[sunrise, '일출'], [sunset, '일몰']] as [number, string][]) {
+    for (const [h, t] of [[sunrise, S.time.sunrise], [sunset, S.time.sunset]] as [number, string][]) {
       const m = document.createElement('i'); m.style.left = `${(h / 24) * 100}%`; m.title = `${t} ${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`; this.ticks.appendChild(m);
     }
   }

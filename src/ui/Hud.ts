@@ -1,11 +1,14 @@
+import { kbdNodes, required } from './dom';
+import { S, fmt } from './strings';
+
 /** Default time-of-day presets (local hours); App replaces them with sunrise / sunset based ones for the current day. */
 export const TIME_PRESETS: { label: string; hour: number }[] = [
-  { label: '새벽', hour: 5.75 },
-  { label: '낮', hour: 12 },
-  { label: '오후', hour: 17.5 },
-  { label: '노을', hour: 21.25 },
-  { label: '야경', hour: 22.75 },
-  { label: '심야', hour: 1 },
+  { label: S.time.presets.dawn, hour: 5.75 },
+  { label: S.time.presets.day, hour: 12 },
+  { label: S.time.presets.afternoon, hour: 17.5 },
+  { label: S.time.presets.sunset, hour: 21.25 },
+  { label: S.time.presets.night, hour: 22.75 },
+  { label: S.time.presets.lateNight, hour: 1 },
 ];
 
 export function formatHour(hour: number): string {
@@ -16,16 +19,16 @@ export function formatHour(hour: number): string {
 
 /** Pause-menu entries (Esc after the start); App maps each action to the same code the shortcut runs. */
 export type MenuAction = 'continue' | 'places' | 'time' | 'night' | 'settings' | 'share' | 'shot' | 'help' | 'info';
-const MENU: { action: MenuAction; label: string; key: string; sep?: boolean }[] = [
-  { action: 'continue', label: '계속 걷기', key: 'Esc' },
-  { action: 'places', label: '명소 목록', key: 'L' },
-  { action: 'time', label: '시간 · 날씨', key: 'T' },
-  { action: 'night', label: '시간대 순환', key: 'N' },
-  { action: 'settings', label: '설정', key: '' },
-  { action: 'share', label: '링크 복사', key: 'P', sep: true },
-  { action: 'shot', label: '스크린샷 저장', key: 'O' },
-  { action: 'help', label: '도움말', key: 'H', sep: true },
-  { action: 'info', label: '정보 · 출처', key: '' },
+const MENU: { action: MenuAction; key: string; sep?: boolean }[] = [
+  { action: 'continue', key: 'Esc' },
+  { action: 'places', key: 'L' },
+  { action: 'time', key: 'T' },
+  { action: 'night', key: 'N' },
+  { action: 'settings', key: '' },
+  { action: 'share', key: 'P', sep: true },
+  { action: 'shot', key: 'O' },
+  { action: 'help', key: 'H', sep: true },
+  { action: 'info', key: '' },
 ];
 
 /**
@@ -34,18 +37,21 @@ const MENU: { action: MenuAction; label: string; key: string; sep?: boolean }[] 
  * controls, a start button) and, after the first start, a translucent pause menu over the visible scene.
  */
 export class Hud {
-  private overlay = document.getElementById('overlay') as HTMLDivElement;
-  private msg = document.getElementById('overlay-msg') as HTMLParagraphElement;
-  private bar = document.querySelector('#progress > i') as HTMLElement;
-  private status = document.getElementById('status') as HTMLDivElement;
-  private help = document.getElementById('help') as HTMLDivElement;
-  private crosshair = document.getElementById('crosshair') as HTMLDivElement;
-  private timePanel = document.getElementById('timepanel') as HTMLDivElement;
-  private timeSlider = document.getElementById('timeslider') as HTMLInputElement;
-  private timeVal = document.getElementById('timeval') as HTMLSpanElement;
-  private toastEl = document.getElementById('toast') as HTMLDivElement | null;
-  private clock = document.getElementById('clock') as HTMLDivElement | null;
-  private stream = document.getElementById('stream') as HTMLDivElement | null;
+  // every element below is declared in index.html, so a missing one is a markup error that `required` reports at boot
+  private overlay = required<HTMLDivElement>('overlay');
+  private msg = required<HTMLParagraphElement>('overlay-msg');
+  private bar = required<HTMLDivElement>('progress').querySelector<HTMLElement>('i')!;
+  private status = required<HTMLDivElement>('status');
+  private help = required<HTMLDivElement>('help');
+  private crosshair = required<HTMLDivElement>('crosshair');
+  private timePanel = required<HTMLDivElement>('timepanel');
+  private timeSlider = required<HTMLInputElement>('timeslider');
+  private timeVal = required<HTMLSpanElement>('timeval');
+  private dateLabel = required<HTMLSpanElement>('datelabel');
+  private toastEl = required<HTMLDivElement>('toast');
+  private clock = required<HTMLDivElement>('clock');
+  private stream = required<HTMLDivElement>('stream');
+  private promptEl = required<HTMLDivElement>('prompt');
   private menuButtons = new Map<MenuAction, HTMLButtonElement>();
   private toastTimer = 0;
   private streamTimer = 0;
@@ -58,7 +64,7 @@ export class Hud {
   onDiagnostics: (on: boolean) => void = () => {};
   private ready = false;
   private readyText = '';
-  private pauseText = '화면을 클릭하면 계속 걷습니다';
+  private pauseText: string = S.hud.pause;
   /** the first start happened: from now on the overlay is the pause menu */
   started = false;
   /** credit lines (model / data licences) shown in the info panel */
@@ -67,23 +73,36 @@ export class Hud {
 
   constructor() {
     this.overlay.addEventListener('click', () => { if (this.ready) this.onStart(); });
-    const start = document.getElementById('startbtn');
-    start?.addEventListener('click', e => { e.stopPropagation(); if (this.ready) this.onStart(); });
+    required<HTMLButtonElement>('startbtn').addEventListener('click', e => { e.stopPropagation(); if (this.ready) this.onStart(); });
     const retry = this.overlay.querySelector('.retry');
     retry?.addEventListener('click', e => { e.stopPropagation(); location.reload(); });
-    const menu = this.overlay.querySelector('.menu');
-    if (menu) for (const m of MENU) {
-      if (m.sep) { const s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); }
-      const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
-      b.append(m.label); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
-      b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
-      if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
-      menu.appendChild(b); this.menuButtons.set(m.action, b);
+    const menu = this.overlay.querySelector<HTMLElement>('.menu');
+    if (menu) {
+      for (const m of MENU) {
+        if (m.sep) { const s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); }
+        const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
+        b.append(S.hud.menu[m.action]); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
+        b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
+        if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
+        menu.appendChild(b); this.menuButtons.set(m.action, b);
+      }
+      // role=menu: ↑ ↓ (Home / End) move between the visible entries, wrapping; Tab keeps working since they are plain buttons
+      menu.addEventListener('keydown', e => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+        const btns = [...this.menuButtons.values()].filter(b => !b.hidden);
+        if (!btns.length) return;
+        const i = btns.indexOf(document.activeElement as HTMLButtonElement), n = btns.length;
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : i < 0 ? (e.key === 'ArrowDown' ? 0 : n - 1) : (i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+        btns[next].focus(); e.preventDefault(); e.stopPropagation();
+      });
     }
-    this.clock?.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
-    this.clock?.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
-    this.timeSlider?.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
+    this.clock.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
+    this.clock.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
+    this.timeSlider.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
     this.setPresets(TIME_PRESETS);
+    // the hint bar is the condensed form of the help table (strings.ts), so the two legends cannot drift apart
+    const hints = S.help.groups.flatMap(g => g.rows).flatMap(r => (r.hint ? [r.hint] : []));
+    this.help.replaceChildren(...hints.flatMap((h, i) => [...(i ? [' · '] : []), ...kbdNodes(h)]));
   }
 
   /** show / hide a pause-menu entry (settings appears once its panel exists) */
@@ -93,7 +112,7 @@ export class Hud {
   presets: { label: string; hour: number }[] = TIME_PRESETS;
   setPresets(list: { label: string; hour: number }[]) {
     this.presets = list;
-    const presets = this.timePanel?.querySelector('.presets');
+    const presets = this.timePanel.querySelector('.presets');
     if (!presets) return;
     presets.replaceChildren();
     for (const p of list) {
@@ -103,9 +122,9 @@ export class Hud {
       presets.appendChild(b);
     }
   }
-  setDateLabel(text: string) { const el = document.getElementById('datelabel'); if (el) el.textContent = text; }
+  setDateLabel(text: string) { this.dateLabel.textContent = text; }
   /** the always-visible top-right chip: "17:30 · 맑음" (+ date when not today) */
-  setClock(text: string) { if (this.clock && this.clock.textContent !== text) this.clock.textContent = text; }
+  setClock(text: string) { if (this.clock.textContent !== text) this.clock.textContent = text; }
 
   private applyTime(hour: number) { this.setTimeDisplay(hour); this.onTimeChange(hour); }
 
@@ -129,14 +148,14 @@ export class Hud {
 
   setTimeDisplay(hour: number) {
     this.timeVal.textContent = formatHour(hour);
-    if (this.timeSlider && Math.abs(parseFloat(this.timeSlider.value) - hour) > 0.01) this.timeSlider.value = String(hour);
+    if (Math.abs(parseFloat(this.timeSlider.value) - hour) > 0.01) this.timeSlider.value = String(hour);
   }
 
   progress(frac: number, text?: string) {
     this.bar.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
     if (text) this.msg.textContent = text;
   }
-  setReady(text = '마우스 잠금 · Esc 메뉴') {
+  setReady(text: string = S.hud.ready) {
     this.ready = true;
     this.readyText = text;
     this.overlay.classList.add('ready');
@@ -162,13 +181,13 @@ export class Hud {
     this.overlay.classList.toggle('pause', show && this.started);
     this.overlay.classList.toggle('peek', show && this.panelOpen);
     this.crosshair.hidden = show;
-    if (!show) this.timeSlider?.blur();
+    if (!show) this.timeSlider.blur();
     this.updateOverlayText();
   }
   private updateOverlayText() {
     if (!this.ready) return;
     this.msg.textContent = this.modalOpen ? this.modalHint
-      : this.timePanelOpen ? '시간을 맞춘 뒤 화면을 클릭하면 계속 걷습니다 · T 패널 닫기'
+      : this.timePanelOpen ? S.hud.timePanelPause
       : this.started ? this.pauseText : this.readyText;
   }
   /** Diagnostics: FPS panel + the status readout (?status=1, H twice, settings). */
@@ -180,24 +199,21 @@ export class Hud {
   setStatus(text: string) { this.status.textContent = text; }
   /** Short confirmation message at the bottom of the screen. */
   toast(text: string, ms = 2200) {
-    if (!this.toastEl) return;
     this.toastEl.textContent = text; this.toastEl.hidden = false;
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => { if (this.toastEl) this.toastEl.hidden = true; }, ms);
+    this.toastTimer = window.setTimeout(() => { this.toastEl.hidden = true; }, ms);
   }
   /** Building chunks still arriving after the start ("거리 불러오는 중 37/144", GRID_N²); hides itself a second after the last one. */
   streaming(loaded: number, total: number) {
-    if (!this.stream) return;
-    if (loaded < total) { this.stream.textContent = `거리 불러오는 중 ${loaded}/${total}`; this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }
-    else if (!this.stream.hidden && !this.streamTimer) this.streamTimer = window.setTimeout(() => { if (this.stream) this.stream.hidden = true; }, 1000);
+    if (loaded < total) { this.stream.textContent = fmt(S.hud.streaming, { loaded, total }); this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }
+    else if (!this.stream.hidden && !this.streamTimer) this.streamTimer = window.setTimeout(() => { this.stream.hidden = true; }, 1000);
   }
   /** the bottom-left hint bar (touch devices never show it) */
   showHint(show: boolean) { this.help.classList.toggle('faded', !show); }
-  private promptEl = document.getElementById('prompt') as HTMLDivElement | null;
   private promptText = '';
   /** Persistent interaction hint ("E · 1층으로"); null hides it. */
   prompt(text: string | null) {
-    if (!this.promptEl || text === this.promptText) return;
+    if (text === this.promptText) return;
     this.promptText = text ?? '';
     this.promptEl.hidden = !text;
     if (text) {   // "E · label": the key as <kbd>, the label as text (never markup — it comes from a data file)
