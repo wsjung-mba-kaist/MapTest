@@ -5,6 +5,7 @@ import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { BBOX_PADDED, CACHE_DIR, OUT_DIR, WMS_ELEVATION, type LonLatBox } from '../config.ts';
 import { cachedBytes, exists, writeJson } from './http.ts';
+import { bilValidator } from './wmsgrid.ts';
 import { frame, altToY, DATUM_ALT } from '../../shared/geo.ts';
 import { TERRAIN_N, TERRAIN_STEP, WORLD_HALF } from '../../shared/layout.ts';
 
@@ -26,8 +27,8 @@ function splitQuads(b: LonLatBox): LonLatBox[] {
 }
 
 async function fetchQuad(box: LonLatBox, i: number): Promise<Quad> {
-  const buf = await cachedBytes(WMS_ELEVATION(box, PX, PX), `bil/quad${i}.bin`, { timeoutMs: 180_000, retries: 3 });
-  if (buf.length !== PX * PX * 4) {
+  const buf = await cachedBytes(WMS_ELEVATION(box, PX, PX), `bil/quad${i}.bin`, { timeoutMs: 180_000, retries: 3, validate: bilValidator(PX, PX) });
+  if (buf.length !== PX * PX * 4) {   // second line of defence: a bad quad cached before validation existed
     throw new Error(`elevation quad ${i}: unexpected ${buf.length} bytes (expected ${PX * PX * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`);
   }
   const data = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length));

@@ -6,8 +6,11 @@ export interface BilGrid { box: LonLatBox; w: number; h: number; data: Float32Ar
 
 const NODATA_MIN = -1000;
 
+/** A BIL answer is exactly w*h float32s; anything else is the WMS's XML error page or a cut-off body, which must not be cached. */
+export const bilValidator = (w: number, h: number) => (buf: Buffer) => buf.length === w * h * 4 ? true as const : `unexpected ${buf.length} bytes (expected ${w * h * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`;
+
 export async function fetchBil(url: string, rel: string, w: number, h: number, timeoutMs = 180_000): Promise<BilGrid & { box: LonLatBox }> {
-  const buf = await cachedBytes(url, rel, { timeoutMs, retries: 3 });
+  const buf = await cachedBytes(url, rel, { timeoutMs, retries: 3, validate: bilValidator(w, h) });
   if (buf.length !== w * h * 4) throw new Error(`${rel}: unexpected ${buf.length} bytes (expected ${w * h * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`);
   return { box: null as unknown as LonLatBox, w, h, data: new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)) };
 }

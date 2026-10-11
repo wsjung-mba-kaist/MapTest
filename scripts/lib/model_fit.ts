@@ -7,7 +7,7 @@ import { MeshoptEncoder, MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer
 import { log } from './log.ts';
 import { writeJson } from './http.ts';
 import type { LandmarkModel } from '../landmarks_models.ts';
-import type { MinRect } from './polygons.ts';
+import { percentile, type MinRect } from './polygons.ts';
 
 /**
  * Fit an arbitrary landmark glTF onto its OSM footprint (the general case of eiffel_scan.ts, whose tower-specific
@@ -17,8 +17,6 @@ import type { MinRect } from './polygons.ts';
  */
 export interface FitInput { rect: MinRect; centre: [number, number]; radius: number }
 export interface ModelResult { tris: number; height: number; scale: number; yawDeg: number; top: number; textured: boolean; author?: string; license?: string; source?: string; title?: string; centre: [number, number]; radius: number; kind: 'model' | 'scan' }
-
-const percentile = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
 /**
  * Bake every node transform into the vertices and hang all mesh nodes, now at identity, under one fresh `holder`
@@ -169,7 +167,8 @@ export async function processModel(src: string, entry: LandmarkModel, fit: FitIn
   return result;
 }
 
-function countTris(doc: import('@gltf-transform/core').Document): number {
+/** Triangles over every primitive (indexed or not): the number the budgets and the model metadata quote. */
+export function countTris(doc: Document): number {
   let n = 0;
   for (const mesh of doc.getRoot().listMeshes()) for (const prim of mesh.listPrimitives()) {
     const idx = prim.getIndices(); n += (idx ? idx.getCount() : prim.getAttribute('POSITION')?.getCount() ?? 0) / 3;

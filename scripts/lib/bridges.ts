@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { FeatureCollection, Geometry, LineString, Polygon, MultiPolygon } from 'geojson';
+import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import { log } from './log.ts';
 import { HAUSSMANN, OUT_DIR } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
@@ -11,7 +11,7 @@ import { Style, SurfaceFlag, WORLD_HALF, packStyleSeed } from '../../shared/layo
 import type { Heightmap } from '../../shared/heightmap.ts';
 /** bridge masonry is drawn as a one-storey stone facade (Style.Stone) with one fixed seed for every bridge */
 const STONE_META_W = packStyleSeed(Style.Stone, 17);
-import { area, bufferLine, centroid, cleanRing, insetRing, orient, pointInPoly, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, bufferLine, centroid, cleanRing, insetRing, orient, pointInPoly, toWorldPolys, unionAll, type Poly, type Pt, type Ring } from './polygons.ts';
 
 const DECK_THICK = 2.2;
 const PARAPET_H = 1.05;
@@ -40,16 +40,11 @@ export interface Bridge {
 export interface PierBox { cx: number; cz: number; dx: number; dz: number; halfL: number; halfW: number; name: string }
 export type FlowField = (x: number, z: number) => [number, number] | null;
 
-function toWorldRing(coords: number[][]): Ring {
-  return cleanRing(coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }));
-}
-function toWorldPolys(geom: Polygon | MultiPolygon): Poly[] {
-  const out: Poly[] = [];
-  const push = (c: number[][][]) => { const rings = c.map(toWorldRing).filter(r => r.length >= 3); if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]); };
-  if (geom.type === 'Polygon') push(geom.coordinates); else geom.coordinates.forEach(push);
-  return out;
-}
-
+/**
+ * Deck width, not the carriageway of roadnet.carriagewayWidth: a bridge carries its sidewalks, parapets and often a
+ * cycle track on the same structure (lanes * 3.25 + 5, a 9 m rail deck, 18 m for a primary), so the table is wider on
+ * purpose and must not be swapped for the shared one.
+ */
 function roadWidth(tags: Record<string, string>): number {
   const w = parseFloat(tags.width ?? ''); if (w > 2) return w;
   const lanes = parseFloat(tags.lanes ?? '');
@@ -60,12 +55,6 @@ function roadWidth(tags: Record<string, string>): number {
     case 'footway': case 'path': case 'cycleway': case 'pedestrian': case 'steps': return 5;
     default: return 10;
   }
-}
-
-function addBox(gb: GeomBuilder, x0: number, z0: number, x1: number, z1: number, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
-  const ring: Ring = orient([[x0, z0], [x1, z0], [x1, z1], [x0, z1]], false);
-  addWalls(gb, ring, y0, y1, flag, tint);
-  addCapAt(gb, [ring], y1, flag, tint, true);
 }
 
 function addWalls(gb: GeomBuilder, ring: Ring, y0: number, y1: number, flag: SurfaceFlag, tint: [number, number, number]) {
@@ -635,7 +624,6 @@ export async function buildBridges(roads: FeatureCollection<Geometry, OsmProps>,
       addWalls(stone, ring, waterLevelY - 3, bottom + 0.05, SurfaceFlag.Plinth, STONE);
     }
   }
-  void addBox;
   const buf = encodeBinMesh({ x: 0, z: 0 }, [deck.toSection('deck'), stone.toSection('stone'), parapet.toSection('parapet')], { count: bridges.length });
   await fs.writeFile(path.join(OUT_DIR, 'bridges.bin'), buf);
   const names = [...new Set(bridges.map(b => b.name))];

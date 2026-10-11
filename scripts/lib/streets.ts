@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import earcut from 'earcut';
-import type { FeatureCollection, Geometry, LineString, MultiPolygon, Polygon } from 'geojson';
+import type { FeatureCollection, Geometry, LineString } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { OUT_DIR } from '../config.ts';
@@ -13,9 +13,8 @@ import { collectBridges } from './bridges.ts';
 import { makeFlowField, riverArms } from './river.ts';
 import { encodeBinMesh, type SectionInput } from './binmesh.ts';
 import { loadHeightmap } from './build.ts';
-import { frame } from '../../shared/geo.ts';
 import { CHUNK_SIZE, GRID_N, KERB_H, SURFACE_N, SURFACE_STEP, StreetFlag, SurfaceClass, WORLD_HALF, chunkKey, chunkOrigin } from '../../shared/layout.ts';
-import { area, bboxOf, distToRing, pointInPoly, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, bboxOf, distToRing, pointInPoly, toWorldPolysRaw, toWorldPts, type Poly, type Pt, type Ring } from './polygons.ts';
 import { differencePolys, intersectPolys, offsetLine, offsetPolys } from './clip.ts';
 
 /**
@@ -43,8 +42,6 @@ export interface StepsWay { pts: Pt[]; width: number }
 const RISER = 0.165;               // m, Paris outdoor stairs
 const TREAD_MIN = 0.26;
 
-const toPts = (coords: number[][]): Pt[] => coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z] as Pt; });
-const polysOf = (g: Polygon | MultiPolygon): Poly[] => g.type === 'Polygon' ? [g.coordinates.map(toPts)] : g.coordinates.map(p => p.map(toPts));
 const r2 = (p: Pt): Pt => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100];
 const roundPoly = (p: Poly): Poly => p.map(r => r.map(r2));
 
@@ -54,7 +51,7 @@ export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>,
   for (const f of land.features) {
     const t = f.properties.tags ?? {};
     if (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon') continue;
-    const polys = polysOf(f.geometry);
+    const polys = toWorldPolysRaw(f.geometry);
     if (t.leisure === 'park' || t.leisure === 'garden' || t.landuse === 'grass' || t.landuse === 'cemetery' || t.landuse === 'forest' || t.natural === 'wood') {
       grass.push(...polys);
       blocked.push(...offsetPolys(polys, -SIDEWALK_W));   // park interior: the fence-line margin may still carry a sidewalk
@@ -67,7 +64,7 @@ export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>,
     if (t.tunnel && t.tunnel !== 'no') continue;
     if (t.layer && parseFloat(t.layer) < 0) continue;
     if (f.geometry.type === 'LineString') {
-      const pts = toPts((f.geometry as LineString).coordinates);
+      const pts = toWorldPts((f.geometry as LineString).coordinates);
       if (pts.length < 2) continue;
       if (t.railway) { blocked.push(...offsetLine(pts, 9)); continue; }
       if (!t.highway || t.highway === 'proposed' || t.highway === 'construction') continue;
@@ -84,12 +81,12 @@ export function collectStreetPolys(roads: FeatureCollection<Geometry, OsmProps>,
         steps.push({ pts, width: w });
       }
     } else if ((f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') && t.area === 'yes' && t.highway) {
-      (t.highway === 'pedestrian' || t.highway === 'footway' ? paved : carriage).push(...polysOf(f.geometry));
+      (t.highway === 'pedestrian' || t.highway === 'footway' ? paved : carriage).push(...toWorldPolysRaw(f.geometry));
     }
   }
   for (const f of water.features) {
     if (f.geometry.type !== 'Polygon' && f.geometry.type !== 'MultiPolygon') continue;
-    blocked.push(...polysOf(f.geometry));
+    blocked.push(...toWorldPolysRaw(f.geometry));
   }
   for (const d of decks) { carriage.push(d); blocked.push(d); }
   return { carriage, paved, blocked, grass, steps };

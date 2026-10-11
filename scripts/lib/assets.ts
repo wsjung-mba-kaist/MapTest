@@ -6,7 +6,8 @@ import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { CAR_VARIANTS } from '../../shared/layout.ts';
 import { ASSETS, MODELS_DIR, TEXTURES_DIR } from '../config.ts';
-import { cachedBytes, cachedJson, ensureDir, exists } from './http.ts';
+import { LANDMARK_MODELS } from '../landmarks_models.ts';
+import { cachedBytes, cachedJson, ensureDir, exists, readJson } from './http.ts';
 
 /** Sets seen at arm's length (facade grain, rusticated ground floors, pavement) stay 2K; the rest are 1K to save VRAM. */
 const SIZE_2K = new Set(['plaster_grey_04', 'large_sandstone_blocks', 'Asphalt033', 'PavingStones138']);
@@ -94,16 +95,38 @@ async function kenneyCars(lines: string[]) {
   log.info(`assets: kenney cars: ${got}/${wanted.length} models, texture ${texKey ? 'ok' : 'missing'}`);
 }
 
+/**
+ * One credit line per hero model, from the registry — except the tower, whose line follows the metadata bake:eiffel
+ * wrote (public/models/eiffel.json names the glb it actually fitted: the Sketchfab CC-BY scan by default, the CC0 3DMR
+ * model when no scan is supplied). The old hard-coded "3DMR by n42k (CC0)" line misattributed the default model.
+ */
+async function modelCreditLines(): Promise<string[]> {
+  const out: string[] = [];
+  for (const m of LANDMARK_MODELS) {
+    let c: { title: string; author?: string; license: string; url: string } = m.credits;
+    if (m.id === 'eiffel') {
+      const meta = await readJson<{ title?: string; author?: string; license?: string; source?: string }>(path.join(MODELS_DIR, 'eiffel.json')).catch(() => null);
+      if (meta?.license) c = { title: meta.title ?? 'Eiffel Tower model', author: meta.author, license: meta.license, url: meta.source ?? c.url };
+    }
+    out.push(`- ${m.id}: ${c.title}${c.author ? ` by ${c.author}` : ''} (${c.license}) ${c.url}`);
+  }
+  return out;
+}
+
 export async function run(_ctx: BakeContext) {
   const texDir = path.join(TEXTURES_DIR, 'pbr');
   const hdriDir = path.join(TEXTURES_DIR, 'hdri');
   await ensureDir(texDir); await ensureDir(hdriDir);
-  const lines: string[] = ['# Third-party assets', '', 'All textures and HDRIs below are CC0 (public domain).', ''];
+  const lines: string[] = ['# Third-party assets', '', '## Textures, HDRIs and props', '', 'Everything in this section is CC0 (public domain).', ''];
   for (const id of ASSETS.polyhaven.textures) { try { await polyhavenTexture(id, texDir, lines); } catch (e) { log.warn(`assets: ${id} failed: ${e instanceof Error ? e.message : e}`); } }
   for (const id of ASSETS.ambientcg) { try { await ambientcgTexture(id, texDir, lines); } catch (e) { log.warn(`assets: ${id} failed: ${e instanceof Error ? e.message : e}`); } }
   for (const id of ASSETS.polyhaven.hdris) { try { await polyhavenHdri(id, hdriDir, lines); } catch (e) { log.warn(`assets: ${id} failed: ${e instanceof Error ? e.message : e}`); } }
   try { await kenneyCars(lines); } catch (e) { log.warn(`assets: kenney cars failed: ${e instanceof Error ? e.message : e}`); }
-  lines.push('', '- Eiffel Tower model: 3DMR #4 by n42k (CC0) https://3dmr.eu/model/4', '- Building footprints/roads: © OpenStreetMap contributors (ODbL)', '- Building heights: IGN BD TOPO (Licence Ouverte / Etalab 2.0)', '- Orthophotos and elevation: IGN BD ORTHO / RGE ALTI (Licence Ouverte / Etalab 2.0)', '- Trees: Ville de Paris open data (ODbL)');
+  lines.push('', '## Hero models', '', 'Licences differ per model (CC-BY requires the credit shown in the HUD).', '', ...await modelCreditLines());
+  lines.push('', '## Data', '', 'Open data under share-alike / attribution licences, not CC0.', '',
+    '- Building footprints/roads: © OpenStreetMap contributors (ODbL)', '- Building heights: IGN BD TOPO (Licence Ouverte / Etalab 2.0)',
+    '- Orthophotos and elevation: IGN BD ORTHO / RGE ALTI / LiDAR HD (Licence Ouverte / Etalab 2.0)', '- Trees: Ville de Paris open data (ODbL)',
+    '- Landmark texts and photos: Wikipedia / Wikimedia Commons (per-image licence in public/data/landmarks.json)');
   await fs.writeFile(path.join(TEXTURES_DIR, 'LICENSES.md'), lines.join('\n') + '\n');
   log.info('assets: LICENSES.md written');
 }

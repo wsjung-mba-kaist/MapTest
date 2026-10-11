@@ -17,9 +17,9 @@ import { buildFurniture } from './furniture.ts';
 import { buildFountains } from './fountains.ts';
 import { buildRail } from './rail.ts';
 import { Heightmap } from '../../shared/heightmap.ts';
-import { ORIGIN, DATUM_ALT, frame } from '../../shared/geo.ts';
-import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
-import { area, clipToBox, cleanRing, orient, pointInPoly, type Poly, type Ring } from './polygons.ts';
+import { ORIGIN, DATUM_ALT } from '../../shared/geo.ts';
+import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
+import { area, clipToBox, percentile, pointInPoly, toWorldPolys, type Poly } from './polygons.ts';
 
 export async function loadHeightmap(raw = false): Promise<Heightmap> {
   const meta = await readJson<{ n: number; step: number; origin: number }>(path.join(OUT_DIR, 'terrain.json'));
@@ -29,23 +29,6 @@ export async function loadHeightmap(raw = false): Promise<Heightmap> {
   if (raw) for (const f of rawFiles) if (await exists(f)) { file = f; break; }
   const buf = await fs.readFile(file);
   return Heightmap.fromBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), meta);
-}
-
-function toWorldPolys(geom: Geometry): Poly[] {
-  const conv = (ring: number[][]): Ring => cleanRing(ring.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }));
-  const out: Poly[] = [];
-  const push = (coords: number[][][]) => {
-    const rings = coords.map(conv).filter(r => r.length >= 3);
-    if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]);
-  };
-  if (geom.type === 'Polygon') push(geom.coordinates); else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(push);
-  return out;
-}
-
-function percentile(values: number[], p: number): number {
-  if (!values.length) return NaN;
-  const s = values.slice().sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 }
 
 async function buildWater(water: FeatureCollection<Geometry, OsmProps>, hm: Heightmap): Promise<{ waterLevelY: number; bytes: number; count: number }> {
@@ -210,5 +193,4 @@ export async function run(_ctx: BakeContext) {
   manifest.chunks = chunkInfo;
   await writeJson(path.join(OUT_DIR, 'manifest.json'), manifest);
   log.info('manifest written');
-  void SurfaceFlag;
 }

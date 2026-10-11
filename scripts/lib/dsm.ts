@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, DSM_MAX_PX, DSM_PAD_M, DSM_STEP_M, WMS_CAPABILITIES, WMS_DSM, WMS_DSM_LAYERS, type LonLatBox } from '../config.ts';
+import { ENV, CACHE_DIR, DSM_MAX_PX, DSM_PAD_M, DSM_STEP_M, WMS_CAPABILITIES, WMS_DSM, WMS_DSM_LAYERS, type LonLatBox } from '../config.ts';
 import { cachedText, exists, readJson, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
@@ -50,8 +50,8 @@ export function dsmGroups(specs: BuildingSpec[], extra: Set<string>): Map<string
 }
 
 export async function run(ctx: BakeContext) {
-  if (process.env.DSM === '0') { log.info('dsm: skipped (DSM=0)'); return; }
-  const extra = new Set((process.env.DSM_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  if (!ENV.dsm) { log.info('dsm: skipped (DSM=0)'); return; }
+  const extra = new Set(ENV.dsmIds);
   const hm = await loadHeightmap(true);
   const { specs } = buildSpecs(await loadTheme('buildings'), await loadBuildings(), hm);
   const groups = dsmGroups(specs, extra);

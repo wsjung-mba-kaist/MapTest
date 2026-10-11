@@ -14,6 +14,12 @@ export interface FetchOpts {
   body?: string;
   /** Called when a retryable failure happens (for logging). */
   onRetry?: (attempt: number, reason: string) => void;
+  /**
+   * cachedBytes only: inspect the fresh download before it is cached. A string is the reason it is bad; the fetch then
+   * throws with it and leaves no file, so the next run downloads again instead of reading a 200-byte XML error back
+   * as a BIL grid (which is how a bad quad used to survive until someone deleted it from cache/ by hand).
+   */
+  validate?: (buf: Buffer) => true | string;
 }
 
 const UA = 'paris-eiffel-walk-bake/0.1 (local open-data bake)';
@@ -66,9 +72,9 @@ export async function cachedBytes(url: string, rel: string, opts: FetchOpts = {}
   if (await exists(file)) return fs.readFile(file);
   const res = await fetchRetry(url, opts);
   const buf = Buffer.from(await res.arrayBuffer());
-  await ensureDir(path.dirname(file));
-  await fs.writeFile(file + '.part', buf);
-  await fs.rename(file + '.part', file);
+  const verdict = opts.validate?.(buf) ?? true;
+  if (verdict !== true) throw new Error(`${rel}: ${verdict} (${url})`);
+  await writeFileAtomic(file, buf);
   return buf;
 }
 
@@ -82,9 +88,14 @@ export async function cachedJson<T = unknown>(url: string, rel: string, opts: Fe
 
 export const limit = (n: number) => pLimit(n);
 
-export async function writeJson(file: string, data: unknown) {
+/** Write via `<file>.part` + rename, so a crash mid-write leaves the previous file (or nothing), never a truncated one. */
+export async function writeFileAtomic(file: string, data: Buffer | string) {
   await ensureDir(path.dirname(file));
-  await fs.writeFile(file, JSON.stringify(data));
+  await fs.writeFile(file + '.part', data);
+  await fs.rename(file + '.part', file);
+}
+export async function writeJson(file: string, data: unknown) {
+  await writeFileAtomic(file, JSON.stringify(data));
 }
 export async function readJson<T>(file: string): Promise<T> {
   return JSON.parse(await fs.readFile(file, 'utf8')) as T;

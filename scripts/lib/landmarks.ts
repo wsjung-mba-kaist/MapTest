@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
@@ -70,6 +69,35 @@ export function cleanArtist(s: string): string {
 const FREE = /^(cc0|public domain|pd|cc by(?!-nc)(?!-nd)|cc-by(?!-nc)(?!-nd)|attribution)/i;
 export function freeLicense(short: string | undefined): boolean {
   return !!short && FREE.test(short.trim());
+}
+
+/** "Rich" = carries what only the network brings: a Wikipedia description or a Commons photo. */
+export const isRich = (l: Landmark) => !!(l.desc || l.image);
+
+type LandmarkSet = Pick<LandmarksData, 'landmarks' | 'credits'>;
+
+/**
+ * Merge the previous landmarks.json into a fresh resolution, per id: a rich previous entry beats a bare new one
+ * (wholesale, so its photo credit line and links stay consistent); otherwise the new entry wins. Ids that left the
+ * registry disappear, new ids come in, and the order is the registry's. A forced offline bake once rewrote the file
+ * with 25 of 33 entries empty (CLAUDE.md) because nothing compared the two.
+ */
+export function mergeLandmarks(prev: LandmarkSet | null, next: LandmarkSet): LandmarkSet & { kept: number } {
+  const old = new Map((prev?.landmarks ?? []).map(l => [l.id, l]));
+  const keptFrom: Landmark[] = [];
+  const landmarks = next.landmarks.map(n => { const p = old.get(n.id); if (p && isRich(p) && !isRich(n)) { keptFrom.push(p); return p; } return n; });
+  // credit lines are "<short>: <artist> (<licence>)": carry over those of the kept photos
+  const credits = new Set(next.credits);
+  for (const l of keptFrom) if (l.image) for (const c of prev?.credits ?? []) if (c.startsWith(`${l.short}: `)) credits.add(c);
+  return { landmarks, credits: [...credits].sort(), kept: keptFrom.length };
+}
+
+/**
+ * true when a run resolved fewer entries than the previous file holds rich ones *and* Overpass answered nothing —
+ * the signature of an offline bake, whose output must not replace the file.
+ */
+export function isDegradedRun(prev: LandmarkSet | null, okCount: number, osmElements: number): boolean {
+  return !!prev && osmElements === 0 && okCount < prev.landmarks.filter(isRich).length;
 }
 
 // ------------------------------------------------------------------------------------------------ OSM
@@ -267,7 +295,17 @@ export async function run(ctx: BakeContext) {
   }
   const counts = { ok: 0, partial: 0, failed: 0 };
   for (const r of resolved) counts[r.status]++;
-  const data: LandmarksData = { version: LANDMARKS_VERSION, generated: new Date().toISOString(), landmarks: resolved.map(r => r.landmark), credits: [...credits].sort() };
+  const fresh: LandmarksData = { version: LANDMARKS_VERSION, generated: new Date().toISOString(), landmarks: resolved.map(r => r.landmark), credits: [...credits].sort() };
+  // --force on this step reaches here with the previous file still on disk: it is the baseline the new run must not fall below
+  const prev = await readJson<LandmarksData>(out).catch(() => null);
+  if (isDegradedRun(prev, counts.ok, osm.size)) {
+    log.warn(`landmarks: Overpass answered nothing and only ${counts.ok} entries resolved (previous file has ${prev!.landmarks.filter(isRich).length} with a description or photo): keeping the previous landmarks.json`);
+    process.exitCode = 1;
+    return;
+  }
+  const merged = mergeLandmarks(prev, fresh);
+  if (merged.kept) log.warn(`landmarks: ${merged.kept} entries kept from the previous file (this run resolved neither description nor photo for them)`);
+  const data: LandmarksData = { ...fresh, landmarks: merged.landmarks, credits: merged.credits };
   await writeJson(out, data);
   const manifestFile = path.join(OUT_DIR, 'manifest.json');
   if (await exists(manifestFile)) {
@@ -277,5 +315,4 @@ export async function run(ctx: BakeContext) {
   } else log.warn('landmarks: manifest.json missing (run bake:build); landmarks.json written anyway');
   const withImg = data.landmarks.filter(l => l.image).length, withDesc = data.landmarks.filter(l => l.desc).length, ko = data.landmarks.filter(l => l.desc?.lang === 'ko').length;
   log.info(`landmarks: ${data.landmarks.length} entries (ok ${counts.ok}, partial ${counts.partial}, failed ${counts.failed}); ${withDesc} descriptions (${ko} Korean), ${withImg} photos -> public/data/landmarks.json`);
-  void fs;
 }
