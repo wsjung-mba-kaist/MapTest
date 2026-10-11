@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RADII } from '../radii';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
 import { EdgeFlag, NodeFlag } from '../../../shared/paths';
@@ -8,6 +7,7 @@ import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shar
 import type { CrossingTable } from '../../../shared/crossings';
 import { busModel, carColor, loadCarKit, makeBusMaterial, makeCarMaterial, type CarModel } from './CarKit';
 import type { LocalLight } from '../../render/LocalLights';
+import { AgentPool } from './AgentPool';
 
 const CAP = 384;
 const VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi'] as const;
@@ -23,9 +23,8 @@ const STOP_BACK = 5;          // stop line: metres before the junction node
  * Moving cars on the drivable graph: right-hand lanes, leader following, hash-chosen turns, quadratic junction
  * curves, tunnel/boundary sinks and night lights. Deterministic conveyor spawning like the crowd.
  */
-export class Traffic {
+export class Traffic extends AgentPool {
   readonly group = new THREE.Group();
-  count = 0;
   private models: CarModel[] = [];
   private meshes: THREE.InstancedMesh[] = [];
   private readonly uniforms = { uLights: { value: 0 }, uTime: { value: 0 } };
@@ -52,9 +51,9 @@ export class Traffic {
   private readonly turn = new Int8Array(CAP);        // -1 left, +1 right at the next junction
   private readonly brake = new Uint8Array(CAP);
   private readonly odo = new Float32Array(CAP);
-  private readonly px = new Float32Array(CAP);
+  protected readonly px = new Float32Array(CAP);
   private readonly py = new Float32Array(CAP);
-  private readonly pz = new Float32Array(CAP);
+  protected readonly pz = new Float32Array(CAP);
   private readonly hx = new Float32Array(CAP);
   private readonly hz = new Float32Array(CAP);
   // junction curve state: jt < 0 = none; else progress (m) along the curve
@@ -63,12 +62,8 @@ export class Traffic {
   private readonly j0 = new Float32Array(CAP * 3);
   private readonly jc = new Float32Array(CAP * 3);
   private readonly j1 = new Float32Array(CAP * 3);
-  private readonly ident = new Array<string>(CAP);
-  private readonly alive = new Set<string>();
-  private readonly seeded = new Set<number>();
   private readonly tmp: EdgePoint = { x: 0, y: 0, z: 0, ux: 0, uz: -1, seg: 0 };
   private readonly color = new THREE.Color();
-  private readonly camDir = new THREE.Vector3(0, 0, -1);
   private laneLists = new Map<number, number[]>();
   /** signal phase per (edge, end): index e*2 + (arriving at b ? 1 : 0); -1 = no signal */
   private readonly sigPhase: Float32Array;
@@ -88,7 +83,12 @@ export class Traffic {
     return true;
   }
 
-  constructor(readonly graph: PathGraph, readonly clock: SimClock) { this.group.name = 'traffic'; this.sigPhase = buildSignalTable(graph); }
+  constructor(readonly graph: PathGraph, readonly clock: SimClock) {
+    super(CAP, NO_SPAWN_NEAR, NO_SPAWN_VIEW);
+    this.columns(this.edge, this.dir, this.lane, this.seg, this.s, this.v, this.vCruise, this.variant, this.seed, this.colHex, this.hop, this.nextE, this.nextDir, this.turn, this.brake, this.odo, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen);
+    this.stridedColumns(3, this.j0, this.jc, this.j1);
+    this.group.name = 'traffic'; this.sigPhase = buildSignalTable(graph);
+  }
 
   async load() {
     const kit = await loadCarKit(VARIANTS);
@@ -135,11 +135,9 @@ export class Traffic {
   setActive(edges: number[], x: number, z: number, radius: number) {
     const next = new Set<number>();
     for (const e of edges) if (this.graph.drivable(e)) next.add(e);
-    const far2 = (radius + RADII.lifeDespawn) ** 2;
-    for (let i = this.count - 1; i >= 0; i--) { const dx = this.px[i] - x, dz = this.pz[i] - z; if (dx * dx + dz * dz > far2) this.remove(i); }
-    for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
-    this.rebuildLanes();
-    for (const e of next) if (!this.seeded.has(e)) { this.seedEdge(e, x, z); this.seeded.add(e); }
+    this.despawnFar(x, z, radius);
+    this.rebuildLanes();   // the gap check in seedEdge reads the lane lists, which the despawn just shuffled
+    this.seedNew(next, e => this.seedEdge(e, x, z));
   }
 
   private density(e: number): number {
@@ -175,9 +173,7 @@ export class Traffic {
           const sPos = dir > 0 ? prog : L - prog;
           const lat = g.laneLat(e, lane, dir);
           g.edgePoint(e, sPos, lat, 0, this.tmp);
-          const dx = this.tmp.x - camX, dz = this.tmp.z - camZ, d2 = dx * dx + dz * dz;
-          if (d2 < NO_SPAWN_NEAR * NO_SPAWN_NEAR) continue;
-          if (d2 < NO_SPAWN_VIEW * NO_SPAWN_VIEW) { const d = Math.sqrt(d2); if ((dx / d) * this.camDir.x + (dz / d) * this.camDir.z > 0.55) continue; }
+          if (this.vetoSpawn(this.tmp.x, this.tmp.z, camX, camZ)) continue;   // too close, or in front of the viewer
           // keep a gap from cars already on this lane
           const key = this.laneKey(e, dir, lane);
           let blocked = false;
@@ -199,21 +195,6 @@ export class Traffic {
         }
       }
     }
-  }
-
-  private remove(i: number) {
-    const last = this.count - 1;
-    this.alive.delete(this.ident[i]);
-    if (i !== last) {
-      for (const a of [this.edge, this.seg, this.nextE] as Int32Array[]) a[i] = a[last];
-      for (const a of [this.dir, this.nextDir, this.turn] as Int8Array[]) a[i] = a[last];
-      this.brake[i] = this.brake[last]; this.odo[i] = this.odo[last];
-      for (const a of [this.lane, this.variant] as Uint8Array[]) a[i] = a[last];
-      for (const a of [this.s, this.v, this.vCruise, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen] as Float32Array[]) a[i] = a[last];
-      for (const a of [this.j0, this.jc, this.j1]) { a[i * 3] = a[last * 3]; a[i * 3 + 1] = a[last * 3 + 1]; a[i * 3 + 2] = a[last * 3 + 2]; }
-      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last]; this.colHex[i] = this.colHex[last];
-    }
-    this.count = last;
   }
 
   /** Decide the edge after the current one (needed early for gap checks across the junction). */

@@ -100,7 +100,7 @@ export class Life {
     if (moved) this.cyclists?.setActive(this.activeWalk, x, z, this.walkRadius);
     if (moved || reseedDrive) this.traffic?.setActive(this.activeDrive, x, z, this.driveRadius);
     this.crowd?.update(simDt, x, z, camDir, night);
-    this.cyclists?.update(simDt);
+    this.cyclists?.update(simDt, camDir);
     this.traffic?.update(simDt, x, z, camDir, night);
     this.boats?.update(simDt, night);
     this.signals?.update(this.clock.time, night);

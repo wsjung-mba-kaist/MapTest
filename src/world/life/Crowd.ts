@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RADII } from '../radii';
 import type { SurfaceGrid } from '../../../shared/surfacegrid';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
@@ -7,6 +6,7 @@ import { EdgeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { pedestriansMayCross, type CrossingTable } from '../../../shared/crossings';
 import { CLOTH_PALETTE, makePeopleMaterial, walkerGeometry } from './PersonMesh';
+import { AgentPool } from './AgentPool';
 
 const CAP = 768;
 const SPACING = 7;            // conveyor slot spacing (m)
@@ -19,9 +19,8 @@ const NO_SPAWN_VIEW = 120;    // ...or within view in front of the camera closer
  * from a "conveyor" defined by simulation time (same time -> same people), walk along the graph choosing turns
  * by hash, and are despawned beyond the activation radius. One InstancedMesh, one draw call.
  */
-export class Crowd {
+export class Crowd extends AgentPool {
   readonly group = new THREE.Group();
-  count = 0;
   private readonly mesh: THREE.InstancedMesh;
   private readonly anim: THREE.InstancedBufferAttribute;
   private readonly look: THREE.InstancedBufferAttribute;
@@ -39,13 +38,10 @@ export class Crowd {
   private readonly walk = new Float32Array(CAP);  // 0 standing, 1 walking
   private readonly hx = new Float32Array(CAP);
   private readonly hz = new Float32Array(CAP);
-  private readonly px = new Float32Array(CAP);
-  private readonly pz = new Float32Array(CAP);
+  protected readonly px = new Float32Array(CAP);
+  protected readonly pz = new Float32Array(CAP);
   private readonly seed = new Uint32Array(CAP);
   private readonly hop = new Uint16Array(CAP);
-  private readonly ident = new Array<string>(CAP);
-  private readonly alive = new Set<string>();
-  private readonly seeded = new Set<number>();
   // waiting at a kerb for the crossing light: the edge to enter once it turns
   private readonly waiting = new Uint8Array(CAP);
   private readonly dodge = new Float32Array(CAP);   // temporary lateral step away from the player
@@ -72,6 +68,8 @@ export class Crowd {
   private readonly color = new THREE.Color();
 
   constructor(readonly graph: PathGraph, readonly clock: SimClock, private readonly surface: SurfaceGrid | null = null) {
+    super(CAP, NO_SPAWN_NEAR, NO_SPAWN_VIEW);
+    this.columns(this.edge, this.dir, this.seg, this.s, this.speed, this.lat, this.latTarget, this.pref, this.phase, this.walk, this.hx, this.hz, this.px, this.pz, this.seed, this.hop, this.waiting, this.dodge, this.waitE, this.waitDir);
     this.group.name = 'crowd';
     const geom = walkerGeometry();
     this.anim = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 4), 4);
@@ -102,19 +100,10 @@ export class Crowd {
     this.radius = radius;
     const next = new Set<number>();
     for (const e of edges) if (this.graph.walkable(e)) next.add(e);
-    // despawn beyond radius + 60
-    const far2 = (radius + RADII.lifeDespawn) ** 2;
-    for (let i = this.count - 1; i >= 0; i--) {
-      const dx = this.px[i] - x, dz = this.pz[i] - z;
-      if (dx * dx + dz * dz > far2) this.remove(i);
-    }
-    for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
-    for (const e of next) if (!this.seeded.has(e)) { this.seedEdge(e, x, z); this.seeded.add(e); }
+    this.despawnFar(x, z, radius);
+    this.seedNew(next, e => this.seedEdge(e, x, z));
     this.activeSet = next;
   }
-
-  private camDir = new THREE.Vector3(0, 0, -1);
-  private camX = 0; private camZ = 0;
 
   /** Deterministic population of one edge from the conveyor at the current simulation time. */
   private seedEdge(e: number, camX: number, camZ: number) {
@@ -145,12 +134,7 @@ export class Crowd {
         const seed = (hash32(e, k, lap, 5) * 4294967295) >>> 0;
         const lat = tr.lat + (hash32(seed, 6) - 0.5) * 2 * tr.jitter;
         g.edgePoint(e, sPos, lat, 0, this.tmp);
-        const dx = this.tmp.x - camX, dz = this.tmp.z - camZ, d2 = dx * dx + dz * dz;
-        if (d2 < NO_SPAWN_NEAR * NO_SPAWN_NEAR) continue;
-        if (d2 < NO_SPAWN_VIEW * NO_SPAWN_VIEW) {
-          const d = Math.sqrt(d2);
-          if ((dx / d) * this.camDir.x + (dz / d) * this.camDir.z > 0.55) continue; // in front of the viewer
-        }
+        if (this.vetoSpawn(this.tmp.x, this.tmp.z, camX, camZ)) continue;   // too close, or in front of the viewer
         const i = this.count++;
         this.edge[i] = e; this.dir[i] = dir; this.seg[i] = this.tmp.seg; this.s[i] = sPos; this.speed[i] = speed;
         this.lat[i] = lat; this.latTarget[i] = lat; this.pref[i] = tr.track === 0 ? (hash32(seed, 7) < 0.5 ? 1 : -1) : (tr.track * dir) as 1 | -1;
@@ -173,22 +157,12 @@ export class Crowd {
     this.mesh.count = this.count;
   }
 
-  private remove(i: number) {
-    const last = this.count - 1;
-    this.alive.delete(this.ident[i]);
-    if (i !== last) {
-      for (const a of [this.edge, this.seg] as Int32Array[]) a[i] = a[last];
-      for (const a of [this.dir, this.pref] as Int8Array[]) a[i] = a[last];
-      for (const a of [this.s, this.speed, this.lat, this.latTarget, this.phase, this.walk, this.hx, this.hz, this.px, this.pz] as Float32Array[]) a[i] = a[last];
-      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last];
-      this.waiting[i] = this.waiting[last]; this.waitE[i] = this.waitE[last]; this.waitDir[i] = this.waitDir[last]; this.dodge[i] = this.dodge[last];
-      this.mesh.getMatrixAt(last, this.mat4); this.mesh.setMatrixAt(i, this.mat4);
-      if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
-      this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
-      this.look.setXYZW(i, this.look.getX(last), this.look.getY(last), this.look.getZ(last), this.look.getW(last)); this.look.needsUpdate = true;
-    }
-    this.count = last;
-    this.mesh.count = last;
+  protected override remove(i: number) { super.remove(i); this.mesh.count = this.count; }
+  protected override swapInstance(i: number, last: number) {
+    this.mesh.getMatrixAt(last, this.mat4); this.mesh.setMatrixAt(i, this.mat4);
+    if (this.mesh.instanceColor) { this.mesh.getColorAt(last, this.color); this.mesh.setColorAt(i, this.color); }
+    this.anim.setXYZW(i, this.anim.getX(last), this.anim.getY(last), this.anim.getZ(last), this.anim.getW(last));
+    this.look.setXYZW(i, this.look.getX(last), this.look.getY(last), this.look.getZ(last), this.look.getW(last)); this.look.needsUpdate = true;
   }
 
   private writeMatrix(i: number, x: number, y: number, z: number, sc: number) {
@@ -205,7 +179,7 @@ export class Crowd {
   }
 
   update(dt: number, camX: number, camZ: number, camDir: THREE.Vector3, _night: number) {
-    this.camDir.copy(camDir); this.camX = camX; this.camZ = camZ;
+    this.camDir.copy(camDir);
     this.uniforms.uTime.value = this.clock.time;
     const g = this.graph;
     const k = 1 - Math.exp(-dt / 0.25);
