@@ -76,14 +76,25 @@ export class Hud {
     required<HTMLButtonElement>('startbtn').addEventListener('click', e => { e.stopPropagation(); if (this.ready) this.onStart(); });
     const retry = this.overlay.querySelector('.retry');
     retry?.addEventListener('click', e => { e.stopPropagation(); location.reload(); });
-    const menu = this.overlay.querySelector('.menu');
-    if (menu) for (const m of MENU) {
-      if (m.sep) { const s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); }
-      const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
-      b.append(S.hud.menu[m.action]); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
-      b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
-      if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
-      menu.appendChild(b); this.menuButtons.set(m.action, b);
+    const menu = this.overlay.querySelector<HTMLElement>('.menu');
+    if (menu) {
+      for (const m of MENU) {
+        if (m.sep) { const s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); }
+        const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
+        b.append(S.hud.menu[m.action]); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
+        b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
+        if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
+        menu.appendChild(b); this.menuButtons.set(m.action, b);
+      }
+      // role=menu: ↑ ↓ (Home / End) move between the visible entries, wrapping; Tab keeps working since they are plain buttons
+      menu.addEventListener('keydown', e => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+        const btns = [...this.menuButtons.values()].filter(b => !b.hidden);
+        if (!btns.length) return;
+        const i = btns.indexOf(document.activeElement as HTMLButtonElement), n = btns.length;
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : i < 0 ? (e.key === 'ArrowDown' ? 0 : n - 1) : (i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+        btns[next].focus(); e.preventDefault(); e.stopPropagation();
+      });
     }
     this.clock.addEventListener('click', e => { e.stopPropagation(); this.onClock(); });
     this.clock.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
