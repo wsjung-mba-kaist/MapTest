@@ -8,6 +8,7 @@ import { setWet } from '../materials/GroundMaterial';
 import type { AudioEngine } from '../audio/Audio';
 import type { Rain } from '../render/Rain';
 import type { World } from '../world/World';
+import { S, fmt } from '../ui/strings';
 
 /** What the controller needs from the rest of the app; everything optional is created after the world has loaded. */
 export interface TimeContext {
@@ -36,10 +37,10 @@ export class TimeController {
 
   constructor(private readonly c: TimeContext) {
     const { timePanel, hud, env } = c;
-    timePanel.onNow = () => { const t = todayParis(); timePanel.stop(); env.setDate(t); this.applyDayPresets(); this.setHour(localHour(new Date(), t)); hud.toast(`지금 · ${formatHour(env.hour)}`, 1500); };
+    timePanel.onNow = () => { const t = todayParis(); timePanel.stop(); env.setDate(t); this.applyDayPresets(); this.setHour(localHour(new Date(), t)); hud.toast(fmt(S.app.nowToast, { time: formatHour(env.hour) }), 1500); };
     timePanel.onPlay = rate => { this.timeRate = rate; const a = c.audio(); if (a) a.chime = rate === 0; };
     timePanel.onWeather = w => this.setWeather(w);
-    timePanel.onSeason = s => { const t = todayParis(); env.setDate(s ? [t[0], s.month, s.day] : t); this.applyDayPresets(); hud.toast(s ? `${s.label} · ${s.month}월 ${s.day}일` : '오늘', 1500); };
+    timePanel.onSeason = s => { const t = todayParis(); env.setDate(s ? [t[0], s.month, s.day] : t); this.applyDayPresets(); hud.toast(s ? fmt(S.app.seasonToast, { label: s.label, month: s.month, day: s.day }) : S.time.today, 1500); };
     hud.onTimeChange = h => { timePanel.stop(); env.setHour(h); this.refreshClock(); };
   }
 
@@ -63,10 +64,10 @@ export class TimeController {
     const { sunrise, sunset } = env.sunTimes();
     const r = (h: number) => Math.round(h * 4) / 4;
     hud.setPresets([
-      { label: '새벽', hour: r(sunrise - 0.25) }, { label: '낮', hour: 13 }, { label: '오후', hour: r(Math.max(14, sunset - 3.2)) },
-      { label: '노을', hour: r(sunset - 0.35) }, { label: '야경', hour: Math.ceil(sunset + 1.4) % 24 + 0.02 }, { label: '심야', hour: 1 },
+      { label: S.time.presets.dawn, hour: r(sunrise - 0.25) }, { label: S.time.presets.day, hour: 13 }, { label: S.time.presets.afternoon, hour: r(Math.max(14, sunset - 3.2)) },
+      { label: S.time.presets.sunset, hour: r(sunset - 0.35) }, { label: S.time.presets.night, hour: Math.ceil(sunset + 1.4) % 24 + 0.02 }, { label: S.time.presets.lateNight, hour: 1 },
     ]);
-    hud.setDateLabel(`${env.dateLabel()} · 파리`);
+    hud.setDateLabel(fmt(S.app.dateParis, { date: env.dateLabel() }));
     this.refreshClock();
     this.refreshTimePanel();
   }

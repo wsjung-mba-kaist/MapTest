@@ -51,7 +51,7 @@ export class ModalManager {
     const wasLight = !!p.light;
     this.current = null;
     if (!wasLight) this.onModal(false, '');
-    this.canvas.focus();   // keyboard focus leaves the closed panel
+    if (wasLight) this.canvas.focus();   // the centred modals restore the opener's focus themselves (dom.ts restoreFocus)
     if (relock && this.started() && !this.input.locked && !this.input.touchMode) this.input.lock();
   }
 

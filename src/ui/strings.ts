@@ -147,6 +147,27 @@ export const S = {
     more: '⋯', moreTitle: '메뉴: 시간 · 날씨 · 설정 · 도움말',
   },
   minimap: { title: '클릭: 그곳으로 이동 · 휠: 축척' },
+  /** toasts and hints App itself raises (shortcuts, panels, start screen, GPU notice) */
+  app: {
+    modalHint: {
+      places: '명소를 고르면 그곳으로 날아갑니다 · L 목록 닫기', help: 'H 도움말 닫기 · 한 번 더 누르면 진단 정보',
+      info: '닫으면 계속 걷습니다', settings: '바뀐 설정은 바로 적용되고 저장됩니다 · 닫으면 계속 걷습니다',
+    },
+    lifeNextStart: '움직이는 도시: 다음 시작부터 적용됩니다', prefsReset: '설정을 기본값으로 되돌렸습니다',
+    contextLost: '그래픽 장치 연결이 끊겼습니다. 다른 탭을 닫고 다시 시도해 보세요.',
+    liftPrompt: 'E · {label}', screenshotSaved: '스크린샷 저장 · {name}',
+    muteOn: '소리 끔', muteOff: '소리 켬',
+    creditsLandmarks: '명소 설명: Wikipedia · Wikidata (CC BY-SA 4.0) · 사진: Wikimedia Commons (저작자·라이선스는 카드에 표시)',
+    touchPause: '탭하면 계속 걷습니다', touchHint: '왼쪽을 눌러 이동 · 끝까지 밀면 달리기 · 오른쪽을 끌어 시점 · ⋯ 메뉴',
+    touchReady: '왼쪽 조이스틱 이동 · 오른쪽 드래그 시점 · 오른쪽 아래 버튼',
+    diagnosticsOn: '진단 정보 표시 (H 두 번: 숨김)', diagnosticsOff: '진단 정보 숨김',
+    minimapSpan: '미니맵 {span}', minimapHidden: '미니맵 숨김',
+    gpuToast: 'GPU: {name}{kind} · G 키: GPU 선택 안내', gpuSoftware: ' · 소프트웨어 렌더링', gpuIntegrated: ' · 내장 GPU', gpuPlain: 'GPU: {name}',
+    linkCopied: '링크를 복사했습니다', linkFailed: '복사 실패 · 콘솔에 링크를 출력했습니다',
+    flyOn: '비행 모드 · Q/E 하강·상승 · F 걷기', flyOff: '걷기 모드',
+    nowToast: '지금 · {time}', seasonToast: '{label} · {month}월 {day}일', dateParis: '{date} · 파리',
+    qualityLowered: "화면이 느려 품질을 '{quality}'{ratio}으로 낮췄습니다 · 설정에서 변경", qualityRatio: ' · 해상도 0.75×',
+  },
 } as const;
 
 /** `fmt('{loaded}/{total}', { loaded: 3, total: 144 })`; an unknown name is left as written so a typo shows on screen. */

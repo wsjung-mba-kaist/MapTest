@@ -5,6 +5,7 @@ import type { World } from '../world/World';
 import type { Hud } from '../ui/Hud';
 import type { Prefs } from '../../shared/prefs';
 import { pickQuality, type QualityLevel } from '../../shared/quality';
+import { S, fmt } from '../ui/strings';
 
 export interface QualityContext {
   renderer: THREE.WebGLRenderer;
@@ -70,6 +71,6 @@ export class QualityController {
     this.autoLevel = d.quality;
     this.c.post.setQuality(d.quality);
     if (d.pixelRatio) { this.c.renderer.setPixelRatio(this.c.renderer.getPixelRatio() * d.pixelRatio); this.c.resize(); }
-    this.c.hud.toast(`화면이 느려 품질을 '${{ high: '높음', medium: '보통', low: '낮음' }[d.quality]}'${d.pixelRatio ? ' · 해상도 0.75×' : ''}으로 낮췄습니다 · 설정에서 변경`, 5000);
+    this.c.hud.toast(fmt(S.app.qualityLowered, { quality: S.settings.quality[d.quality], ratio: d.pixelRatio ? S.app.qualityRatio : '' }), 5000);
   }
 }
