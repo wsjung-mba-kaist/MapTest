@@ -1,13 +1,14 @@
-import { required } from './dom';
+import { kbdNodes, required } from './dom';
+import { S, fmt } from './strings';
 
 /** Default time-of-day presets (local hours); App replaces them with sunrise / sunset based ones for the current day. */
 export const TIME_PRESETS: { label: string; hour: number }[] = [
-  { label: '새벽', hour: 5.75 },
-  { label: '낮', hour: 12 },
-  { label: '오후', hour: 17.5 },
-  { label: '노을', hour: 21.25 },
-  { label: '야경', hour: 22.75 },
-  { label: '심야', hour: 1 },
+  { label: S.time.presets.dawn, hour: 5.75 },
+  { label: S.time.presets.day, hour: 12 },
+  { label: S.time.presets.afternoon, hour: 17.5 },
+  { label: S.time.presets.sunset, hour: 21.25 },
+  { label: S.time.presets.night, hour: 22.75 },
+  { label: S.time.presets.lateNight, hour: 1 },
 ];
 
 export function formatHour(hour: number): string {
@@ -18,16 +19,16 @@ export function formatHour(hour: number): string {
 
 /** Pause-menu entries (Esc after the start); App maps each action to the same code the shortcut runs. */
 export type MenuAction = 'continue' | 'places' | 'time' | 'night' | 'settings' | 'share' | 'shot' | 'help' | 'info';
-const MENU: { action: MenuAction; label: string; key: string; sep?: boolean }[] = [
-  { action: 'continue', label: '계속 걷기', key: 'Esc' },
-  { action: 'places', label: '명소 목록', key: 'L' },
-  { action: 'time', label: '시간 · 날씨', key: 'T' },
-  { action: 'night', label: '시간대 순환', key: 'N' },
-  { action: 'settings', label: '설정', key: '' },
-  { action: 'share', label: '링크 복사', key: 'P', sep: true },
-  { action: 'shot', label: '스크린샷 저장', key: 'O' },
-  { action: 'help', label: '도움말', key: 'H', sep: true },
-  { action: 'info', label: '정보 · 출처', key: '' },
+const MENU: { action: MenuAction; key: string; sep?: boolean }[] = [
+  { action: 'continue', key: 'Esc' },
+  { action: 'places', key: 'L' },
+  { action: 'time', key: 'T' },
+  { action: 'night', key: 'N' },
+  { action: 'settings', key: '' },
+  { action: 'share', key: 'P', sep: true },
+  { action: 'shot', key: 'O' },
+  { action: 'help', key: 'H', sep: true },
+  { action: 'info', key: '' },
 ];
 
 /**
@@ -63,7 +64,7 @@ export class Hud {
   onDiagnostics: (on: boolean) => void = () => {};
   private ready = false;
   private readyText = '';
-  private pauseText = '화면을 클릭하면 계속 걷습니다';
+  private pauseText: string = S.hud.pause;
   /** the first start happened: from now on the overlay is the pause menu */
   started = false;
   /** credit lines (model / data licences) shown in the info panel */
@@ -79,7 +80,7 @@ export class Hud {
     if (menu) for (const m of MENU) {
       if (m.sep) { const s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); }
       const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
-      b.append(m.label); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
+      b.append(S.hud.menu[m.action]); if (m.key) { const k = document.createElement('kbd'); k.textContent = m.key; b.appendChild(k); }
       b.addEventListener('click', e => { e.stopPropagation(); this.onMenu(m.action); });
       if (m.action === 'settings' || m.action === 'night') b.hidden = true;   // settings: once its panel exists; night: touch only
       menu.appendChild(b); this.menuButtons.set(m.action, b);
@@ -88,6 +89,9 @@ export class Hud {
     this.clock.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); this.onClock(); } });   // role=button needs the keyboard too
     this.timeSlider.addEventListener('input', () => this.applyTime(parseFloat(this.timeSlider.value)));
     this.setPresets(TIME_PRESETS);
+    // the hint bar is the condensed form of the help table (strings.ts), so the two legends cannot drift apart
+    const hints = S.help.groups.flatMap(g => g.rows).flatMap(r => (r.hint ? [r.hint] : []));
+    this.help.replaceChildren(...hints.flatMap((h, i) => [...(i ? [' · '] : []), ...kbdNodes(h)]));
   }
 
   /** show / hide a pause-menu entry (settings appears once its panel exists) */
@@ -140,7 +144,7 @@ export class Hud {
     this.bar.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
     if (text) this.msg.textContent = text;
   }
-  setReady(text = '마우스 잠금 · Esc 메뉴') {
+  setReady(text: string = S.hud.ready) {
     this.ready = true;
     this.readyText = text;
     this.overlay.classList.add('ready');
@@ -172,7 +176,7 @@ export class Hud {
   private updateOverlayText() {
     if (!this.ready) return;
     this.msg.textContent = this.modalOpen ? this.modalHint
-      : this.timePanelOpen ? '시간을 맞춘 뒤 화면을 클릭하면 계속 걷습니다 · T 패널 닫기'
+      : this.timePanelOpen ? S.hud.timePanelPause
       : this.started ? this.pauseText : this.readyText;
   }
   /** Diagnostics: FPS panel + the status readout (?status=1, H twice, settings). */
@@ -190,7 +194,7 @@ export class Hud {
   }
   /** Building chunks still arriving after the start ("거리 불러오는 중 37/144", GRID_N²); hides itself a second after the last one. */
   streaming(loaded: number, total: number) {
-    if (loaded < total) { this.stream.textContent = `거리 불러오는 중 ${loaded}/${total}`; this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }
+    if (loaded < total) { this.stream.textContent = fmt(S.hud.streaming, { loaded, total }); this.stream.hidden = false; clearTimeout(this.streamTimer); this.streamTimer = 0; }
     else if (!this.stream.hidden && !this.streamTimer) this.streamTimer = window.setTimeout(() => { this.stream.hidden = true; }, 1000);
   }
   /** the bottom-left hint bar (touch devices never show it) */

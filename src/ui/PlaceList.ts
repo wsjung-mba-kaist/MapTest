@@ -2,6 +2,8 @@ import type { Landmark } from '../../shared/layout';
 import { CATEGORY_LABEL, bearingDeg, fmtDistance } from '../../shared/landmarks';
 import { CATEGORY_COLOR } from './PlacePanel';
 import { DATA_URL } from '../world/DataLoader';
+import { kbdNodes } from './dom';
+import { S } from './strings';
 
 /**
  * L: the landmark list (#places), nearest first, with a search box, category chips, thumbnails, hotkey chips and a
@@ -21,14 +23,15 @@ export class PlaceList {
 
   constructor(parent: HTMLElement, private readonly onPick: (lm: Landmark) => void, private readonly onClose: () => void) {
     this.root.id = 'places'; this.root.className = 'modal'; this.root.hidden = true;
-    this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', '명소 목록');
+    this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', S.places.title);
     const head = document.createElement('div'); head.className = 'head';
-    head.innerHTML = '<b>명소</b><span class="hint"><kbd>1</kbd>–<kbd>8</kbd> 바로 이동 · <kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd> · <kbd>L</kbd> 닫기</span>';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close'; close.setAttribute('aria-label', '닫기');
+    const title = document.createElement('b'); title.textContent = S.places.head;
+    const hint = document.createElement('span'); hint.className = 'hint'; hint.append(...kbdNodes(S.places.hint));
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close'; close.setAttribute('aria-label', S.modal.close);
     close.addEventListener('click', () => this.onClose());
-    head.appendChild(close);
+    head.append(title, hint, close);
     const tools = document.createElement('div'); tools.className = 'tools';
-    this.search.type = 'search'; this.search.placeholder = '이름 검색 (한 · 불 · 영)'; this.search.setAttribute('aria-label', '명소 검색');
+    this.search.type = 'search'; this.search.placeholder = S.places.search; this.search.setAttribute('aria-label', S.places.searchAria);
     this.search.addEventListener('input', () => this.rebuild());
     this.chips.className = 'chips';
     tools.append(this.search, this.chips);
@@ -79,7 +82,7 @@ export class PlaceList {
       b.addEventListener('click', () => { this.category = cat; for (const c of this.chips.children) c.classList.remove('on'); b.classList.add('on'); this.rebuild(); });
       this.chips.appendChild(b);
     };
-    chip('전체', null);
+    chip(S.places.all, null);
     for (const c of cats) chip(CATEGORY_LABEL[c] ?? c, c, CATEGORY_COLOR[c]);
   }
 

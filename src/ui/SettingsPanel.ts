@@ -1,27 +1,32 @@
 import { Modal } from './Menu';
 import { DEFAULT_PREFS, PIXEL_RATIOS, PREFS_RANGE, QUALITIES, type PixelRatio, type Prefs, type Quality } from '../../shared/prefs';
+import { S } from './strings';
 
-const QUALITY_LABEL: Record<Quality, string> = { auto: '자동', low: '낮음', medium: '보통', high: '높음' };
+const QUALITY_LABEL: Record<Quality, string> = S.settings.quality;
 
-type Row = { key: keyof Prefs; label: string; note?: string } & (
+/** labels and notes come from `S.settings.rows` / `S.settings.notes` by key */
+type Row = { key: keyof Prefs } & (
   { kind: 'bool' } | { kind: 'range'; min: number; max: number; step: number; fmt: (v: number) => string } | { kind: 'select'; options: { value: string; label: string }[] });
 
 const ROWS: Row[] = [
-  { key: 'quality', label: '품질', kind: 'select', options: QUALITIES.map(q => ({ value: q, label: QUALITY_LABEL[q] })), note: '자동: 느리면 한 단계 낮춤' },
-  { key: 'shadows', label: '그림자', kind: 'bool' },
-  { key: 'reflection', label: '센강 반사', kind: 'bool' },
-  { key: 'ao', label: '주변광 차폐 (AO)', kind: 'bool' },
-  { key: 'pixelRatio', label: '해상도 배율', kind: 'select', options: PIXEL_RATIOS.map(r => ({ value: String(r), label: r === 'auto' ? '자동' : `${r}×` })) },
-  { key: 'sensitivity', label: '시점 감도', kind: 'range', min: PREFS_RANGE.sensitivity[0], max: PREFS_RANGE.sensitivity[1], step: 0.1, fmt: v => `${v.toFixed(1)}×` },
-  { key: 'fov', label: '시야각', kind: 'range', min: PREFS_RANGE.fov[0], max: PREFS_RANGE.fov[1], step: 1, fmt: v => `${v.toFixed(0)}°` },
-  { key: 'headBob', label: '걸을 때 머리 흔들림', kind: 'bool' },
-  { key: 'volume', label: '소리 크기', kind: 'range', min: 0, max: 1, step: 0.05, fmt: v => `${Math.round(v * 100)} %` },
-  { key: 'minimap', label: '미니맵 켜고 시작', kind: 'bool' },
-  { key: 'compass', label: '나침반 띠', kind: 'bool' },
-  { key: 'labels', label: '명소 이름표 (공중)', kind: 'bool' },
-  { key: 'life', label: '움직이는 도시', kind: 'bool', note: '다음 시작부터' },
-  { key: 'diagnostics', label: '진단 정보 (FPS · 좌표)', kind: 'bool' },
+  { key: 'quality', kind: 'select', options: QUALITIES.map(q => ({ value: q, label: QUALITY_LABEL[q] })) },
+  { key: 'shadows', kind: 'bool' },
+  { key: 'reflection', kind: 'bool' },
+  { key: 'ao', kind: 'bool' },
+  { key: 'pixelRatio', kind: 'select', options: PIXEL_RATIOS.map(r => ({ value: String(r), label: r === 'auto' ? S.settings.auto : `${r}×` })) },
+  { key: 'sensitivity', kind: 'range', min: PREFS_RANGE.sensitivity[0], max: PREFS_RANGE.sensitivity[1], step: 0.1, fmt: v => `${v.toFixed(1)}×` },
+  { key: 'fov', kind: 'range', min: PREFS_RANGE.fov[0], max: PREFS_RANGE.fov[1], step: 1, fmt: v => `${v.toFixed(0)}°` },
+  { key: 'headBob', kind: 'bool' },
+  { key: 'volume', kind: 'range', min: 0, max: 1, step: 0.05, fmt: v => `${Math.round(v * 100)} %` },
+  { key: 'minimap', kind: 'bool' },
+  { key: 'compass', kind: 'bool' },
+  { key: 'labels', kind: 'bool' },
+  { key: 'life', kind: 'bool' },
+  { key: 'diagnostics', kind: 'bool' },
 ];
+// Partial: Prefs also carries keys with no row (the version stamp, the V-key mute)
+const LABELS: Partial<Record<keyof Prefs, string>> = S.settings.rows;
+const NOTES: Partial<Record<keyof Prefs, string>> = S.settings.notes;
 
 /** Settings modal: every row applies immediately through `onChange` and is saved by the caller. */
 export class SettingsPanel extends Modal {
@@ -30,11 +35,12 @@ export class SettingsPanel extends Modal {
   private readonly values = new Map<keyof Prefs, HTMLSpanElement>();
 
   constructor(parent: HTMLElement, onClose: () => void, private readonly onChange: (p: Prefs, key: keyof Prefs) => void, private readonly onReset: () => void) {
-    super(parent, 'settings', '설정', '바로 적용 · 이 브라우저에 저장', onClose);
+    super(parent, 'settings', S.settings.title, S.settings.hint, onClose);
     for (const r of ROWS) {
       const row = document.createElement('label'); row.className = 'srow';
-      const name = document.createElement('span'); name.className = 'name'; name.textContent = r.label;
-      if (r.note) { const n = document.createElement('small'); n.textContent = r.note; name.appendChild(n); }
+      const name = document.createElement('span'); name.className = 'name'; name.textContent = LABELS[r.key] ?? r.key;
+      const note = NOTES[r.key];
+      if (note) { const n = document.createElement('small'); n.textContent = note; name.appendChild(n); }
       let ctl: HTMLInputElement | HTMLSelectElement;
       if (r.kind === 'bool') { ctl = document.createElement('input'); ctl.type = 'checkbox'; }
       else if (r.kind === 'range') { ctl = document.createElement('input'); ctl.type = 'range'; ctl.min = String(r.min); ctl.max = String(r.max); ctl.step = String(r.step); }
@@ -46,9 +52,9 @@ export class SettingsPanel extends Modal {
       this.body.appendChild(row);
     }
     const foot = document.createElement('div'); foot.className = 'sfoot';
-    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'close'; reset.textContent = '기본값으로';
+    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'close'; reset.textContent = S.settings.reset;
     reset.addEventListener('click', () => this.onReset());
-    const note = document.createElement('span'); note.textContent = 'URL 파라미터(?quality= 등)가 있으면 그 세션에서는 그것이 우선합니다.';
+    const note = document.createElement('span'); note.textContent = S.settings.urlNote;
     foot.append(reset, note);
     this.body.appendChild(foot);
   }
