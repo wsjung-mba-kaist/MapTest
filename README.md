@@ -32,8 +32,14 @@ Google 3D Tiles나 유료 API 키 없이, 공개 데이터만으로 빌드합니
 
 ```bash
 npm install
-npm run bake      # 데이터 다운로드 + 베이크 (최초 15~25분, 이후 캐시로 수 초)
 npm run dev       # http://localhost:5173
+```
+
+베이크 산출물(`public/data`, `public/models`, `public/textures`)이 저장소에 함께 커밋되어 있으므로
+클론 직후 위 두 줄만으로 바로 실행됩니다. `npm run bake`는 데이터를 다시 만들 때만 필요합니다.
+
+```bash
+npm run bake      # 데이터 다운로드 + 베이크 (최초 15~25분, 이후 캐시로 수 초)
 ```
 
 베이크 단계는 개별 실행할 수 있습니다: `npm run bake:osm`, `bake:bdtopo`, `bake:terrain`, `bake:ortho`,
