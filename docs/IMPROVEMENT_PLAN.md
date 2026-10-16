@@ -8,7 +8,7 @@
 ## 0. 진행 현황 (브랜치 `ccr-d9f33420-2rx7wa`)
 
 검증 상태: `npm run typecheck` 통과, `npm test` 108/108 (처음 81), `npm run lint` 0 오류, `npm run build` 통과(three/post/bvh 벤더 청크 분리, 앱 코드 344 kB), `npm run verify:data` 통과(커밋된 `public/data` 144/144 청크를 새 리더로 파싱), `npm run smoke` 통과(개발·프로덕션 빌드 모두: 부트, 144/144 스트리밍, 모달 계약, 예외·셰이더 오류 0).
-이 환경에는 `cache/`(원본 다운로드)가 없어 **베이크는 재실행하지 않았다**. 베이크 쪽 변경은 테스트·코드 읽기로만 검증됐으므로, 다음 `npm run bake` 후 `git diff --stat public/data`로 분수(A11)·다리(A12)·DSM(A3) 외에 바뀐 것이 없는지 확인할 것.
+이 환경에는 `cache/`(원본 다운로드)가 없어 **베이크는 재실행하지 않았다**. 베이크 쪽 변경은 같은 `cache/`로 `main`과 이 브랜치를 각각 베이크해 파일별로 비교해 검증한다(`git diff --stat public/data`에는 원본 데이터 드리프트가 섞인다, 이슈 #2). 2026-10-15 재측정: 코드로 바뀐 파일은 `fountains.json`(A11)·`bridges.bin`·`streets/5_9.bin`(A12)·`terrain_raw.bin` 제거·`manifest.json`뿐이고 `waterLevelY`는 양쪽 −7.46, A3는 산출물 변화 없음. 비교 전에 두 로그의 `dsm: N windows (… failed)`가 모두 0인지 확인할 것.
 
 | Phase | 상태 | 비고 |
 |---|---|---|
@@ -31,7 +31,8 @@
 - 검증에 실패한 다운로드(BIL 길이, 나무 JSON, WFS 페이지)는 캐시에 남지 않는다. 0건 WFS 레이어는 경고 후 캐시하지 않는다.
 - `bake:landmarks --force`가 오프라인이면 exit 1에 기존 파일 유지; 부분 열화 온라인 실행은 id별로 풍부한 항목을 보존한다.
 - `ground.json.generated`/`deshadow.json.orthoGenerated`로 ortho 재생성 뒤 deshadow가 자동 재실행된다(커밋된 데이터는 재실행 없음).
-- `terrain_raw.bin`은 `cache/`에 쓰고 읽는다(구 위치 폴백 있음); 환경 변수는 `scripts/config.ts`의 `ENV`에서 한 번 파싱.
+- `terrain_raw.bin`은 `cache/`에 쓰고 읽는다(구 위치 폴백 있음). 없으면 `build`/`dsm`은 낮춰진 `terrain.bin`으로 대체하지 않고 실패하며, `bake:terrain`이 캐시된 고도 쿼드로 raw 사본만 다시 만든다(`terrain.bin`은 그대로). 환경 변수는 `scripts/config.ts`의 `ENV`에서 한 번 파싱.
+- IGN WMS(고도 쿼드·DSM)의 HTTP 400은 일시적 오류로 재시도한다(`retryOn`); 다른 4xx는 즉시 실패. `dsm`이 끝내 받지 못한 그룹은 `cache/dsm/index.json`의 `failed`와 `manifest.counts.dsmFailed`에 남고, `verify:data`가 0이 아니면 실패한다.
 - 다음 `bake:assets`가 `LICENSES.md`를 섹션 구조와 올바른 탑 모델 크레딧(CC-BY Sketchfab)으로 다시 쓴다.
 
 ---

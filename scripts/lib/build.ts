@@ -26,7 +26,13 @@ export async function loadHeightmap(raw = false): Promise<Heightmap> {
   // the raw copy moved from public/data to cache/ (bake intermediate); an older checkout may still have it next to terrain.bin
   const rawFiles = [path.join(CACHE_DIR, 'terrain_raw.bin'), path.join(OUT_DIR, 'terrain_raw.bin')];
   let file = path.join(OUT_DIR, 'terrain.bin');
-  if (raw) for (const f of rawFiles) if (await exists(f)) { file = f; break; }
+  if (raw) {
+    const found = await (async () => { for (const f of rawFiles) if (await exists(f)) return f; })();
+    // never fall back to terrain.bin: a previous build already lowered its river bed and basins, so buildWater would
+    // take its level from the lowered bed (waterLevelY 1.5 m too low, issue #2) and every layer after it would follow
+    if (!found) throw new Error(`raw DTM missing (${rawFiles.map(f => path.relative(process.cwd(), f)).join(' or ')}); run npm run bake:terrain to rebuild it from the cached elevation quads`);
+    file = found;
+  }
   const buf = await fs.readFile(file);
   return Heightmap.fromBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), meta);
 }
@@ -186,7 +192,7 @@ export async function run(_ctx: BakeContext) {
     gridN: GRID_N,
     waterLevelY: w.waterLevelY,
     osmTimestamp: summary.buildings?.timestamp,
-    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal },
+    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal, dsmFailed: dsm?.failedGroups ?? 0 },
     heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat, curved: stats.curved, monument: stats.monument, landmark: stats.landmark },
     files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };

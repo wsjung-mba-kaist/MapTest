@@ -9,8 +9,14 @@ const NODATA_MIN = -1000;
 /** A BIL answer is exactly w*h float32s; anything else is the WMS's XML error page or a cut-off body, which must not be cached. */
 export const bilValidator = (w: number, h: number) => (buf: Buffer) => buf.length === w * h * 4 ? true as const : `unexpected ${buf.length} bytes (expected ${w * h * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`;
 
+/**
+ * IGN's data.geopf.fr WMS answers bursts of GetMap requests with HTTP 400 now and then: on 2026-10-15 a bake:dsm lost
+ * 25 of 248 windows that way, and the same URLs answered 200 a minute later. For these requests 400 is transient.
+ */
+export const IGN_WMS_RETRY_ON = [400];
+
 export async function fetchBil(url: string, rel: string, w: number, h: number, timeoutMs = 180_000): Promise<BilGrid & { box: LonLatBox }> {
-  const buf = await cachedBytes(url, rel, { timeoutMs, retries: 3, validate: bilValidator(w, h) });
+  const buf = await cachedBytes(url, rel, { timeoutMs, retries: 3, retryOn: IGN_WMS_RETRY_ON, validate: bilValidator(w, h) });
   if (buf.length !== w * h * 4) throw new Error(`${rel}: unexpected ${buf.length} bytes (expected ${w * h * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`);
   return { box: null as unknown as LonLatBox, w, h, data: new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)) };
 }

@@ -109,6 +109,8 @@ export class DsmProvider {
 
   /** Caps whose `MeshoptSimplifier.simplify` threw and went out unsimplified; `build` reports the total. */
   simplifyFailures = 0;
+  /** Landmark groups that should have a cap but have no surface model (failed download, missing tile); not the nodata skips. */
+  failedGroups = 0;
 
   static async load(): Promise<DsmProvider | null> {
     if (!ENV.dsm || !await exists(DSM_INDEX)) return null;
@@ -117,6 +119,7 @@ export class DsmProvider {
     await MeshoptSimplifier.ready;
     const index = await readJson<DsmIndex>(DSM_INDEX);
     const windows = new Map<string, Window>();
+    let missing = 0;
     for (const win of index.windows) {
       const grids: BilGrid[] = [];
       let ok = true;
@@ -128,9 +131,13 @@ export class DsmProvider {
       }
       if (ok && win.nodata <= 0.25) windows.set(win.group, { win, grids });
       else log.warn(`dsm: window ${win.group} skipped (${ok ? `nodata ${(win.nodata * 100).toFixed(0)} %` : 'tile missing'})`);
+      if (!ok) missing++;
     }
     log.info(`dsm: ${windows.size} windows loaded (layer ${index.layer})`);
-    return new DsmProvider(windows);
+    const provider = new DsmProvider(windows);
+    provider.failedGroups = (index.failed?.length ?? 0) + missing;
+    if (provider.failedGroups) log.warn(`dsm: ${provider.failedGroups} landmark group(s) without a LiDAR cap because a download failed or a tile is missing (manifest counts.dsmFailed)`);
+    return provider;
   }
 
   has(group: string | undefined): boolean { return !!group && this.windows.has(group); }

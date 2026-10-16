@@ -64,6 +64,9 @@ async function main() {
     if (det && det.length % (DETAIL_STRIDE * 4)) bad(`details/${k}.bin: ${det.length} bytes is not a multiple of DETAIL_STRIDE × 4`);
   }
   ok(`${chunks}/${GRID_N * GRID_N} chunks parse, ${dsm} with a LiDAR cap, ${(tris / 1e6).toFixed(2)} M triangles in all`);
+  // the format is fine either way, so only the bake's own count can tell a run that silently lost landmark caps
+  const dsmFailed = m.counts.dsmFailed ?? 0;
+  if (dsmFailed > 0) bad(`manifest counts.dsmFailed = ${dsmFailed}: landmark groups baked without their LiDAR cap; rerun npm run bake:dsm, then bake:build`);
 
   console.log('side files');
   for (const [f, stride] of [['trees.bin', TREE_STRIDE], ['furniture.bin', FURNITURE_STRIDE]] as const) {

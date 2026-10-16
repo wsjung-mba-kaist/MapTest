@@ -27,6 +27,22 @@ test('a 404 is not retried: one fetch, then the error', async () => {
   assert.equal(s.calls, 1);
 });
 
+test('a 400 fails at once by default but is retried when listed in retryOn (IGN WMS bursts)', async () => {
+  let s = stub([400, 200]);
+  await assert.rejects(fetchRetry('http://x/wms', { retries: 3, backoffMs: [0] }), /HTTP 400/);
+  assert.equal(s.calls, 1);
+  s = stub([400, 400, 200]);
+  const res = await fetchRetry('http://x/wms', { retries: 3, backoffMs: [0], retryOn: [400] });
+  assert.equal(res.status, 200);
+  assert.equal(s.calls, 3);
+});
+
+test('retryOn does not turn other 4xx into retries', async () => {
+  const s = stub([404]);
+  await assert.rejects(fetchRetry('http://x/missing', { retries: 3, backoffMs: [0], retryOn: [400] }), /HTTP 404/);
+  assert.equal(s.calls, 1);
+});
+
 test('a 500 is retried and the following 200 succeeds', async () => {
   const s = stub([500, 200]);
   const reasons: string[] = [];

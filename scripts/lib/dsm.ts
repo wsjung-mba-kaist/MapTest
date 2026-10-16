@@ -21,7 +21,8 @@ import { fetchBil, nodataFraction } from './wmsgrid.ts';
 
 export interface DsmTile { box: LonLatBox; w: number; h: number; file: string }
 export interface DsmWindow { group: string; ids: string[]; world: [number, number, number, number]; tiles: DsmTile[]; nodata: number }
-export interface DsmIndex { layer: string; step: number; windows: DsmWindow[] }
+/** `failed`: groups whose download failed in the last run (absent in an index written before it was recorded) */
+export interface DsmIndex { layer: string; step: number; windows: DsmWindow[]; failed?: string[] }
 
 export const DSM_DIR = path.join(CACHE_DIR, 'dsm');
 export const DSM_INDEX = path.join(DSM_DIR, 'index.json');
@@ -59,7 +60,8 @@ export async function run(ctx: BakeContext) {
   const layer = prev?.layer ?? await pickLayer();
   log.info(`dsm: layer ${layer}, ${groups.size} landmark groups (${[...groups.values()].reduce((s, g) => s + g.length, 0)} footprints)`);
   const windows: DsmWindow[] = [];
-  let fetched = 0, reused = 0, failed = 0;
+  let fetched = 0, reused = 0;
+  const failed: string[] = [];
   for (const [group, list] of groups) {
     const done = prev?.windows.find(w => w.group === group);
     if (done && list.every(s => done.ids.includes(s.id))) { windows.push(done); reused++; continue; }
@@ -83,11 +85,13 @@ export async function run(ctx: BakeContext) {
         tiles.push({ box, w, h, file });
       } catch (e) { log.warn(`dsm: ${group}: ${e instanceof Error ? e.message.split('\n')[0] : e}`); ok = false; }
     }
-    if (!ok) { failed++; continue; }
+    if (!ok) { failed.push(group); continue; }
     windows.push({ group, ids: list.map(s => s.id), world, tiles, nodata });
     fetched++;
     log.info(`dsm: ${group} (${list[0].name ?? list.length + ' parts'}): ${wM.toFixed(0)} x ${hM.toFixed(0)} m, ${tiles.length} tile(s), nodata ${(nodata * 100).toFixed(1)} %`);
   }
-  await writeJson(DSM_INDEX, { layer, step: DSM_STEP_M, windows } satisfies DsmIndex);
-  log.info(`dsm: ${windows.length} windows (${fetched} fetched, ${reused} reused, ${failed} failed) -> cache/dsm/index.json`);
+  await writeJson(DSM_INDEX, { layer, step: DSM_STEP_M, windows, failed } satisfies DsmIndex);
+  log.info(`dsm: ${windows.length} windows (${fetched} fetched, ${reused} reused, ${failed.length} failed) -> cache/dsm/index.json`);
+  // build still runs with the windows it has, so say plainly what is missing; manifest counts.dsmFailed carries it on
+  if (failed.length) log.warn(`dsm: ${failed.length} landmark group(s) get no LiDAR cap (${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}); rerun npm run bake:dsm (finished windows are reused), then bake:build`);
 }

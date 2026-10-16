@@ -5,7 +5,7 @@ import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { BBOX_PADDED, CACHE_DIR, OUT_DIR, WMS_ELEVATION, type LonLatBox } from '../config.ts';
 import { cachedBytes, exists, writeJson } from './http.ts';
-import { bilValidator } from './wmsgrid.ts';
+import { IGN_WMS_RETRY_ON, bilValidator } from './wmsgrid.ts';
 import { frame, altToY, DATUM_ALT } from '../../shared/geo.ts';
 import { TERRAIN_N, TERRAIN_STEP, WORLD_HALF } from '../../shared/layout.ts';
 
@@ -27,7 +27,7 @@ function splitQuads(b: LonLatBox): LonLatBox[] {
 }
 
 async function fetchQuad(box: LonLatBox, i: number): Promise<Quad> {
-  const buf = await cachedBytes(WMS_ELEVATION(box, PX, PX), `bil/quad${i}.bin`, { timeoutMs: 180_000, retries: 3, validate: bilValidator(PX, PX) });
+  const buf = await cachedBytes(WMS_ELEVATION(box, PX, PX), `bil/quad${i}.bin`, { timeoutMs: 180_000, retries: 3, retryOn: IGN_WMS_RETRY_ON, validate: bilValidator(PX, PX) });
   if (buf.length !== PX * PX * 4) {   // second line of defence: a bad quad cached before validation existed
     throw new Error(`elevation quad ${i}: unexpected ${buf.length} bytes (expected ${PX * PX * 4}); body starts "${buf.subarray(0, 80).toString('utf8')}"`);
   }
@@ -56,7 +56,14 @@ function sampleAlt(quads: Quad[], lon: number, lat: number): number {
 export async function run(ctx: BakeContext) {
   const binOut = path.join(OUT_DIR, 'terrain.bin');
   const jsonOut = path.join(OUT_DIR, 'terrain.json');
-  if (!ctx.force && await exists(binOut) && await exists(jsonOut)) { log.info('terrain: cached'); return; }
+  const rawOut = path.join(CACHE_DIR, 'terrain_raw.bin');
+  const haveRaw = await exists(rawOut) || await exists(path.join(OUT_DIR, 'terrain_raw.bin'));   // the second: an older checkout
+  const haveOut = await exists(binOut) && await exists(jsonOut);
+  if (!ctx.force && haveOut && haveRaw) { log.info('terrain: cached'); return; }
+  // terrain.bin without its raw copy (a fresh clone ships only the former): rebuild just the raw one. terrain.bin keeps
+  // the river bed and basins the last build lowered, which paths/markings/streets read when run on their own.
+  const rawOnly = !ctx.force && haveOut;
+  if (rawOnly) log.info('terrain: raw DTM missing, rebuilding cache/terrain_raw.bin from the elevation quads');
 
   const quads: Quad[] = [];
   const boxes = splitQuads(BBOX_PADDED);
@@ -81,11 +88,12 @@ export async function run(ctx: BakeContext) {
   }
   const towerY = out[((n - 1) / 2) * n + (n - 1) / 2] / 100;
   log.info(`terrain: ${n}x${n} @ ${TERRAIN_STEP} m, y range ${min.toFixed(2)}..${max.toFixed(2)} m, tower base y=${towerY.toFixed(2)}, nodata ${bad}`);
-  await fs.writeFile(binOut, Buffer.from(out.buffer));
   // untouched copy for build.ts / dsm (they lower river beds into terrain.bin): a bake intermediate, so it lives in cache/,
   // not in the 4.7 MB the runtime would otherwise ship for nothing
   await fs.mkdir(CACHE_DIR, { recursive: true });
-  await fs.writeFile(path.join(CACHE_DIR, 'terrain_raw.bin'), Buffer.from(out.buffer));
+  await fs.writeFile(rawOut, Buffer.from(out.buffer));
+  if (rawOnly) return;
+  await fs.writeFile(binOut, Buffer.from(out.buffer));
   await writeJson(jsonOut, { n, step: TERRAIN_STEP, origin: -WORLD_HALF, format: 'int16cm', minY: min, maxY: max });
 
   // Debug preview.

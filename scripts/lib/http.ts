@@ -14,6 +14,8 @@ export interface FetchOpts {
   body?: string;
   /** Called when a retryable failure happens (for logging). */
   onRetry?: (attempt: number, reason: string) => void;
+  /** Further HTTP statuses this server uses for transient failures; 429 and 5xx are always retried, other 4xx fail at once. */
+  retryOn?: number[];
   /**
    * cachedBytes only: inspect the fresh download before it is cached. A string is the reason it is bad; the fetch then
    * throws with it and leaves no file, so the next run downloads again instead of reading a 200-byte XML error back
@@ -49,7 +51,7 @@ export async function fetchRetry(url: string, opts: FetchOpts = {}): Promise<Res
     } finally { clearTimeout(t); }
     if (res) {
       if (res.ok) return res;
-      const retryable = res.status === 429 || res.status >= 500;
+      const retryable = res.status === 429 || res.status >= 500 || !!opts.retryOn?.includes(res.status);
       const text = (await res.text().catch(() => '')).slice(0, 300);
       lastErr = new Error(`HTTP ${res.status} for ${url}\n${text}`);
       if (!retryable || attempt === retries) throw lastErr;
