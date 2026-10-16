@@ -97,6 +97,19 @@ async function tiledIncomplete(theme: string): Promise<boolean> {
   return !!cov && cov.ok.length < cov.n * cov.n;
 }
 
+/**
+ * Cells of a tiled theme that `build` will bake without: every cell when the theme never made it to cache/osm/ (a
+ * bake:osm whose gateways all failed), the uncovered ones of a partial fetch, 0 for an untiled theme or a raw file
+ * without a coverage record. build reads the points theme leniently, so this count is the only trace such a run leaves.
+ */
+export async function missingCells(theme: string): Promise<number> {
+  if (!TILED_THEMES.has(theme)) return 0;
+  if (!await exists(path.join(geoDir, `${theme}.geojson`))) return TILE_N * TILE_N;
+  const file = path.join(rawDir, `${theme}.json`);
+  const cov = await exists(file) ? (await readJson<{ coverage?: Coverage }>(file)).coverage : undefined;
+  return cov ? Math.max(0, cov.n * cov.n - cov.ok.length) : 0;
+}
+
 /** Fetch a theme cell by cell; cells that fail everywhere are recorded in `coverage` and skipped. */
 async function fetchThemeTiled(theme: string, force: boolean): Promise<{ raw: any; fromCache: boolean }> {
   const file = path.join(rawDir, `${theme}.json`);

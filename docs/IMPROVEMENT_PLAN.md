@@ -33,6 +33,7 @@
 - `ground.json.generated`/`deshadow.json.orthoGenerated`로 ortho 재생성 뒤 deshadow가 자동 재실행된다(커밋된 데이터는 재실행 없음).
 - `terrain_raw.bin`은 `cache/`에 쓰고 읽는다(구 위치 폴백 있음). 없으면 `build`/`dsm`은 낮춰진 `terrain.bin`으로 대체하지 않고 실패하며, `bake:terrain`이 캐시된 고도 쿼드로 raw 사본만 다시 만든다(`terrain.bin`은 그대로). 환경 변수는 `scripts/config.ts`의 `ENV`에서 한 번 파싱.
 - IGN WMS(고도 쿼드·DSM)의 HTTP 400은 일시적 오류로 재시도한다(`retryOn`); 다른 4xx는 즉시 실패. `dsm`이 끝내 받지 못한 그룹은 `cache/dsm/index.json`의 `failed`와 `manifest.counts.dsmFailed`에 남고, `verify:data`가 0이 아니면 실패한다.
+- `points` 테마가 통째로 실패했거나 일부 Overpass 셀이 비면 `build`가 경고하고 `manifest.counts.pointsMissingCells`(없으면 9/9)에 남긴다. `verify:data`는 0이 아니면 실패한다(이슈 #2 4절: 테마가 비어도 산출물 포맷은 정상이라 검증을 통과하던 문제).
 - 다음 `bake:assets`가 `LICENSES.md`를 섹션 구조와 올바른 탑 모델 크레딧(CC-BY Sketchfab)으로 다시 쓴다.
 
 ---

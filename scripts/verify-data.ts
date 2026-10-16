@@ -67,6 +67,8 @@ async function main() {
   // the format is fine either way, so only the bake's own count can tell a run that silently lost landmark caps
   const dsmFailed = m.counts.dsmFailed ?? 0;
   if (dsmFailed > 0) bad(`manifest counts.dsmFailed = ${dsmFailed}: landmark groups baked without their LiDAR cap; rerun npm run bake:dsm, then bake:build`);
+  const pointsMissing = m.counts.pointsMissingCells ?? 0;
+  if (pointsMissing > 0) bad(`manifest counts.pointsMissingCells = ${pointsMissing}: furniture baked without part of the OSM points theme; rerun npm run bake:osm (it resumes the missing cells), then bake:build`);
 
   console.log('side files');
   for (const [f, stride] of [['trees.bin', TREE_STRIDE], ['furniture.bin', FURNITURE_STRIDE]] as const) {

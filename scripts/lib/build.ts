@@ -5,7 +5,7 @@ import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { CACHE_DIR, DSM_BUDGET, OUT_DIR } from '../config.ts';
 import { ensureDir, exists, readJson, writeJson, fmtBytes } from './http.ts';
-import { loadTheme, type OsmProps } from './overpass.ts';
+import { loadTheme, missingCells, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
 import { buildSpecs, type BuildingSpec } from './buildings.ts';
 import { extrudeBuilding, triangulateCap, type ChunkBuilders } from './extrude.ts';
@@ -115,6 +115,9 @@ export async function run(_ctx: BakeContext) {
   const water = await loadTheme('water');
   const roads = await loadTheme('roads');
   const points = await loadTheme('points').catch(() => null);
+  // furniture still bakes without points (lamps along the roads only), so the gap goes into the manifest for verify:data
+  const pointsMissing = await missingCells('points');
+  if (pointsMissing) log.warn(`build: the OSM points theme misses ${pointsMissing} Overpass cell(s); furniture there has no OSM lamps, benches or stops (rerun npm run bake:osm, which resumes the missing cells, then bake:build)`);
   const land = await loadTheme('landcover').catch(() => null);
   const summary = await readJson<Record<string, { timestamp?: string }>>(path.join(OUT_DIR, '..', '..', 'cache', 'osm', 'summary.json')).catch(() => ({} as Record<string, { timestamp?: string }>));
 
@@ -192,7 +195,7 @@ export async function run(_ctx: BakeContext) {
     gridN: GRID_N,
     waterLevelY: w.waterLevelY,
     osmTimestamp: summary.buildings?.timestamp,
-    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal, dsmFailed: dsm?.failedGroups ?? 0 },
+    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal, dsmFailed: dsm?.failedGroups ?? 0, pointsMissingCells: pointsMissing },
     heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat, curved: stats.curved, monument: stats.monument, landmark: stats.landmark },
     files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };
