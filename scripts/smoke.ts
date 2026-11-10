@@ -92,7 +92,7 @@ async function main() {
   const failures: string[] = [];
   const note = (s: string) => { console.log(s); log.push(s); };
 
-  const serverArgs = process.env.SMOKE_DIST ? ['vite', 'preview', '--port', String(PORT), '--strictPort'] : ['vite', '--port', String(PORT), '--strictPort'];
+  const serverArgs = process.env.SMOKE_DIST ? ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'] : ['vite', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'];
   const server = spawn('npx', serverArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   server.stdout?.on('data', d => log.push(`[vite] ${String(d).trim()}`));
   server.stderr?.on('data', d => log.push(`[vite:err] ${String(d).trim()}`));
