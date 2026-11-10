@@ -61,6 +61,15 @@ export const PARIS_TREES = (lon: number, lat: number, radiusM: number) => {
 };
 
 export const EIFFEL_3DMR_URL = 'https://3dmr.eu/api/model/4';
+
+/** The published bake cache for `npm run cache:fetch` (GitHub release asset, paths under cache/): the downloads of
+ *  2026-09-06/07 plus dsm/ of 2026-10-15/16. It is not the cache behind the committed public/data (that one is a day or
+ *  two newer): with no code change, bake:build from it rewrites 11 building chunks, 4 detail files and furniture.bin. */
+export const CACHE_ARCHIVE = {
+  url: 'https://github.com/wsjung-mba-kaist/MapTest/releases/download/cache-2026-11-11/maptest-cache-2026-11-11.tar.gz',
+  sha256: 'dd75068d9283290349b34b2ec932b4a9574a2a40bace4b85086f0d0bf331410d',
+  bytes: 440_889_286,
+};
 export const EIFFEL_OSM_WAY_ID = 5013364;
 /** Preferred tower model in public/models (user's choice; Sketchfab CC-BY, credited in the HUD). Override with EIFFEL_SOURCE=. */
 export const EIFFEL_SOURCE_GLB = 'eiffel_tower_model_3d_with_best_quality.glb';

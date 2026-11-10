@@ -52,6 +52,12 @@ npm run bake      # 데이터 다운로드 + 베이크 (최초 15~25분, 이후 
 `bake:deshadow`는 항공사진에 구워진 촬영 당시 그림자를 에펠탑 그림자로 태양을 추정해 걷어냅니다(원본은 `cache/ortho_raw/`, `DESHADOW=0`으로 건너뜀).
 `-- --force`로 캐시를 무시하고 다시 만듭니다. 원본 다운로드는 `cache/`, 산출물은 `public/data/`에 저장됩니다.
 
+베이크 입력(`cache/`)은 GitHub 릴리스 [`cache-2026-11-11`](https://github.com/wsjung-mba-kaist/MapTest/releases/tag/cache-2026-11-11)에도 올려 두었습니다(압축 441 MB, 풀면 709 MB, 출처별 라이선스는 릴리스 설명에 있음).
+`npm run cache:fetch`가 이 파일을 받아 SHA-256을 확인하고 `cache/`에 풉니다. `cache/`에 이미 데이터가 있으면 멈추고, `-- --force`를 주면 덮어씁니다.
+그러면 네트워크 없이 `bake:build`·`bake:paths`·`bake:markings`·`bake:streets`·`bake:masks`·`bake:far`를 돌릴 수 있습니다.
+이 캐시는 2026-09-06~07(`dsm/`은 10-15~16)에 받은 것이라, 커밋된 `public/data`를 만든 캐시보다 하루이틀 이릅니다. 그래서 코드를 바꾸지 않아도 `bake:build`에서 청크 11개·`details/` 4개·`furniture.bin`이 달라집니다.
+코드를 고친 뒤 데이터를 커밋할 때는 같은 캐시로 수정 전 코드도 구워 대조하고, 코드 때문에 바뀐 파일만 고릅니다.
+
 `points` 테마(가로등·벤치·볼라드 노드)는 공개 게이트웨이의 60초 제한 때문에 3×3 셀로 나눠 받으며, 429/타임아웃으로 빠진 셀은
 `npm run bake:osm`을 다시 실행할 때마다 이어서 채웁니다(`cache/overpass/points.json`의 `coverage`). 받은 셀 안에서는 OSM 가로등이
 쓰이고 18 m 안의 절차적 가로등은 빠지며, 나머지 구역은 도로를 따라 절차적으로 배치됩니다(`bake:build` 재실행 시 반영).

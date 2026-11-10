@@ -27,6 +27,7 @@ node --import tsx --test shared/season.test.ts     # a single test file
 
 npm run lint           # eslint (correctness rules only; the dense style is deliberate)
 npm run smoke          # headless Chromium (SwiftShader) streams the whole square, fails on shader errors / exceptions
+npm run cache:fetch    # fill cache/ from the GitHub release (441 MB, SHA-256 checked) so the offline bake steps run on a fresh clone
 
 npm run bake           # every step in order; download steps skip when their outputs exist (build/paths/markings/streets always rebuild)
 npm run bake:<step>    # one step (osm, bdtopo, terrain, ortho, masks, trees, assets, eiffel, towerwalk,
@@ -88,6 +89,7 @@ Bootstrap is `src/main.ts` → `App.boot()` in `src/core/App.ts`, in this order:
 - **Bridge supports assume the axis centre is the deck centre.** `principalAxis` in `scripts/lib/bridges.ts` returns a re-centred point for exactly that reason; piers and arch springings are laid out across `[-half, +half]` about it.
 - **Buildings with no height tag fall through to the Haussmann default** (18.5 m eave, mansard roof). Anything that is not a Paris apartment block — moored boats, pontoons, piers — needs an explicit branch, or it becomes a six-storey block. See the `floating` flag in `scripts/lib/buildings.ts`.
 - **Only some bake steps work offline.** `build`, `paths`, `markings`, `streets`, `masks`, `far` run entirely from `cache/`. `osm` and `landmarks` fetch from Overpass / Wikidata and produce degraded output if the network is unavailable — a forced `bake:landmarks` without a network rewrote `landmarks.json` with 25 of 33 entries empty. Check `git diff` on `public/data` after any forced bake.
+- **The published cache is not the one behind the committed data.** A fresh clone has no `cache/`; `npm run cache:fetch` restores the release snapshot (downloads of 2026-09-06/07, `dsm/` of 10-15/16, `CACHE_ARCHIVE` in `scripts/config.ts`). It is a day or two older than the cache that baked `public/data`, so with no code change `bake:build` rewrites 11 chunks, 4 detail files and `furniture.bin`, and `paths.bin`/`surface.bin` differ in places. A code change's data commit therefore bakes the pre-change commit on the same cache too and keeps only the files the code changed; where the pre-change output already differs from the committed file, apply the pre→post delta onto the committed bytes (13a00eb and a205c17 did this).
 - **`public/data` is committed.** Keep the code commit and the regenerated-output commit separate.
 
 ## Verifying a visual change
