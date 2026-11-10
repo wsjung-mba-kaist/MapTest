@@ -34,7 +34,8 @@
     "build:compressed": "vite build && tsx scripts/compress.ts dist",
     "lint": "eslint .",
     "smoke": "tsx scripts/smoke.ts",
-    "verify:data": "tsx scripts/verify-data.ts"
+    "verify:data": "tsx scripts/verify-data.ts",
+    "cache:fetch": "tsx scripts/fetch-cache.ts"
   },
   "dependencies": {
     "n8ao": "^2.0.1",
