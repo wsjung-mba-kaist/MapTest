@@ -409,6 +409,58 @@ function halfWidthAt(ring: Ring, px: number, pz: number, dx: number, dz: number)
   return Math.min(Math.abs(lo), Math.abs(hi));
 }
 
+/** Nearest crossing of a ring along the ray from `(px, pz)` towards `(dx, dz)`: its distance and the unit direction of the edge it lands on. */
+function rayToRing(ring: Ring, px: number, pz: number, dx: number, dz: number): { t: number; ex: number; ez: number } | null {
+  let best: { t: number; ex: number; ez: number } | null = null;
+  for (let i = 0, n = ring.length; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const ex = b[0] - a[0], ez = b[1] - a[1], len = Math.hypot(ex, ez);
+    const den = ex * dz - ez * dx;
+    if (len < 1e-6 || Math.abs(den) < 1e-9) continue;
+    const rx = a[0] - px, rz = a[1] - pz;
+    const u = (rx * dz - rz * dx) / -den;          // parameter along the edge (same solve as halfWidthAt)
+    if (u < -1e-6 || u > 1 + 1e-6) continue;
+    const t = (rx * ez - rz * ex) / -den;          // distance along the ray
+    if (t > 0 && (!best || t < best.t)) best = { t, ex: ex / len, ez: ez / len };
+  }
+  return best;
+}
+
+const APRON_BACK = [3, 6, 9, 12];   // m inside the centreline's end where the deck's side is looked for, nearest first
+const APRON_SIDE_COS = 0.7;         // an edge within ~45 degrees of the road is a side; anything squarer is the end face
+const APRON_CLEAR = 0.01;           // m outside the deck edge: a generic crossing for the union, under addWalls' 2 cm cut-off
+
+/**
+ * The slab that carries a deck from its abutment out to where the road meets it: from a few metres inside the end of
+ * the centreline `end` (leaving along `(ux, uz)`) to `reach` m beyond it.
+ *
+ * Each side is the deck's own edge, found by a ray across the road, rather than half an overall width either side
+ * of the centreline. The centreline is one carriageway and the width is the outline's whole extent, so neither is
+ * where the deck is: on the Pont d'Iena the chosen way runs 8.8 m off the middle of a 36.5 m deck and the extent
+ * measures 39.8 m, which put a slab at each end standing 10.4 m proud on one side and 7.2 m short on the other.
+ * A skewed abutment puts the end face in the ray's way on one side, so that side is taken from the next station in.
+ * A side that is not found at all (the way overshoots the outline) keeps the old `w / 2` about the centreline.
+ */
+export function deckApron(poly: Poly, end: Pt, ux: number, uz: number, reach: number, w: number): Ring {
+  const nx = -uz, nz = ux;
+  const corners: Pt[] = [];
+  for (const s of [1, -1]) {
+    let back = APRON_BACK[0], across = w / 2;
+    for (const d of APRON_BACK) {
+      const sx = end[0] - ux * d, sz = end[1] - uz * d;
+      if (!pointInPoly(sx, sz, poly)) continue;
+      const hit = rayToRing(poly[0], sx, sz, nx * s, nz * s);
+      if (!hit || Math.abs(hit.ex * ux + hit.ez * uz) < APRON_SIDE_COS) continue;
+      back = d; across = hit.t + APRON_CLEAR;
+      break;
+    }
+    const inner: Pt = [end[0] - ux * back + nx * s * across, end[1] - uz * back + nz * s * across];
+    const outer: Pt = [end[0] + ux * reach + nx * s * across, end[1] + uz * reach + nz * s * across];
+    if (s > 0) corners.push(inner, outer); else corners.push(outer, inner);
+  }
+  return orient(corners, false);
+}
+
 /** Pier boxes of a deck along its principal axis (30 m spacing, only where the ground is under water). */
 function pierBoxes(b: Bridge, hm: Heightmap, waterLevelY: number, flowAt?: FlowField): PierBox[] {
   const ax = principalAxis(b.poly[0]);
@@ -555,13 +607,8 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
         if (hm.sample(end[0] + ux * d, end[1] + uz * d) >= b.deckTop - 0.25) { reach = Math.min(26, d + 5); break; }
       }
       if (reach < 1.5) continue;
-      // a rectangular apron from a little inside the deck out to where the ground meets it
-      const nx = -uz, nz = ux, back = 3;
-      const p0: Pt = [end[0] - ux * back + nx * w / 2, end[1] - uz * back + nz * w / 2];
-      const p1: Pt = [end[0] + ux * reach + nx * w / 2, end[1] + uz * reach + nz * w / 2];
-      const p2: Pt = [end[0] + ux * reach - nx * w / 2, end[1] + uz * reach - nz * w / 2];
-      const p3: Pt = [end[0] - ux * back - nx * w / 2, end[1] - uz * back - nz * w / 2];
-      aprons.push([orient([p0, p1, p2, p3], false)]);
+      // an apron from a little inside the deck out to where the ground meets it, as wide as the deck is there
+      aprons.push([deckApron(b.poly, end, ux, uz, reach, w)]);
     }
     if (!aprons.length) continue;
     const merged = unionAll([b.poly, ...aprons]);
