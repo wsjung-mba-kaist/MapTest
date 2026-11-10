@@ -429,32 +429,56 @@ function rayToRing(ring: Ring, px: number, pz: number, dx: number, dz: number): 
 const APRON_BACK = [3, 6, 9, 12];   // m inside the centreline's end where the deck's side is looked for, nearest first
 const APRON_SIDE_COS = 0.7;         // an edge within ~45 degrees of the road is a side; anything squarer is the end face
 const APRON_CLEAR = 0.01;           // m outside the deck edge: a generic crossing for the union, under addWalls' 2 cm cut-off
+const APRON_STRAIGHT = 0.5;         // m a centreline may leave the line it ends on before "back along it" stops being on the road
+
+/** How far back from its end `back[0]` a centreline keeps within APRON_STRAIGHT of the line it leaves on. */
+function straightRun(back: Pt[], ux: number, uz: number): number {
+  const off = (p: Pt) => Math.abs((p[0] - back[0][0]) * uz - (p[1] - back[0][1]) * ux);
+  let run = 0;
+  for (let i = 1; i < back.length; i++) {
+    const seg = Math.hypot(back[i][0] - back[i - 1][0], back[i][1] - back[i - 1][1]);
+    const a = off(back[i - 1]), b = off(back[i]);
+    if (b > APRON_STRAIGHT) return run + seg * (APRON_STRAIGHT - a) / (b - a);
+    run += seg;
+  }
+  return run;
+}
 
 /**
  * The slab that carries a deck from its abutment out to where the road meets it: from a few metres inside the end of
- * the centreline `end` (leaving along `(ux, uz)`) to `reach` m beyond it.
+ * the centreline (`back[0]`, the rest of the way following in order) to `reach` m beyond it, along the way's last
+ * segment.
  *
  * Each side is the deck's own edge, found by a ray across the road, rather than half an overall width either side
  * of the centreline. The centreline is one carriageway and the width is the outline's whole extent, so neither is
  * where the deck is: on the Pont d'Iena the chosen way runs 8.8 m off the middle of a 36.5 m deck and the extent
  * measures 39.8 m, which put a slab at each end standing 10.4 m proud on one side and 7.2 m short on the other.
  * A skewed abutment puts the end face in the ray's way on one side, so that side is taken from the next station in.
- * A side that is not found at all (the way overshoots the outline) keeps the old `w / 2` about the centreline.
+ *
+ * A side has to be nearer than the deck is wide (`w`), and a station has to be on the road. A 5 m footbridge ramp
+ * south-west of the Pont de Grenelle turns 90 degrees 3.3 m before its way ends: across that last segment is along
+ * the deck, so the ray ran 30.8 m down its inside to the far end face, which stands square to the deck and therefore
+ * parallel to the segment, and took it for a side - a 38 m by 29 m slab, 1104 m2 where the deck had been 403.
+ * A side that is not found (that turn, or a way that overshoots the outline) keeps the old `w / 2` about the way.
  */
-export function deckApron(poly: Poly, end: Pt, ux: number, uz: number, reach: number, w: number): Ring {
-  const nx = -uz, nz = ux;
+export function deckApron(poly: Poly, back: Pt[], reach: number, w: number): Ring {
+  const end = back[0];
+  const dx = end[0] - back[1][0], dz = end[1] - back[1][1], L = Math.hypot(dx, dz) || 1;
+  const ux = dx / L, uz = dz / L, nx = -uz, nz = ux;
+  const straight = straightRun(back, ux, uz);
   const corners: Pt[] = [];
   for (const s of [1, -1]) {
-    let back = APRON_BACK[0], across = w / 2;
+    let depth = APRON_BACK[0], across = w / 2;
     for (const d of APRON_BACK) {
+      if (d > straight) break;
       const sx = end[0] - ux * d, sz = end[1] - uz * d;
       if (!pointInPoly(sx, sz, poly)) continue;
       const hit = rayToRing(poly[0], sx, sz, nx * s, nz * s);
-      if (!hit || Math.abs(hit.ex * ux + hit.ez * uz) < APRON_SIDE_COS) continue;
-      back = d; across = hit.t + APRON_CLEAR;
+      if (!hit || hit.t > w || Math.abs(hit.ex * ux + hit.ez * uz) < APRON_SIDE_COS) continue;
+      depth = d; across = hit.t + APRON_CLEAR;
       break;
     }
-    const inner: Pt = [end[0] - ux * back + nx * s * across, end[1] - uz * back + nz * s * across];
+    const inner: Pt = [end[0] - ux * depth + nx * s * across, end[1] - uz * depth + nz * s * across];
     const outer: Pt = [end[0] + ux * reach + nx * s * across, end[1] + uz * reach + nz * s * across];
     if (s > 0) corners.push(inner, outer); else corners.push(outer, inner);
   }
@@ -596,7 +620,8 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
     const ax = principalAxis(b.poly[0]);
     const w = Math.max(4, ax.width);
     const aprons: Poly[] = [];
-    for (const [end, prev] of [[b.centre[0], b.centre[1]], [b.centre[b.centre.length - 1], b.centre[b.centre.length - 2]]] as [Pt, Pt][]) {
+    for (const back of [b.centre, b.centre.slice().reverse()]) {   // the way as walked back from each of its ends
+      const [end, prev] = back;
       const dx = end[0] - prev[0], dz = end[1] - prev[1], L = Math.hypot(dx, dz) || 1;
       const ux = dx / L, uz = dz / L;
       // Run out until the ground has come up to deck level, then a few metres more so the join is on solid ground
@@ -608,7 +633,7 @@ export function collectBridges(roads: FeatureCollection<Geometry, OsmProps>, hm:
       }
       if (reach < 1.5) continue;
       // an apron from a little inside the deck out to where the ground meets it, as wide as the deck is there
-      aprons.push([deckApron(b.poly, end, ux, uz, reach, w)]);
+      aprons.push([deckApron(b.poly, back, reach, w)]);
     }
     if (!aprons.length) continue;
     const merged = unionAll([b.poly, ...aprons]);
