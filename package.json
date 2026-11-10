@@ -31,11 +31,12 @@
     "bake:far": "tsx scripts/bake.ts --step=far",
     "bake:landmarks": "tsx scripts/bake.ts --step=landmarks",
     "compress": "tsx scripts/compress.ts dist",
-    "build:compressed": "vite build && tsx scripts/compress.ts dist"
+    "build:compressed": "vite build && tsx scripts/compress.ts dist",
+    "lint": "eslint .",
+    "smoke": "tsx scripts/smoke.ts",
+    "verify:data": "tsx scripts/verify-data.ts"
   },
   "dependencies": {
-    "clipper-lib": "^6.4.2",
-    "lil-gui": "^0.21.0",
     "n8ao": "^2.0.1",
     "postprocessing": "^6.39.4",
     "stats-gl": "^4.2.0",
@@ -44,6 +45,7 @@
     "three-mesh-bvh": "^0.9.14"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@gltf-transform/core": "^4.5.0",
     "@gltf-transform/extensions": "^4.5.0",
     "@gltf-transform/functions": "^4.5.0",
@@ -51,7 +53,9 @@
     "@types/node": "^24.0.0",
     "@types/suncalc": "^1.9.2",
     "@types/three": "~0.185.0",
+    "clipper-lib": "^6.4.2",
     "earcut": "^3.2.3",
+    "eslint": "^10.12.0",
     "fflate": "^0.8.2",
     "meshoptimizer": "^1.2.0",
     "osmtogeojson": "^3.0.0-beta.5",
@@ -60,6 +64,10 @@
     "sharp": "^0.35.4",
     "tsx": "^4.23.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.71.1",
     "vite": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

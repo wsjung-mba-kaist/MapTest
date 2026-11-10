@@ -1,8 +1,7 @@
 /**
  * Keyboard + pointer-lock mouse look, a gamepad (polled in update()) and the touch controls, merged into one set of
  * movement axes shared by the walking and flying controllers.
- *   gamepad: left stick move, right stick look, RT sprint, A interact (E), Y fly (F), Back map (M), Start time (T), X night (N),
- *            LB landmark list (L), RB landmark card (I)
+ *   gamepad: left stick move, right stick look, RT sprint; the buttons mirror keyboard shortcuts per src/core/Keymap.ts
  */
 export class Input {
   readonly keys = new Set<string>();
@@ -25,7 +24,8 @@ export class Input {
   private lockedAt = 0;
   private readonly onKeyHandlers: ((code: string, e: KeyboardEvent) => void)[] = [];
 
-  constructor(private readonly el: HTMLElement) {
+  /** gamepad button index → key code to emit (src/core/Keymap.ts gamepadMap()); empty = buttons do nothing */
+  constructor(private readonly el: HTMLElement, private readonly gamepadButtons: Record<number, string> = {}) {
     window.addEventListener('keydown', e => {
       if (e.repeat) return;
       const t = e.target as HTMLElement | null;
@@ -84,7 +84,8 @@ export class Input {
       if (p && typeof p.catch === 'function') p.catch(() => plain()); 
     } catch { plain(); }
   }
-  unlock() { document.exitPointerLock?.(); }
+  /** Release the pointer; a live gamepad counts as "in use" again only once a stick moves after this. */
+  unlock() { document.exitPointerLock?.(); this.gamepadActive = false; }
 
   /** Poll the first connected gamepad (call once per frame). */
   update(dt: number) {
@@ -97,8 +98,7 @@ export class Input {
     this.gpF = -ly; this.gpS = lx;
     if (rx || ry) this.look(rx * 2.6 * dt * this.lookScale, ry * 1.8 * dt * this.lookScale);
     this.gpSprint = (gp.buttons[7]?.value ?? 0) > 0.4 || !!gp.buttons[10]?.pressed;
-    const map: Record<number, string> = { 0: 'KeyE', 3: 'KeyF', 8: 'KeyM', 9: 'KeyT', 2: 'KeyN', 1: 'KeyH', 4: 'KeyL', 5: 'KeyI' };
-    for (const [idxS, code] of Object.entries(map)) {
+    for (const [idxS, code] of Object.entries(this.gamepadButtons)) {
       const idx = Number(idxS);
       const now = !!gp.buttons[idx]?.pressed;
       if (now && !this.gpPrev.get(idx)) this.emitKey(code);
@@ -109,7 +109,10 @@ export class Input {
 
   /** Movement axes: forward (+1 = forward), strafe (+1 = right), vertical (+1 = up). */
   axes() {
-    const kf = (this.down('KeyW') || this.down('ArrowUp') ? 1 : 0) - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
+    // Nothing moves while the pointer is free (pause overlay, a settings panel): WASD used to walk the player behind
+    // the dimmed overlay — the mirror image of the focused-checkbox bug fixed in the keydown handler above.
+    if (!this.active) return { f: 0, s: 0, v: 0, sprint: false };
+    const kf =(this.down('KeyW') || this.down('ArrowUp') ? 1 : 0) - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
     const ks = (this.down('KeyD') || this.down('ArrowRight') ? 1 : 0) - (this.down('KeyA') || this.down('ArrowLeft') ? 1 : 0);
     const kv = (this.down('KeyE') || this.down('Space') ? 1 : 0) - (this.down('KeyQ') || this.down('KeyC') ? 1 : 0);
     const clamp = (x: number) => Math.max(-1, Math.min(1, x));

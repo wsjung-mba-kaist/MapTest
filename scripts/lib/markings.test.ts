@@ -4,9 +4,9 @@ import { MarkBuilder } from './markings.ts';
 import { MarkKind } from '../../shared/layout.ts';
 
 function triNormalY(pos: number[], a: number, b: number, c: number): number {
-  const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
-  const bx = pos[b * 3] - ax, by = pos[b * 3 + 1] - ay, bz = pos[b * 3 + 2] - az;
-  const cx = pos[c * 3] - ax, cy = pos[c * 3 + 1] - ay, cz = pos[c * 3 + 2] - az;
+  const ax = pos[a * 3], az = pos[a * 3 + 2];
+  const bx = pos[b * 3] - ax, bz = pos[b * 3 + 2] - az;
+  const cx = pos[c * 3] - ax, cz = pos[c * 3 + 2] - az;
   return bz * cx - bx * cz; // y component of cross(b - a, c - a)
 }
 

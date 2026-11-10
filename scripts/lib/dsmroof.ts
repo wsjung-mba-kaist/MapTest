@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
-import { CACHE_DIR } from '../config.ts';
+import { ENV, CACHE_DIR } from '../config.ts';
 import { exists, readJson } from './http.ts';
 import { DSM_INDEX, type DsmIndex, type DsmWindow } from './dsm.ts';
 import { log } from './log.ts';
@@ -107,10 +107,19 @@ export class DsmProvider {
   /** The fitted wall top of a part, computed once in `noteGroupHeights`. */
   partTops(b: BuildingSpec): ((p: Pt) => number) | null { const t = this.tops.get(b); return t === undefined ? dsmPartTops(b, this) : t; }
 
+  /** Caps whose `MeshoptSimplifier.simplify` threw and went out unsimplified; `build` reports the total. */
+  simplifyFailures = 0;
+  /** Landmark groups that should have a cap but have no surface model (failed download, missing tile); not the nodata skips. */
+  failedGroups = 0;
+
   static async load(): Promise<DsmProvider | null> {
-    if (process.env.DSM === '0' || !await exists(DSM_INDEX)) return null;
+    if (!ENV.dsm || !await exists(DSM_INDEX)) return null;
+    // The simplifier is a WASM module: `simplify` before `ready` throws on every cap, which the per-cap catch below
+    // used to swallow one warning at a time while the raw grids blew past the triangle budget.
+    await MeshoptSimplifier.ready;
     const index = await readJson<DsmIndex>(DSM_INDEX);
     const windows = new Map<string, Window>();
+    let missing = 0;
     for (const win of index.windows) {
       const grids: BilGrid[] = [];
       let ok = true;
@@ -122,9 +131,13 @@ export class DsmProvider {
       }
       if (ok && win.nodata <= 0.25) windows.set(win.group, { win, grids });
       else log.warn(`dsm: window ${win.group} skipped (${ok ? `nodata ${(win.nodata * 100).toFixed(0)} %` : 'tile missing'})`);
+      if (!ok) missing++;
     }
     log.info(`dsm: ${windows.size} windows loaded (layer ${index.layer})`);
-    return new DsmProvider(windows);
+    const provider = new DsmProvider(windows);
+    provider.failedGroups = (index.failed?.length ?? 0) + missing;
+    if (provider.failedGroups) log.warn(`dsm: ${provider.failedGroups} landmark group(s) without a LiDAR cap because a download failed or a tile is missing (manifest counts.dsmFailed)`);
+    return provider;
   }
 
   has(group: string | undefined): boolean { return !!group && this.windows.has(group); }
@@ -417,7 +430,7 @@ export function addDsmCap(gb: GeomBuilder, b: BuildingSpec, dsm: DsmProvider, ox
       const [res] = MeshoptSimplifier.simplify(idx, pos, 3, target, 0.15 / Math.max(1, b.ridge), ['LockBorder']);
       if (res.length >= 3) idx = res;
     }
-  } catch (e) { log.warn(`dsm: simplify failed for ${b.id}: ${e instanceof Error ? e.message : e}`); }
+  } catch (e) { dsm.simplifyFailures++; log.warn(`dsm: simplify failed for ${b.id}: ${e instanceof Error ? e.message : e}`); }
 
   // ---- emit: keep the non-degenerate triangles, then compact the vertices they use
   const keep: number[] = [];

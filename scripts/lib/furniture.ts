@@ -5,11 +5,11 @@ import { log } from './log.ts';
 import { MODELS_DIR, OUT_DIR, STATUES } from '../config.ts';
 import type { OsmProps } from './overpass.ts';
 import { frame } from '../../shared/geo.ts';
-import { FURNITURE_STRIDE, FurnitureKind, WORLD_HALF } from '../../shared/layout.ts';
+import { CAR_VARIANT_COUNT, FURNITURE_STRIDE, FurnitureKind, PERSON_VARIANT_COUNT, WORLD_HALF } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
 import type { Pt } from './polygons.ts';
 import type { BuildingSpec } from './buildings.ts';
-import { pointInPoly } from './polygons.ts';
+import { pointInPoly, toWorldPts } from './polygons.ts';
 import { classify } from './roadnet.ts';
 
 /** Street lamps along roads (and park alleys), plus OSM-mapped lamps/benches when the points theme is available. */
@@ -122,6 +122,8 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
 
   // Procedural lamps along streets: alternate sides, spacing by road class.
   let fromRoads = 0;
+  // Not roadnet.carriagewayWidth: lamps also line footway/path "alleys", where that table says 2.6 m and this one keeps 5 m
+  // so the posts stand clear of the path; a shared table would move every park-alley lamp 1.2 m inward.
   const width = (t: Record<string, string>) => { const w = parseFloat(t.width ?? ''); if (w > 1) return w; const l = parseFloat(t.lanes ?? ''); if (l > 0) return l * 3.2; return ({ primary: 12, secondary: 10, tertiary: 8, residential: 6.5, unclassified: 6.5, living_street: 5, pedestrian: 6, service: 4 } as Record<string, number>)[t.highway] ?? 5; };
   for (const f of roads.features) {
     const t = f.properties.tags ?? {};
@@ -133,7 +135,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
     if (!isStreet && !isAlley) continue;
     const spacing = isAlley ? 38 : cls === 'primary' || cls === 'secondary' ? 26 : 32;
     const off = width(t) / 2 + (isAlley ? 0.6 : 1.3);
-    const pts: Pt[] = (f.geometry as LineString).coordinates.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
+    const pts: Pt[] = toWorldPts((f.geometry as LineString).coordinates);
     let acc = spacing * 0.5, side = 1;
     for (let i = 0; i + 1 < pts.length; i++) {
       const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
@@ -164,14 +166,14 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
   const placePerson = (x: number, z: number, yaw: number, seed: number) => {
     if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return false;
     const y = hm.sample(x, z); if (y < waterLevelY + 0.8 || inBuilding(x, z)) return false;
-    rows.push(x, y, z, yaw, FurnitureKind.Person + Math.floor(seed * 4) % 4, 0.92 + seed * 0.16); people++; return true;
+    rows.push(x, y, z, yaw, FurnitureKind.Person + Math.floor(seed * PERSON_VARIANT_COUNT) % PERSON_VARIANT_COUNT, 0.92 + seed * 0.16); people++; return true;
   };
   for (const f of roads.features) {
     const t = f.properties.tags ?? {};
     if (f.geometry.type !== 'LineString' || !t.highway) continue;
     if ((t.tunnel && t.tunnel !== 'no') || (t.bridge && t.bridge !== 'no')) continue;
     const cls = t.highway;
-    const pts: Pt[] = (f.geometry as LineString).coordinates.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; });
+    const pts: Pt[] = toWorldPts((f.geometry as LineString).coordinates);
     const isStreet = ['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'living_street'].includes(cls);
     const isWalk = ['footway', 'pedestrian', 'path', 'steps'].includes(cls) || isStreet;
     const half = width(t) / 2;
@@ -188,7 +190,7 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
         const h = rnd(f.properties.id + i, d);
         if (isStreet && parkingSides > 0) {
           const side = parkingSides === 2 ? (h > 0.5 ? 1 : -1) : flip; // one side only: the right of the way direction
-          if (rnd(d, f.properties.id) < 0.55) { if (placeCar(px - uz * (half - 1.05) * side, pz + ux * (half - 1.05) * side, yaw + (side > 0 ? 0 : Math.PI), Math.floor(rnd(px, pz) * 8))) cars++; }
+          if (rnd(d, f.properties.id) < 0.55) { if (placeCar(px - uz * (half - 1.05) * side, pz + ux * (half - 1.05) * side, yaw + (side > 0 ? 0 : Math.PI), Math.floor(rnd(px, pz) * CAR_VARIANT_COUNT))) cars++; }
         }
         if (isWalk && rnd(pz, px) < (isStreet ? 0.08 : 0.12)) {
           const off = isStreet ? half + 1.6 + rnd(px, d) * 1.5 : (rnd(px, d) - 0.5) * 2.5;
@@ -224,6 +226,6 @@ export async function buildFurniture(roads: FeatureCollection<Geometry, OsmProps
 
   const arr = new Float32Array(rows);
   await fs.writeFile(path.join(OUT_DIR, 'furniture.bin'), Buffer.from(arr.buffer));
-  log.info(`furniture: ${arr.length / FURNITURE_STRIDE} items (${fromOsm} from OSM points, ${fromRoads} lamps along streets)`);
+  log.info(`furniture: ${arr.length / FURNITURE_STRIDE} items (${fromOsm} from OSM points, ${fromRoads} lamps along streets, ${statues} hand-placed statues)`);
   return { count: arr.length / FURNITURE_STRIDE, bytes: arr.byteLength };
 }

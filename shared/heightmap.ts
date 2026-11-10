@@ -1,4 +1,6 @@
-/** Regular-grid terrain heightmap (Int16 centimetres of world y), shared by bake and runtime. */
+import { TERRAIN_MESH_CELL_M } from './layout.ts';
+
+/** Regular-grid terrain heightmap (Int16 centimetres of world y, little-endian; ±327 m range), shared by bake and runtime. */
 export class Heightmap {
   constructor(readonly data: Int16Array, readonly n: number, readonly step: number, readonly origin: number) {}
 
@@ -22,7 +24,7 @@ export class Heightmap {
    * anti-diagonal (triangles a-c-b and b-c-d). Geometry that must sit on the visible ground (markings, kerbs) uses this,
    * not the 2 m bilinear sample, or it floats/sinks by up to the odd-sample difference.
    */
-  meshY(x: number, z: number, cellM = 4): number {
+  meshY(x: number, z: number, cellM = TERRAIN_MESH_CELL_M): number {
     const s = Math.max(1, Math.round(cellM / this.step));
     const gx = (x - this.origin) / cellM, gz = (z - this.origin) / cellM;
     const cells = Math.floor((this.n - 1) / s);

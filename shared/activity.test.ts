@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activity } from './nightlife.js';
+import { activity } from './nightlife.ts';
 
 test('traffic and pedestrians follow the day', () => {
   for (const kind of ['car', 'walk'] as const) {

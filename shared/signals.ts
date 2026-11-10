@@ -1,4 +1,4 @@
-import { hash32 } from './hash.js';
+import { hash32 } from './hash.ts';
 
 /**
  * Traffic-signal timing shared by the signal heads (src/world/life/Signals.ts) and the cars that obey them

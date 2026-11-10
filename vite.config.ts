@@ -35,7 +35,11 @@ export default defineConfig({
   // Large model/data drops into public/ (a 200 MB glb being copied) raised EBUSY in the file watcher and killed the
   // dev server; those files are fetched at runtime, so there is nothing to hot-reload anyway.
   server: { port: 5173, open: false, watch: { ignored: ['**/public/models/**', '**/public/data/**', '**/cache/**'] } },
-  build: { target: 'es2022', sourcemap: false, chunkSizeWarningLimit: 2000 },
-  optimizeDeps: { exclude: [] },
+  build: {
+    target: 'es2022', sourcemap: false, chunkSizeWarningLimit: 1200,
+    // three, the post-processing stack and the BVH each in their own long-cached chunk; app code changes do not
+    // invalidate them (the 1.1 MB monolith re-downloaded on every deploy)
+    rollupOptions: { output: { advancedChunks: { groups: [{ name: 'three', test: /node_modules[\\/]three[\\/]/ }, { name: 'post', test: /node_modules[\\/](postprocessing|n8ao)[\\/]/ }, { name: 'bvh', test: /node_modules[\\/]three-mesh-bvh[\\/]/ }] } } },
+  },
   plugins: [precompressed()],
 });

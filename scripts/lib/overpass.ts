@@ -1,11 +1,10 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import osmtogeojson from 'osmtogeojson';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { BBOX_PADDED, CACHE_DIR, OVERPASS_ENDPOINTS } from '../config.ts';
-import { ensureDir, exists, fetchRetry, sleep, writeJson, readJson, fmtBytes } from './http.ts';
+import { ensureDir, exists, fetchRetry, sleep, writeJson, writeFileAtomic, readJson, fmtBytes } from './http.ts';
 
 export const THEMES: Record<string, string> = {
   buildings: `( way["building"]; relation["building"]; way["building:part"]; relation["building:part"]; relation["type"="building"]; );`,
@@ -54,8 +53,7 @@ async function fetchTheme(theme: string, force: boolean): Promise<{ raw: any; fr
       let raw: any;
       try { raw = JSON.parse(text); } catch { throw new Error(`non-JSON response (${text.slice(0, 120)})`); }
       if (raw.remark && /timed out|runtime error/i.test(raw.remark)) throw new Error(`overpass remark: ${raw.remark}`);
-      await ensureDir(rawDir);
-      await fs.writeFile(file, text);
+      await writeFileAtomic(file, text);   // the response text as received: re-serialising 100+ MB of JSON buys nothing
       log.info(`overpass ${theme}: ${raw.elements?.length ?? 0} elements, ${fmtBytes(text.length)}, db ${raw.osm3s?.timestamp_osm_base}`);
       return { raw, fromCache: false };
     } catch (e) {
@@ -97,6 +95,19 @@ async function tiledIncomplete(theme: string): Promise<boolean> {
   if (!await exists(file)) return true;
   const cov = (await readJson<{ coverage?: Coverage }>(file)).coverage;
   return !!cov && cov.ok.length < cov.n * cov.n;
+}
+
+/**
+ * Cells of a tiled theme that `build` will bake without: every cell when the theme never made it to cache/osm/ (a
+ * bake:osm whose gateways all failed), the uncovered ones of a partial fetch, 0 for an untiled theme or a raw file
+ * without a coverage record. build reads the points theme leniently, so this count is the only trace such a run leaves.
+ */
+export async function missingCells(theme: string): Promise<number> {
+  if (!TILED_THEMES.has(theme)) return 0;
+  if (!await exists(path.join(geoDir, `${theme}.geojson`))) return TILE_N * TILE_N;
+  const file = path.join(rawDir, `${theme}.json`);
+  const cov = await exists(file) ? (await readJson<{ coverage?: Coverage }>(file)).coverage : undefined;
+  return cov ? Math.max(0, cov.n * cov.n - cov.ok.length) : 0;
 }
 
 /** Fetch a theme cell by cell; cells that fail everywhere are recorded in `coverage` and skipped. */
@@ -152,8 +163,7 @@ async function fetchThemeTiled(theme: string, force: boolean): Promise<{ raw: an
   ok.sort((a, b) => a - b);
   const coverage: Coverage = { n: TILE_N, ok, boxes };
   const raw = { version: 0.6, generator: 'tiled-fetch', osm3s, elements: [...elements.values()], coverage };
-  await ensureDir(rawDir);
-  await fs.writeFile(file, JSON.stringify(raw));
+  await writeJson(file, raw);
   log.info(`overpass ${theme}: ${raw.elements.length} elements from ${ok.length}/${boxes.length} cells`);
   return { raw, fromCache: false };
 }
@@ -183,20 +193,30 @@ export async function run(ctx: BakeContext) {
   await ensureDir(geoDir);
   const summaryFile = path.join(geoDir, 'summary.json');
   const summary: Record<string, unknown> = await exists(summaryFile) ? await readJson(summaryFile) : {};
+  const failed: string[] = [];
   for (const theme of Object.keys(THEMES)) {
     const out = path.join(geoDir, `${theme}.geojson`);
     if (!ctx.force && await exists(out) && !(TILED_THEMES.has(theme) && await tiledIncomplete(theme))) { log.info(`osm ${theme}: cached`); continue; }
-    const { raw } = TILED_THEMES.has(theme) ? await fetchThemeTiled(theme, ctx.force) : await fetchTheme(theme, ctx.force);
-    const fc = osmtogeojson(raw) as FeatureCollection<Geometry, OsmProps>;
-    const tainted = fc.features.filter(f => (f.properties as any)?.tainted).length;
-    if (tainted) log.warn(`osm ${theme}: ${tainted} tainted (incomplete) features`);
-    const byType: Record<string, number> = {};
-    for (const f of fc.features) byType[f.geometry.type] = (byType[f.geometry.type] ?? 0) + 1;
-    log.info(`osm ${theme}: ${fc.features.length} features`, JSON.stringify(byType));
-    summary[theme] = { count: fc.features.length, byType, timestamp: raw.osm3s?.timestamp_osm_base, coverage: raw.coverage };
-    await writeJson(out, fc);
+    try {
+      const { raw } = TILED_THEMES.has(theme) ? await fetchThemeTiled(theme, ctx.force) : await fetchTheme(theme, ctx.force);
+      const fc = osmtogeojson(raw) as FeatureCollection<Geometry, OsmProps>;
+      const tainted = fc.features.filter(f => (f.properties as any)?.tainted).length;
+      if (tainted) log.warn(`osm ${theme}: ${tainted} tainted (incomplete) features`);
+      const byType: Record<string, number> = {};
+      for (const f of fc.features) byType[f.geometry.type] = (byType[f.geometry.type] ?? 0) + 1;
+      log.info(`osm ${theme}: ${fc.features.length} features`, JSON.stringify(byType));
+      summary[theme] = { count: fc.features.length, byType, timestamp: raw.osm3s?.timestamp_osm_base, coverage: raw.coverage };
+      await writeJson(out, fc);
+      // summary.json goes out after every theme, not once after the loop: a theme that failed later used to take the
+      // timestamps of the ones already written down with it, and the next `build` stamped manifest.osmTimestamp
+      // undefined although buildings.geojson was fresh. The other themes keep going so one flaky query costs one theme.
+      await writeJson(summaryFile, summary);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failed.push(`${theme}: ${msg}`); log.warn(`osm ${theme}: failed (${msg.split('\n')[0]})`);
+    }
     // Be polite between themes.
     await sleep(2000);
   }
-  if (Object.keys(summary).length) await writeJson(summaryFile, summary);
+  if (failed.length) throw new Error(`osm: ${failed.length} of ${Object.keys(THEMES).length} themes failed\n  ${failed.join('\n  ')}`);
 }

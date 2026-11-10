@@ -1,12 +1,15 @@
 import * as THREE from 'three';
+import { MODELS_URL, fetchJson } from './DataLoader';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { buildLattice } from './EiffelLattice';
+import { adaptGltfMaterial, adoptGltfScene } from './gltf';
 
 /** lighthouse beams: length rendered (m), half-width at the lamp and at the far end (m), elevation (deg), seconds per turn */
 const BEAM_LEN = 1600, BEAM_W0 = 2.2, BEAM_W1 = 70, BEAM_ELEV = 3, BEAM_PERIOD = 40;
+const BEAM_COS_E = Math.cos(BEAM_ELEV * Math.PI / 180), BEAM_SIN_E = Math.sin(BEAM_ELEV * Math.PI / 180), BEAM_DIRS = [0, Math.PI];
 
 interface EiffelMeta { kind?: 'scan' | '3dmr'; textured?: boolean; top?: number; height?: number; centre?: [number, number]; author?: string; license?: string; source?: string; title?: string }
 
@@ -41,9 +44,10 @@ export class Eiffel {
   kind: 'lattice' | 'scan' = 'scan';
 
   async load(): Promise<void> {
-    try { this.meta = await (await fetch('/models/eiffel.json')).json(); } catch { this.meta = {}; }
+    try { this.meta = await fetchJson<EiffelMeta>(`${MODELS_URL}/eiffel.json`); } catch { this.meta = {}; }
     this.top = this.meta.top ?? this.meta.height ?? 300;
     if (this.meta.centre) this.centre.set(this.meta.centre[0], 0, this.meta.centre[1]);
+    this.uniforms.uCentre.value.copy(this.centre);   // fixed for the session: no per-frame copy
     if (this.kind === 'lattice') {
       const lat = buildLattice();
       lat.mesh.position.copy(this.centre);
@@ -66,23 +70,16 @@ export class Eiffel {
     try {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const gltf = await loader.loadAsync('/models/eiffel.glb');
-      const positions: THREE.Vector3[] = [];
-      gltf.scene.updateMatrixWorld(true);
-      gltf.scene.traverse(o => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true; m.receiveShadow = true;
-        m.frustumCulled = true;
-        const g = m.geometry;
-        const idx = g.index;
-        this.triangles += (idx ? idx.count : g.attributes.position.count) / 3;
-        m.material = this.adaptMaterial(m.material as THREE.MeshStandardMaterial);
-        // Sample vertices for night sparkles (world space).
-        const pos = g.attributes.position;
-        const step = Math.max(1, Math.floor(pos.count / 6000));
-        const v = new THREE.Vector3();
-        for (let i = 0; i < pos.count; i += step) { v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); positions.push(v.clone()); }
+      const gltf = await loader.loadAsync(`${MODELS_URL}/eiffel.glb`);
+      const positions: THREE.Vector3[] = [], v = new THREE.Vector3();
+      this.triangles += adoptGltfScene(gltf.scene, {
+        adapt: src => this.adaptMaterial(src), materials: this.materials,
+        onMesh: m => {
+          // Sample vertices for night sparkles (world space).
+          const pos = m.geometry.attributes.position;
+          const step = Math.max(1, Math.floor(pos.count / 6000));
+          for (let i = 0; i < pos.count; i += step) { v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); positions.push(v.clone()); }
+        },
       });
       this.group.add(gltf.scene);
       this.addSparkles(positions);
@@ -95,18 +92,17 @@ export class Eiffel {
     }
   }
 
+  /** Photogrammetry keeps the photo (glowing through it after dusk); a solid model gets the shaded three-tone paint. */
   private adaptMaterial(src: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
-    const textured = !!src.map;
-    const mat = textured ? src : new THREE.MeshStandardMaterial();
-    if (textured) {
-      // Photogrammetry: keep the photo, but give the paint a little sheen and a night glow driven by the same texture.
-      mat.roughness = 0.62; mat.metalness = 0.12; mat.envMapIntensity = 0.7;
-      mat.color.setRGB(1.10, 0.99, 0.88); // the scan was shot under a grey sky; nudge toward the real "Eiffel brown"
-      mat.emissiveMap = mat.map; mat.emissive = new THREE.Color(0, 0, 0);
-      if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; }
-    } else {
+    return adaptGltfMaterial(src, { glow: true, tune: (mat, _src, textured) => {
+      if (textured) {
+        // Photogrammetry: keep the photo, but give the paint a little sheen and a night glow driven by the same texture.
+        mat.roughness = 0.62; mat.metalness = 0.12; mat.envMapIntensity = 0.7;
+        mat.color.setRGB(1.10, 0.99, 0.88); // the scan was shot under a grey sky; nudge toward the real "Eiffel brown"
+        return;
+      }
       // Solid model: three-tone "Eiffel brown", darker at the base and lighter towards the top.
-      mat.color.set(0xffffff); mat.roughness = 0.5; mat.metalness = 0.35; mat.side = src.side;
+      mat.color.set(0xffffff); mat.roughness = 0.5; mat.metalness = 0.35;
       mat.customProgramCacheKey = () => 'eiffel-paint-v2';
       mat.userData.floodlit = true;
       mat.onBeforeCompile = shader => {
@@ -135,11 +131,7 @@ export class Eiffel {
               totalEmissiveRadiance += vec3(1.0, 0.50, 0.15) * 0.9 * litk * uTowerLit;
             }`);
       };
-      mat.emissive = new THREE.Color(0, 0, 0);
-    }
-    withLamps(mat);
-    this.materials.push(mat);
-    return mat;
+    } });
   }
 
   private addSparkles(points: THREE.Vector3[]) {
@@ -264,7 +256,6 @@ export class Eiffel {
     const on = night * this.lit;
     this.uniforms.uNight.value = night; this.uniforms.uTime.value = time;
     this.uniforms.uTowerLit.value = on; this.uniforms.uSparkle.value = this.sparkle * this.lit;
-    this.uniforms.uCentre.value.copy(this.centre);
     // Sodium-gold floodlighting: the CAD model shades it per normal in its shader (userData.floodlit); the photo scan
     // modulates its texture, and the procedural lattice glows a little more on beams than on the see-through panels.
     for (const m of this.materials) {
@@ -280,9 +271,9 @@ export class Eiffel {
     // lamp-head glare: how squarely either beam is aimed at the camera
     if (this.glare && this.beams) {
       const dx = camX - this.centre.x, dy = camY - (this.top + 2), dz = camZ - this.centre.z, l = Math.hypot(dx, dy, dz) || 1;
-      const yaw = this.beams.rotation.y, cosE = Math.cos(THREE.MathUtils.degToRad(BEAM_ELEV)), sinE = Math.sin(THREE.MathUtils.degToRad(BEAM_ELEV));
+      const yaw = this.beams.rotation.y, cosE = BEAM_COS_E, sinE = BEAM_SIN_E;
       let best = 0;
-      for (const d of [0, Math.PI]) { const bx = Math.cos(yaw + d) * cosE, bz = -Math.sin(yaw + d) * cosE; best = Math.max(best, (bx * dx + sinE * dy + bz * dz) / l); }
+      for (const d of BEAM_DIRS) { const bx = Math.cos(yaw + d) * cosE, bz = -Math.sin(yaw + d) * cosE; best = Math.max(best, (bx * dx + sinE * dy + bz * dz) / l); }
       (this.glare.material as THREE.SpriteMaterial).opacity = on * (0.12 + 0.88 * Math.pow(Math.max(0, best), 24));
     }
   }
@@ -290,7 +281,7 @@ export class Eiffel {
   /** Coarse parametric lattice tower used only when the baked model is missing. */
   private procedural(): THREE.Object3D {
     const g = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x5c4a3a, roughness: 0.6, metalness: 0.4 });
+    const mat = withLamps(new THREE.MeshStandardMaterial({ color: 0x5c4a3a, roughness: 0.6, metalness: 0.4 }));
     this.materials.push(mat);
     const beam = new THREE.BoxGeometry(1, 1, 1);
     const mesh = new THREE.InstancedMesh(beam, mat, 4 * 60 + 3 * 8);

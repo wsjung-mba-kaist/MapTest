@@ -19,7 +19,10 @@ test('shops close at 20h, restaurants at 01h, the tower goes dark at 23:45 and s
   assert.equal(towerLit(22, 20.3, 7.2), 1);
   assert.equal(towerLit(23.8, 20.3, 7.2), 0);
   assert.equal(towerLit(23.8, 20.3, 7.2, true), 1);
-  assert.equal(towerSparkle(23.02, 20.3), 1);
-  assert.equal(towerSparkle(23.2, 20.3), 0);
-  assert.equal(towerSparkle(15.02, 20.3), 0);
+  assert.equal(towerSparkle(23.02, 20.3, 7.2), 1);
+  assert.equal(towerSparkle(23.2, 20.3, 7.2), 0);
+  assert.equal(towerSparkle(15.02, 20.3, 7.2), 0);
+  assert.equal(towerSparkle(0.02, 20.3, 7.2), 0, 'lights are off after 23:45');
+  assert.equal(towerSparkle(0.02, 20.3, 7.2, true), 1, 'alwaysOn: the sparkle follows the lights past midnight');
+  assert.equal(towerSparkle(9.02, 20.3, 7.2, true), 0, 'alwaysOn still ends after sunrise');
 });

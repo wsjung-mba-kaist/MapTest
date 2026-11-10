@@ -8,7 +8,9 @@ import { ORIGIN } from '../../shared/geo';
 /** Paris skyglow (linear radiance at the horizon): the one constant the night sky, haze and fill light derive from. */
 export type Weather = 'clear' | 'overcast' | 'rain' | 'fog';
 export const SKY_GLOW = new THREE.Vector3(0.16, 0.11, 0.075);
-import { buildingUniforms } from '../materials/FacadeMaterial';
+const FOG_DAY = new THREE.Color(0xb7c9dc), FOG_DAY_OC = new THREE.Color(0.58, 0.61, 0.65), FOG_DUSK = new THREE.Color(0xd9a98a), FOG_DUSK_OC = new THREE.Color(0.5, 0.5, 0.52);
+const fogDayTmp = new THREE.Color(), fogDuskTmp = new THREE.Color(), fogNightTmp = new THREE.Color();
+import { globalUniforms } from './GlobalUniforms';
 import { CLOUD_BODY, CLOUD_DECL, cloudDensityJs, NIGHT_SKY_BODY, NIGHT_SKY_DECL, localSiderealTime, moonDirection, starMatrix, starTexture } from './NightSky';
 import { REFLECT_LAYER } from './WaterReflection';
 
@@ -201,7 +203,8 @@ export class Environment {
   private applyGlow() {
     // low cloud throws the city's light back down: Paris overcast nights are distinctly orange
     const k = this.weather === 'overcast' || this.weather === 'rain' ? 1.7 : this.weather === 'fog' ? 1.25 : 1;
-    (this.sky.material as THREE.ShaderMaterial).uniforms.uGlow.value.copy(this.glowOn ? SKY_GLOW.clone().multiplyScalar(k) : new THREE.Vector3());
+    const g = (this.sky.material as THREE.ShaderMaterial).uniforms.uGlow.value as THREE.Vector3;
+    if (this.glowOn) g.copy(SKY_GLOW).multiplyScalar(k); else g.set(0, 0, 0);
   }
   /** Sky, sun, fog and fill light for a weather type; the caller handles wet ground, rain particles and wind. */
   setWeather(w: Weather) {
@@ -266,13 +269,14 @@ export class Environment {
     const dusk = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(elev), -4, 12);
     // haze: daylight blue-grey -> dusk peach -> the skyglow colour itself (so the far ring dissolves into the sky, no seam)
     const glowK = 0.55 * (1 + 0.6 * oc);
-    const fogDay = new THREE.Color(0xb7c9dc).lerp(new THREE.Color(0.58, 0.61, 0.65), oc), fogDusk = new THREE.Color(0xd9a98a).lerp(new THREE.Color(0.5, 0.5, 0.52), oc);
-    const fogNight = new THREE.Color(SKY_GLOW.x * glowK, SKY_GLOW.y * glowK, SKY_GLOW.z * glowK);
+    // applyNight runs every frame during time-lapse: lerp into module temporaries instead of four Colors per call
+    const fogDay = fogDayTmp.copy(FOG_DAY).lerp(FOG_DAY_OC, oc), fogDusk = fogDuskTmp.copy(FOG_DUSK).lerp(FOG_DUSK_OC, oc);
+    const fogNight = fogNightTmp.setRGB(SKY_GLOW.x * glowK, SKY_GLOW.y * glowK, SKY_GLOW.z * glowK);
     this.fog.color.copy(fogDay).lerp(fogDusk, 1 - dusk).lerp(fogNight, n);
     // city haze at night is real, but the lights must punch through it; cloud, rain and fog thicken it
     const fogK = this.weather === 'fog' ? 9 : this.weather === 'rain' ? 3 : this.weather === 'overcast' ? 2.2 : 1;
     this.fog.density = 0.00030 * fogK;
-    buildingUniforms.uNight.value = n;
+    globalUniforms.uNight.value = n;
   }
 
   /** Per-frame: star twinkle clock. */
@@ -294,13 +298,19 @@ export class Environment {
 }
 
 // ---- Europe/Paris calendar helpers (Intl-based, DST-aware; fall back to CEST when Intl has no time zones)
+let todayAt = -Infinity, todayVal: [number, number, number] = [2000, 1, 1];
 export function todayParis(): [number, number, number] {
+  // Cached for a minute: the clock chip refreshes every frame during time-lapse, and building an Intl.DateTimeFormat
+  // per frame is exactly the cost the hour/sun caches in Environment were introduced to remove.
+  const now = Date.now();
+  if (now - todayAt < 60_000) return todayVal;
+  todayAt = now;
   try {
-    const s = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const s = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
     const [y, m, d] = s.split('-').map(Number);
-    if (y && m && d) return [y, m, d];
+    if (y && m && d) return (todayVal = [y, m, d]);
   } catch { /* no Intl time zones */ }
-  const n = new Date(); return [n.getFullYear(), n.getMonth() + 1, n.getDate()];
+  const n = new Date(now); return (todayVal = [n.getFullYear(), n.getMonth() + 1, n.getDate()]);
 }
 /** UTC offset (hours) of Europe/Paris at noon on that day: 1 in winter, 2 in summer. */
 let offsetKey = '';

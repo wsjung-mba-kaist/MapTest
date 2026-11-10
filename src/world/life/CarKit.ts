@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../../materials/patch';
+import { MODELS_URL } from '../DataLoader';
+import { CAR_VARIANTS } from '../../../shared/layout';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { withLamps } from '../../render/LocalLights';
@@ -13,7 +16,7 @@ import { withLamps } from '../../render/LocalLights';
  */
 export interface CarModel { geometry: THREE.BufferGeometry; length: number; width: number; height: number }
 
-export const CAR_VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'sedan-sports', 'police', 'delivery'] as const;
+export { CAR_VARIANTS };   // the list lives in shared/layout.ts next to FurnitureKind, whose Car run it sizes
 
 /** Paris street mix: mostly white / grey / black, a few blues, reds and beiges (sRGB). */
 const PAINT: { hex: number; w: number }[] = [
@@ -120,7 +123,7 @@ function paintMask(g: THREE.BufferGeometry, tex: THREE.Texture): Float32Array {
 }
 
 export async function loadCarModel(name: string, targetLength: number): Promise<CarModel> {
-  const gltf = await new GLTFLoader().loadAsync(`/models/cars/${name}.glb`);
+  const gltf = await new GLTFLoader().loadAsync(`${MODELS_URL}/cars/${name}.glb`);
   gltf.scene.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(gltf.scene);
   const size = box.getSize(new THREE.Vector3());
@@ -214,6 +217,7 @@ export function makeCarMaterial(uniforms: CarUniforms): THREE.MeshStandardMateri
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.55, metalness: 0.12 });
   mat.customProgramCacheKey = () => 'carkit-v5';
   mat.onBeforeCompile = shader => {
+  assertAnchors('CarKit', shader.vertexShader, shader.fragmentShader, ['common'], ['color_fragment', 'common', 'emissivemap_fragment', 'metalnessmap_fragment', 'roughnessmap_fragment']);
     Object.assign(shader.uniforms, uniforms);
     carVertexPatch(shader);
     shader.fragmentShader = shader.fragmentShader

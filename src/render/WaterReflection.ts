@@ -28,9 +28,10 @@ export class WaterReflection {
   private width = 2; private height = 2;
   private frames = 0;
   /** ?refldbg=noclip|noshadow|norender isolates parts of the pass while debugging. */
-  private readonly dbg = typeof location !== 'undefined' ? (new URLSearchParams(location.search).get('refldbg') ?? '') : '';
+  private readonly dbg: string;
 
-  constructor(readonly renderer: THREE.WebGLRenderer, public planeY: number, width: number, height: number, div = 2) {
+  constructor(readonly renderer: THREE.WebGLRenderer, public planeY: number, width: number, height: number, div = 2, dbg = '') {
+    this.dbg = dbg;
     this.div = div;
     this.target = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: true, stencilBuffer: false, samples: 0 });
     this.target.texture.minFilter = THREE.LinearFilter; this.target.texture.magFilter = THREE.LinearFilter;

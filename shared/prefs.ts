@@ -6,7 +6,7 @@ export type Quality = 'auto' | 'low' | 'medium' | 'high';
 export type PixelRatio = 'auto' | 0.5 | 0.75 | 1 | 1.5 | 2;
 
 export interface Prefs {
-  v: 1;
+  v: typeof PREFS_VERSION;
   quality: Quality;
   shadows: boolean;
   reflection: boolean;
@@ -17,8 +17,10 @@ export interface Prefs {
   /** vertical field of view (degrees) */
   fov: number;
   headBob: boolean;
-  /** master volume 0..1 (mute is a separate switch, `paris.audio.muted`) */
+  /** master volume 0..1 */
   volume: number;
+  /** V: sound off (kept here since v2; v1 stored it under its own key) */
+  muted: boolean;
   minimap: boolean;
   compass: boolean;
   /** floating landmark name tags */
@@ -29,14 +31,14 @@ export interface Prefs {
   diagnostics: boolean;
 }
 
-export const PREFS_VERSION = 1;
+export const PREFS_VERSION = 2;
 export const PIXEL_RATIOS: readonly PixelRatio[] = ['auto', 0.5, 0.75, 1, 1.5, 2];
 export const QUALITIES: readonly Quality[] = ['auto', 'low', 'medium', 'high'];
 export const PREFS_RANGE = { sensitivity: [0.4, 2.5], fov: [50, 100], volume: [0, 1] } as const;
 
 export const DEFAULT_PREFS: Readonly<Prefs> = {
-  v: 1, quality: 'auto', shadows: true, reflection: true, ao: true, pixelRatio: 'auto', sensitivity: 1, fov: 70,
-  headBob: true, volume: 1, minimap: false, compass: true, labels: false, life: true, diagnostics: false,
+  v: PREFS_VERSION, quality: 'auto', shadows: true, reflection: true, ao: true, pixelRatio: 'auto', sensitivity: 1, fov: 70,
+  headBob: true, volume: 1, muted: false, minimap: false, compass: true, labels: false, life: true, diagnostics: false,
 };
 
 /** Defaults for a device: phones lose AO, the planar reflection, the compass and hi-dpi; reduced motion drops the head bob. */
@@ -49,14 +51,28 @@ export function defaultPrefs(env: { coarse: boolean; reducedMotion: boolean }): 
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** Parse stored JSON (or any object): unknown keys are dropped, bad values fall back to `base`, numbers are clamped. */
-export function parsePrefs(raw: unknown, base: Readonly<Prefs> = DEFAULT_PREFS): Prefs {
+/**
+ * Bring an older stored object up to the current layout, one version at a time, keeping every setting that still
+ * exists. Bumping PREFS_VERSION used to reset everyone's settings; now it only needs a step here.
+ *   1 -> 2: `muted` joined the object (it lived under its own localStorage key; the runtime passes it in as `legacy`).
+ */
+export function migratePrefs(o: Record<string, unknown>, legacy: { muted?: boolean } = {}): Record<string, unknown> | null {
+  let v = typeof o.v === 'number' ? o.v : 0;
+  if (v < 1 || v > PREFS_VERSION) return null;   // unknown shape or from a newer build: ignore wholesale
+  const out: Record<string, unknown> = { ...o };
+  if (v === 1) { out.muted = legacy.muted ?? false; v = 2; }
+  out.v = v;
+  return out;
+}
+
+/** Parse stored JSON (or any object): older versions are migrated, unknown keys are dropped, bad values fall back to `base`, numbers are clamped. */
+export function parsePrefs(raw: unknown, base: Readonly<Prefs> = DEFAULT_PREFS, legacy: { muted?: boolean } = {}): Prefs {
   const p: Prefs = { ...base };
   if (!raw || typeof raw !== 'object') return p;
-  const o = raw as Record<string, unknown>;
-  if (o.v !== PREFS_VERSION) return p;
-  const bool = (k: 'shadows' | 'reflection' | 'ao' | 'headBob' | 'minimap' | 'compass' | 'labels' | 'life' | 'diagnostics') => { if (typeof o[k] === 'boolean') p[k] = o[k] as boolean; };
-  for (const k of ['shadows', 'reflection', 'ao', 'headBob', 'minimap', 'compass', 'labels', 'life', 'diagnostics'] as const) bool(k);
+  const o = migratePrefs(raw as Record<string, unknown>, legacy);
+  if (!o) return p;
+  const bool = (k: 'shadows' | 'reflection' | 'ao' | 'headBob' | 'muted' | 'minimap' | 'compass' | 'labels' | 'life' | 'diagnostics') => { if (typeof o[k] === 'boolean') p[k] = o[k] as boolean; };
+  for (const k of ['shadows', 'reflection', 'ao', 'headBob', 'muted', 'minimap', 'compass', 'labels', 'life', 'diagnostics'] as const) bool(k);
   if (typeof o.quality === 'string' && (QUALITIES as readonly string[]).includes(o.quality)) p.quality = o.quality as Quality;
   if (o.pixelRatio === 'auto' || (typeof o.pixelRatio === 'number' && (PIXEL_RATIOS as readonly unknown[]).includes(o.pixelRatio))) p.pixelRatio = o.pixelRatio as PixelRatio;
   for (const k of ['sensitivity', 'fov', 'volume'] as const) {

@@ -4,9 +4,13 @@
  * cycles hidden -> 320 m -> 800 m -> 1.5 km -> hidden; a click while the pointer is free flies the player there.
  * Redrawn at 10 Hz from a plain <img>, so it costs nothing on the GPU side.
  */
+import { WORLD_HALF } from '../../shared/layout';
+import { DATA_URL } from '../world/DataLoader';
+import { S } from './strings';
+
 export interface MapMarker { x: number; z: number; name: string; short?: string; category?: string; hotkey?: number; /** site radius (m): bigger sites get their label first */ weight?: number }
 
-const WORLD = 3072;          // metres covered by overview.jpg
+const WORLD = 2 * WORLD_HALF;   // metres covered by overview.jpg (the baked square)
 const HALF = WORLD / 2;
 const SPANS = [320, 800, 1500];
 
@@ -24,7 +28,7 @@ export class Minimap {
   onPick: ((x: number, z: number) => void) | null = null;
   private centre = { x: 0, z: 0 };
 
-  constructor(parent: HTMLElement, private readonly markers: MapMarker[], overviewUrl = '/data/ground/overview.jpg') {
+  constructor(parent: HTMLElement, private readonly markers: MapMarker[], overviewUrl = `${DATA_URL}/ground/overview.jpg`) {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'minimap';
     this.canvas.width = this.canvas.height = this.size * 2;   // 2x for crisp text on hi-dpi screens
@@ -35,7 +39,7 @@ export class Minimap {
     img.onload = () => { this.img = img; this.last = 0; };
     img.src = overviewUrl;
     this.canvas.style.pointerEvents = 'auto'; this.canvas.style.cursor = 'crosshair';
-    this.canvas.title = '클릭: 그곳으로 이동 · 휠: 축척';
+    this.canvas.title = S.minimap.title;
     this.canvas.addEventListener('pointerdown', e => e.stopPropagation());
     this.canvas.addEventListener('click', e => {
       if (!this.onPick) return;

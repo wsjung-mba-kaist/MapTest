@@ -91,3 +91,17 @@ test('parts inside a landmark outline inherit the Monument style, name and tint'
   assert.deepEqual(dome.tint, outline.tint, 'part without its own colour takes the outline stone');
   assert.deepEqual(wing.tint, [255, 255, 255], 'a part with building:colour keeps it');
 });
+
+/** CLAUDE.md trap: an untagged footprint falls through to the Haussmann default (18.5 m eave, mansard); moored boats,
+ *  pontoons and piers must take the `floating` branch instead or they become six-storey blocks on the river. */
+test('floating footprints (boats, pontoons, piers) never get the Haussmann default', () => {
+  const [boat, pier, plain] = specsOf([
+    feature(1, 100, 100, 12, { building: 'houseboat' }),
+    feature(2, 200, 200, 12, { man_made: 'pier', building: 'yes' }),
+    feature(3, 300, 300, 12, { building: 'yes' }),
+  ]);
+  assert.ok(boat.floating && pier.floating, 'houseboat and pier are floating');
+  assert.ok(boat.eave < 8 && pier.eave < 8, `floating eaves stay low: ${boat.eave}, ${pier.eave}`);
+  assert.equal(boat.roof, 'flat'); assert.equal(pier.roof, 'flat');
+  assert.ok(!plain.floating);
+});

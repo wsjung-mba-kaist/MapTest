@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dayOfYear, seasonState } from './season.js';
+import { dayOfYear, seasonState } from './season.ts';
 
 test('day of year', () => {
   assert.equal(dayOfYear(2026, 1, 1), 1);

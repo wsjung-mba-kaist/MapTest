@@ -31,6 +31,8 @@ export async function fetchLayer(typename: string, bbox: LonLatBox, tag: string,
     const url = WFS_BDTOPO(typename, bbox, PAGE, start, cql);
     const res = await fetchRetry(url, { timeoutMs: 180_000, onRetry: (n, why) => log.warn(`wfs retry ${n}: ${why}`) });
     const fc = await res.json() as FeatureCollection<Polygon | MultiPolygon, BdTopoProps> & { numberMatched?: number };
+    // an ExceptionReport comes back as JSON too when OUTPUTFORMAT is json: it has no `features`, and spreading undefined threw a bare TypeError
+    if (fc?.type !== 'FeatureCollection' || !Array.isArray(fc.features)) throw new Error(`bdtopo ${tag}: page at ${start} is not a FeatureCollection (${JSON.stringify(fc).slice(0, 160)})`);
     features.push(...fc.features);
     log.info(`bdtopo ${tag}: +${fc.features.length} (total ${features.length}${fc.numberMatched != null ? ` / ${fc.numberMatched}` : ''})`);
     if (fc.features.length < PAGE) break;
@@ -42,7 +44,9 @@ export async function fetchLayer(typename: string, bbox: LonLatBox, tag: string,
     else f.geometry.coordinates.forEach(p => p.forEach(strip));
   }
   const result: FeatureCollection<Polygon | MultiPolygon, BdTopoProps> = { type: 'FeatureCollection', features };
-  await writeJson(out, result);
+  // an empty layer is never right for central Paris: hand it on for this run but do not cache it, or every later step reads zero heights
+  if (!features.length) log.warn(`bdtopo ${tag}: 0 features, not cached (${WFS_BDTOPO(typename, bbox, PAGE, 0, cql).slice(0, 120)}…)`);
+  else await writeJson(out, result);
   return result;
 }
 

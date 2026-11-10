@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
 import { buildingUniforms } from '../materials/FacadeMaterial';
 import type { Season } from '../../shared/season';
 import { withLamps } from '../render/LocalLights';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CHUNK_SIZE, GRID_N, KERB_H, SurfaceClass, TREE_STRIDE, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
-import { DATA_URL, fetchBuffer, loadTexture } from './DataLoader';
+import { DATA_URL, fetchBuffer, loadTexture, assetUrl } from './DataLoader';
 import type { SurfaceGrid } from '../../shared/surfacegrid';
 
 /**
@@ -14,7 +15,7 @@ import type { SurfaceGrid } from '../../shared/surfacegrid';
 export class Trees {
   readonly group = new THREE.Group();
   count = 0;
-  lodDistance = 240;
+  lodDistance: number = RADII.treesLod;
   private cells = new Map<string, { lod0: THREE.Group; lod1: THREE.Group; cx: number; cz: number }>();
   private readonly uniforms = { uTime: { value: 0 }, uWind: { value: 0.7 }, uNight: buildingUniforms.uNight, uCoverage: { value: 1 }, uAutumn: { value: 0 }, uFresh: { value: 0 } };
   /** Foliage by date (shared/season.ts): coverage drops cards, autumn/fresh retint the rest. */
@@ -37,9 +38,10 @@ export class Trees {
     this.surface = surface; this.groundY = groundY;
     const [buf, bark] = await Promise.all([
       fetchBuffer(`${DATA_URL}/trees.bin`),
-      loadTexture('/textures/pbr/Bark014_color.jpg').catch(() => null),
+      loadTexture(assetUrl('textures/pbr/Bark014_color.jpg')).catch(() => null),
     ]);
     const data = new Float32Array(buf);
+    if (data.length % TREE_STRIDE) throw new Error(`trees.bin: ${data.length} floats is not a multiple of TREE_STRIDE=${TREE_STRIDE} — stale bake`);
     this.count = data.length / TREE_STRIDE;
     this.trunkMat = withLamps(new THREE.MeshStandardMaterial({ color: bark ? 0xb9b0a6 : 0x5a4a3c, map: bark ?? undefined, roughness: 0.95 }));
     if (bark) { bark.wrapS = bark.wrapT = THREE.RepeatWrapping; bark.repeat.set(1, 2); }
@@ -60,6 +62,9 @@ export class Trees {
     }
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
     const col = new THREE.Color();
+    // grate placements (x, y, z, seed) per chunk cell: every species shares the one grate geometry and material, so one
+    // InstancedMesh per cell instead of one per (cell × species) bucket
+    const cellPits = new Map<string, number[]>();
     for (const [key, idx] of buckets) {
       const [ck, spS] = key.split('|');
       const sp = Number(spS);
@@ -74,28 +79,18 @@ export class Trees {
       }
       const spec = SPECIES[sp] ?? SPECIES[6];
       // cast-iron grate around every trunk that stands on a sidewalk slab (park trees stand in earth)
-      {
-        const pits: number[] = [];
-        for (const k of idx) {
-          const b = k * TREE_STRIDE, cls = this.surface?.classAt(data[b], data[b + 2]) ?? SurfaceClass.None;
-          this.classHist.set(cls, (this.classHist.get(cls) ?? 0) + 1);
-          // street trees (anything but lawn, gravel alley or water) get a grate, laid on the rendered ground + kerb
-          if (cls !== SurfaceClass.None && cls !== SurfaceClass.Grass && cls !== SurfaceClass.Gravel && cls !== SurfaceClass.Water) {
-            const x = data[b], z = data[b + 2];
-            // kerb-line trees sit on the 2 m grid's road/paved cell next to the slab: look 1.2 m around for the sidewalk
-            const sw = this.surface && (cls === SurfaceClass.Sidewalk || [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]].some(([dx, dz]) => this.surface!.classAt(x + dx, z + dz) === SurfaceClass.Sidewalk));
-            if (cls === SurfaceClass.Road && !sw) continue;   // a tree in the carriageway grid with no slab around: median, no grate
-            const gy = this.groundY ? this.groundY(x, z) : data[b + 1];
-            pits.push(x, gy + (sw ? KERB_H : 0) + 0.03, z, data[b + 6]);
-          }
-        }
-        if (pits.length) {
-          this.pitMat ??= withLamps(new THREE.MeshStandardMaterial({ map: grateTexture(), alphaTest: 0.5, color: 0x9a9a9c, roughness: 0.75, metalness: 0.35, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
-          const mesh = new THREE.InstancedMesh(this.pitGeom, this.pitMat, pits.length / 4);
-          for (let n = 0; n < pits.length / 4; n++) { p.set(pits[n * 4], pits[n * 4 + 1], pits[n * 4 + 2]); q.setFromAxisAngle(UP, frac(pits[n * 4 + 3] * 0.13) * Math.PI); s.set(1, 1, 1); m.compose(p, q, s); mesh.setMatrixAt(n, m); }
-          mesh.instanceMatrix.needsUpdate = true; mesh.receiveShadow = true; mesh.name = 'tree_pits';
-          this.pitCount += pits.length / 4;
-          cell.lod0.add(mesh);
+      const pits = cellPits.get(ck) ?? cellPits.set(ck, []).get(ck)!;
+      for (const k of idx) {
+        const b = k * TREE_STRIDE, cls = this.surface?.classAt(data[b], data[b + 2]) ?? SurfaceClass.None;
+        this.classHist.set(cls, (this.classHist.get(cls) ?? 0) + 1);
+        // street trees (anything but lawn, gravel alley or water) get a grate, laid on the rendered ground + kerb
+        if (cls !== SurfaceClass.None && cls !== SurfaceClass.Grass && cls !== SurfaceClass.Gravel && cls !== SurfaceClass.Water) {
+          const x = data[b], z = data[b + 2];
+          // kerb-line trees sit on the 2 m grid's road/paved cell next to the slab: look 1.2 m around for the sidewalk
+          const sw = this.surface && (cls === SurfaceClass.Sidewalk || [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]].some(([dx, dz]) => this.surface!.classAt(x + dx, z + dz) === SurfaceClass.Sidewalk));
+          if (cls === SurfaceClass.Road && !sw) continue;   // a tree in the carriageway grid with no slab around: median, no grate
+          const gy = this.groundY ? this.groundY(x, z) : data[b + 1];
+          pits.push(x, gy + (sw ? KERB_H : 0) + 0.03, z, data[b + 6]);
         }
       }
       for (let lod = 0; lod < 2; lod++) {
@@ -123,6 +118,15 @@ export class Trees {
         trunk.computeBoundingSphere();
         (lod === 0 ? cell.lod0 : cell.lod1).add(canopy, trunk);
       }
+    }
+    for (const [ck, pits] of cellPits) {
+      if (!pits.length) continue;
+      this.pitMat ??= withLamps(new THREE.MeshStandardMaterial({ map: grateTexture(), alphaTest: 0.5, color: 0x9a9a9c, roughness: 0.75, metalness: 0.35, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+      const mesh = new THREE.InstancedMesh(this.pitGeom, this.pitMat, pits.length / 4);
+      for (let n = 0; n < pits.length / 4; n++) { p.set(pits[n * 4], pits[n * 4 + 1], pits[n * 4 + 2]); q.setFromAxisAngle(UP, frac(pits[n * 4 + 3] * 0.13) * Math.PI); s.set(1, 1, 1); m.compose(p, q, s); mesh.setMatrixAt(n, m); }
+      mesh.instanceMatrix.needsUpdate = true; mesh.receiveShadow = true; mesh.name = 'tree_pits';
+      this.pitCount += pits.length / 4;
+      this.cells.get(ck)!.lod0.add(mesh);
     }
   }
 

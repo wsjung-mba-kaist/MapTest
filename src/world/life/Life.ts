@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RADII } from '../radii';
 import type { SurfaceGrid } from '../../../shared/surfacegrid';
 import { PathGraph } from './PathGraph';
 import { SimClock } from './SimClock';
@@ -22,7 +23,7 @@ import { buildCrossings } from '../../../shared/crossings';
 export class Life {
   readonly group = new THREE.Group();
   readonly graph = new PathGraph();
-  readonly clock = new SimClock();
+  clock = new SimClock();
   crowd?: Crowd;
   traffic?: Traffic;
   boats?: Boats;
@@ -31,8 +32,8 @@ export class Life {
   metro?: Metro;
   cyclists?: Cyclists;
   /** activation radii (metres) */
-  walkRadius = 220;
-  driveRadius = 350;
+  walkRadius: number = RADII.lifeWalk;
+  driveRadius: number = RADII.lifeDrive;
   private lastX = NaN; private lastZ = NaN;
   private debug?: THREE.LineSegments;
   private debugOn = false;
@@ -43,17 +44,25 @@ export class Life {
   constructor() { this.group.name = 'life'; }
 
   crossingStats = '';
-  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; cyclists?: boolean; debug?: boolean } = {}, surface: SurfaceGrid | null = null) {
-    await this.graph.load();
+  async load(opts: { crowd?: boolean; traffic?: boolean; boats?: boolean; signals?: boolean; farTraffic?: boolean; crossings?: boolean; metro?: boolean; cyclists?: boolean; debug?: boolean; simScale?: number; simTime?: number } = {}, surface: SurfaceGrid | null = null) {
+    this.clock = new SimClock(opts.simScale ?? 1, opts.simTime ?? 0);
+    // the module imports do not depend on each other or on the graph: in `vite dev` each is a round-trip
+    const [graphDone, mods] = await Promise.all([this.graph.load(), Promise.all([
+      opts.crowd ? import('./Crowd') : null, opts.traffic ? import('./Traffic') : null, opts.boats ? import('./Boats') : null,
+      opts.signals !== false ? import('./Signals') : null, opts.traffic && opts.farTraffic !== false ? import('./FarTraffic') : null,
+      opts.crowd && opts.cyclists !== false ? import('./Cyclists') : null, opts.metro !== false ? import('./Metro').catch(() => null) : null,
+    ])]);
+    void graphDone;
+    const [CrowdM, TrafficM, BoatsM, SignalsM, FarTrafficM, CyclistsM, MetroM] = mods;
     this.debugOn = !!opts.debug;
-    if (opts.crowd) { const { Crowd } = await import('./Crowd'); this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
-    if (opts.traffic) { const { Traffic } = await import('./Traffic'); this.traffic = new Traffic(this.graph, this.clock); await this.traffic.load(); this.group.add(this.traffic.group); }
-    if (opts.boats) { const { Boats } = await import('./Boats'); this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
-    if (opts.signals !== false) { const { Signals } = await import('./Signals'); this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
-    if (opts.traffic && opts.farTraffic !== false) { const { FarTraffic } = await import('./FarTraffic'); this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
-    if (opts.crowd && opts.cyclists !== false) { const { Cyclists } = await import('./Cyclists'); this.cyclists = new Cyclists(this.graph, this.clock, surface); this.group.add(this.cyclists.group); }
-    if (opts.metro !== false) {
-      try { const { Metro } = await import('./Metro'); const m = new Metro(this.clock); await m.load(); this.metro = m; this.group.add(m.group); } catch (e) { console.warn('rail.json missing: no métro', e); }
+    if (CrowdM) { const { Crowd } = CrowdM; this.crowd = new Crowd(this.graph, this.clock, surface); this.group.add(this.crowd.group); }
+    if (TrafficM) { const { Traffic } = TrafficM; this.traffic = new Traffic(this.graph, this.clock); await this.traffic.load(); this.group.add(this.traffic.group); }
+    if (BoatsM) { const { Boats } = BoatsM; this.boats = new Boats(this.graph, this.clock); this.group.add(this.boats.group); }
+    if (SignalsM) { const { Signals } = SignalsM; this.signals = new Signals(this.graph); this.group.add(this.signals.group); }
+    if (FarTrafficM) { const { FarTraffic } = FarTrafficM; this.farTraffic = new FarTraffic(this.graph, this.clock); this.group.add(this.farTraffic.group); }
+    if (CyclistsM) { const { Cyclists } = CyclistsM; this.cyclists = new Cyclists(this.graph, this.clock, surface); this.group.add(this.cyclists.group); }
+    if (MetroM) {
+      try { const { Metro } = MetroM; const m = new Metro(this.clock); await m.load(); this.metro = m; this.group.add(m.group); } catch (e) { console.warn('rail.json missing: no métro', e); }
     }
     if (opts.crossings !== false && this.crowd) {
       const table = buildCrossings(this.graph);
@@ -91,7 +100,7 @@ export class Life {
     if (moved) this.cyclists?.setActive(this.activeWalk, x, z, this.walkRadius);
     if (moved || reseedDrive) this.traffic?.setActive(this.activeDrive, x, z, this.driveRadius);
     this.crowd?.update(simDt, x, z, camDir, night);
-    this.cyclists?.update(simDt);
+    this.cyclists?.update(simDt, camDir);
     this.traffic?.update(simDt, x, z, camDir, night);
     this.boats?.update(simDt, night);
     this.signals?.update(this.clock.time, night);

@@ -12,7 +12,6 @@ import { Spatial, type SpatialSource } from './Spatial';
  *   ?audio=0      off entirely
  *   ?audio=debug  status line in the HUD (context state, bus levels, surface)
  */
-const MUTE_KEY = 'paris.audio.muted';
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -36,10 +35,11 @@ export class AudioEngine {
   readonly enabled: boolean;
   readonly debug: boolean;
 
-  constructor(mode: string | null) {
+  /** `muted` is a preference (shared/prefs.ts); App persists changes through savePrefs, nothing is stored here. */
+  constructor(mode: string | null, muted = false) {
     this.enabled = mode !== '0';
     this.debug = mode === 'debug';
-    try { this.muted = localStorage.getItem(MUTE_KEY) === '1'; } catch { /* no storage */ }
+    this.muted = muted;
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
       if (document.hidden) void this.ctx.suspend(); else if (!this.muted) void this.ctx.resume();
@@ -71,7 +71,6 @@ export class AudioEngine {
 
   setMuted(m: boolean) {
     this.muted = m;
-    try { localStorage.setItem(MUTE_KEY, m ? '1' : '0'); } catch { /* no storage */ }
     if (this.ctx) { this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.05); if (!m) void this.ctx.resume(); }
   }
   /** master volume 0..1 (settings); mute stays a separate switch */

@@ -37,7 +37,9 @@ export async function run(ctx: BakeContext) {
   if (!ctx.force && await exists(out)) { log.info('trees: cached'); return; }
   const hm = await loadHeightmap();
   const radius = Math.ceil(Math.hypot(WORLD_HALF, WORLD_HALF)) + 50;
-  const fc = await cachedJson<FeatureCollection<Point, ParisTree>>(PARIS_TREES(ORIGIN.lon, ORIGIN.lat, radius), 'paris/les-arbres.geojson', { timeoutMs: 300_000 });
+  // the explore API answers an over-quota or malformed request with a JSON error object, which would otherwise be cached as the tree layer
+  const validate = (buf: Buffer) => { try { const j = JSON.parse(buf.toString('utf8')); return Array.isArray(j?.features) ? true as const : `no "features" array (${buf.subarray(0, 120).toString('utf8')})`; } catch { return `not JSON (${buf.subarray(0, 120).toString('utf8')})`; } };
+  const fc = await cachedJson<FeatureCollection<Point, ParisTree>>(PARIS_TREES(ORIGIN.lon, ORIGIN.lat, radius), 'paris/les-arbres.geojson', { timeoutMs: 300_000, validate });
   log.info(`trees: ${fc.features.length} Paris Data trees within ${radius} m`);
 
   const rows: number[] = [];

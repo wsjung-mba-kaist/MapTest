@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../../materials/patch';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SimClock } from './SimClock';
-import { DATA_URL } from '../DataLoader';
+import { DATA_URL, fetchJson } from '../DataLoader';
 import { withLamps } from '../../render/LocalLights';
 
 interface RailLine { name: string; pts: [number, number, number][] }
@@ -25,11 +26,22 @@ export class Metro {
   constructor(private readonly clock: SimClock) { this.group.name = 'metro'; }
 
   async load() {
-    const res = await fetch(`${DATA_URL}/rail.json`);
-    if (!res.ok) throw new Error(`rail.json ${res.status}`);
-    const data = await res.json() as { lines: RailLine[] };
+    const data = await fetchJson<{ lines: RailLine[] }>(`${DATA_URL}/rail.json`);
     const geom = carGeometry();
-    this.mat = withLamps(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.35 }));
+    // Headlight discs glow through `aEmit` (1 on the discs, 0 elsewhere): the emissive term is white × emissiveIntensity
+    // (= night) × the vertex colour, so the body never glows and the discs fade in with dusk.
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.35, emissive: 0xffffff, emissiveIntensity: 0 });
+    mat.onBeforeCompile = shader => {
+      assertAnchors('Metro', shader.vertexShader, shader.fragmentShader, ['begin_vertex', 'common'], ['common', 'emissivemap_fragment']);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aEmit; varying float vEmit;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEmit = aEmit;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vEmit;')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vEmit * vColor.rgb;');
+    };
+    mat.customProgramCacheKey = () => 'metro-emit';
+    this.mat = withLamps(mat);
     for (const line of data.lines) {
       if (line.pts.length < 2) continue;
       const cum = [0];
@@ -52,7 +64,7 @@ export class Metro {
     const tCruise = Math.max(0, (run - 2 * dAcc) / CRUISE);
     const tTrip = 2 * tAcc + tCruise, tLeg = tTrip + DWELL;
     const u = time % (2 * tLeg), fwd = u < tLeg, t = fwd ? u : u - tLeg;
-    let d = 0, v = 0;
+    let d: number, v: number;
     if (t < tAcc) { d = 0.5 * ACCEL * t * t; v = ACCEL * t; }
     else if (t < tAcc + tCruise) { d = dAcc + CRUISE * (t - tAcc); v = CRUISE; }
     else if (t < tTrip) { const r = tTrip - t; d = run - 0.5 * ACCEL * r * r; v = ACCEL * r; }
@@ -68,17 +80,16 @@ export class Metro {
     dir.set(b[0] - a[0], 0, b[2] - a[2]).normalize();
   }
 
+  private readonly dirTmp = new THREE.Vector3(); private readonly posTmp = new THREE.Vector3();
   update(night: number) {
     if (this.mat) this.mat.emissiveIntensity = night;
     const time = this.clock.time;
-    const dir = new THREE.Vector3(), pos = new THREE.Vector3();
+    const dir = this.dirTmp, pos = this.posTmp;
     this.trains.forEach((tr, k) => {
       const { s, v } = this.headAt(tr.len, time + tr.offset);
       const sign = v >= 0 ? 1 : -1;
       for (let c = 0; c < CARS; c++) {
-        const sc = s - sign * c * (CAR_LEN + CAR_GAP) * (v >= 0 ? 1 : -1) * 1;   // cars trail the head
-        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);
-        void sc;
+        this.at(tr, Math.max(0, Math.min(tr.len, v >= 0 ? s - c * (CAR_LEN + CAR_GAP) : s + c * (CAR_LEN + CAR_GAP))), pos, dir);   // cars trail the head
         // the car faces -z at yaw 0: yaw = atan2(-hx, -hz); when running backwards flip the heading so headlights lead
         const hx = dir.x * sign, hz = dir.z * sign;
         this.Q.setFromAxisAngle(this.up, Math.atan2(-hx, -hz));
@@ -95,8 +106,9 @@ export class Metro {
 function carGeometry(): THREE.BufferGeometry {
   const tint = (g: THREE.BufferGeometry, hex: number, em = 0): THREE.BufferGeometry => {
     const c = new THREE.Color(hex), n = g.attributes.position.count, col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = c.r * (1 + em); col[i * 3 + 1] = c.g * (1 + em); col[i * 3 + 2] = c.b * (1 + em); }
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aEmit', new THREE.BufferAttribute(new Float32Array(n).fill(em), 1));
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
     return g;
   };

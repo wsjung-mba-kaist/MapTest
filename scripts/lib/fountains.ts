@@ -18,7 +18,6 @@ import { area, cleanRing, type Ring } from './polygons.ts';
 export interface Jet { x: number; y: number; z: number; vx: number; vy: number; vz: number; n: number; w: number }
 export interface FountainSite { name: string; x: number; y: number; z: number; jets: number }
 
-const G = 9.81;
 
 function axisOf(ring: Ring) {
   let cx = 0, cz = 0; for (const p of ring) { cx += p[0]; cz += p[1]; } cx /= ring.length; cz /= ring.length;
@@ -79,6 +78,5 @@ export async function buildFountains(water: FeatureCollection<Geometry, OsmProps
   }
   await fs.writeFile(path.join(OUT_DIR, 'fountains.json'), JSON.stringify({ jets, sites }));
   log.info(`fountains: ${sites.length} basins, ${jets.length} jets (${sites.map(s => `${s.name}:${s.jets}`).slice(0, 6).join(', ')}${sites.length > 6 ? '…' : ''})`);
-  void G;
   return { count: jets.length, sites: sites.length };
 }

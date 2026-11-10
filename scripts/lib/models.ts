@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
 import { MODELS_DIR } from '../config.ts';
-import { cachedBytes, ensureDir, exists, readJson, writeJson } from './http.ts';
+import { cachedBytes, ensureDir, exists, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
 import { LANDMARK_MODELS, licenseAllowed } from '../landmarks_models.ts';
 import { heroFootprints } from './landmarks_footprints.ts';
@@ -46,8 +46,6 @@ export async function run(ctx: BakeContext) {
       log.info(`models: ${entry.id}: ${r.tris} tris, ${r.height.toFixed(1)} m, yaw ${r.yawDeg.toFixed(1)}° -> public/models/${entry.id}.glb`);
     } catch (e) { log.warn(`models: ${entry.id} failed: ${e instanceof Error ? e.message : e}`); }
   }
-  const prev = await readJson<{ models: typeof index }>(path.join(MODELS_DIR, 'landmarks.json')).catch(() => null);
-  void prev;
   await writeJson(path.join(MODELS_DIR, 'landmarks.json'), { version: 1, models: index });
   log.info(`models: index with ${index.length} model(s) -> public/models/landmarks.json`);
 }

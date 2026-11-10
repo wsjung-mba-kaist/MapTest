@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import { RADII } from './radii';
+import { MODELS_URL, fetchJson } from './DataLoader';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { withLamps } from '../render/LocalLights';
 import { REFLECT_LAYER } from '../render/WaterReflection';
-import { buildingUniforms } from '../materials/FacadeMaterial';
+import { adaptGltfMaterial, adoptGltfScene } from './gltf';
 
 export interface LandmarkModelMeta {
   id: string; height?: number; top?: number; centre?: [number, number]; radius?: number; textured?: boolean; lod?: string;
@@ -33,25 +35,25 @@ export class LandmarkModel {
   private full?: THREE.Object3D;
   private lod?: THREE.Object3D;
   private readonly materials: THREE.MeshStandardMaterial[] = [];
-  private lodAt = 900;
+  private lodAt: number = RADII.heroLod;
   private centre = new THREE.Vector3();
 
   constructor(meta: LandmarkModelMeta, private readonly groundY: (x: number, z: number) => number) {
     this.meta = meta;
     this.group.name = `landmark:${meta.id}`;
-    this.lodAt = meta.runtime?.lodAtM ?? 900;
+    this.lodAt = meta.runtime?.lodAtM ?? RADII.heroLod;
     if (meta.centre) this.centre.set(meta.centre[0], 0, meta.centre[1]);
   }
 
   static async loadAll(url: string, groundY: (x: number, z: number) => number, lodOnly = false): Promise<LandmarkModel[]> {
     let index: { models: { id: string; glb: string; lod?: string; json: string }[] };
-    try { index = await (await fetch(url)).json(); } catch { return []; }
+    try { index = await fetchJson(url); } catch { return []; }
     // Load them side by side: awaiting each in turn made boot wait for the sum of every model's fetch and parse.
     const loaded = await Promise.all((index.models ?? []).filter(m => m.id !== 'eiffel').map(async m => {
       try {
-        const meta = await (await fetch(`/models/${m.json}`)).json() as LandmarkModelMeta;
+        const meta = await fetchJson<LandmarkModelMeta>(`${MODELS_URL}/${m.json}`);
         const lm = new LandmarkModel({ ...meta, id: m.id, lod: m.lod }, groundY);
-        await lm.load(`/models/${m.glb}`, m.lod ? `/models/${m.lod}` : undefined, lodOnly);
+        await lm.load(`${MODELS_URL}/${m.glb}`, m.lod ? `${MODELS_URL}/${m.lod}` : undefined, lodOnly);
         return lm;
       } catch (e) { console.warn(`landmark model ${m.id} failed`, e); return null; }
     }));
@@ -63,16 +65,7 @@ export class LandmarkModel {
     loader.setMeshoptDecoder(MeshoptDecoder);
     let y = this.groundY(this.centre.x, this.centre.z);
     const adopt = (scene: THREE.Object3D) => {
-      scene.updateMatrixWorld(true);
-      scene.traverse(o => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = true;
-        m.layers.enable(REFLECT_LAYER);
-        const g = m.geometry; const idx = g.index;
-        this.triangles += (idx ? idx.count : g.attributes.position.count) / 3;
-        m.material = this.adaptMaterial(m.material as THREE.MeshStandardMaterial);
-      });
+      this.triangles += adoptGltfScene(scene, { adapt: src => this.adaptMaterial(src), materials: this.materials, reflect: true });
       scene.position.y = y;
       return scene;
     };
@@ -91,29 +84,20 @@ export class LandmarkModel {
     this.loaded = true;
   }
 
+  /** A scan keeps its texture (glowing through it after dusk when floodlit); an untextured CAD model gets a stone tint. */
   private adaptMaterial(src: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
-    const textured = !!src.map;
-    const mat = textured ? src : new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 });
-    if (textured) {
-      mat.roughness = this.meta.runtime?.roughness ?? Math.max(0.6, mat.roughness); mat.envMapIntensity = 0.6;
+    const rt = this.meta.runtime;
+    return adaptGltfMaterial(src, { untextured: { roughness: 0.85, metalness: 0.0 }, glow: !!rt?.floodlit, tune: (mat, _src, textured) => {
+      if (!textured) { const p = rt?.paint ?? [222, 214, 196]; mat.color.setRGB(p[0] / 255, p[1] / 255, p[2] / 255); return; }
+      mat.roughness = rt?.roughness ?? Math.max(0.6, mat.roughness); mat.envMapIntensity = 0.6;
       // Photogrammetry and asset-store models often ship a near-metal PBR material (this one is metalness 0.9).
       // A metal has no diffuse term, so under our modest environment intensity it renders as a black silhouette
       // speckled with reflections. Real subjects here are stone, plaster and oxidised copper, all dielectric.
-      mat.metalness = this.meta.runtime?.metalness ?? Math.min(mat.metalness, 0.15);
-      const t = this.meta.runtime?.tint;
+      mat.metalness = rt?.metalness ?? Math.min(mat.metalness, 0.15);
+      const t = rt?.tint;
       if (t) mat.color.setRGB(t[0], t[1], t[2]);           // three multiplies the map by this, so > 1 lifts a dark scan
-      if (this.meta.runtime?.doubleSided) mat.side = THREE.DoubleSide;
-      if (mat.map) { mat.map.anisotropy = 8; mat.map.colorSpace = THREE.SRGBColorSpace; }
-      if (this.meta.runtime?.floodlit) { mat.emissiveMap = mat.map; mat.emissive = new THREE.Color(0, 0, 0); }
-    } else {
-      const p = this.meta.runtime?.paint ?? [222, 214, 196];
-      mat.color.setRGB(p[0] / 255, p[1] / 255, p[2] / 255);
-      mat.side = src.side;
-      mat.emissive = new THREE.Color(0, 0, 0);
-    }
-    withLamps(mat);
-    this.materials.push(mat);
-    return mat;
+      if (rt?.doubleSided) mat.side = THREE.DoubleSide;
+    } });
   }
 
   /**
@@ -131,13 +115,17 @@ export class LandmarkModel {
     });
   }
 
-  update(night: number, px: number, pz: number) {
+  private lastWash = -1;
+  /** `lit` is the tower's floodlight schedule (off after 23:45, see nightlife.towerLit): hero floodlights follow it. */
+  update(night: number, px: number, pz: number, lit = 1) {
     if (this.full && this.lod) {
       const far = Math.hypot(this.centre.x - px, this.centre.z - pz) > this.lodAt;
       if (this.full.visible === far) { this.full.visible = !far; this.lod.visible = far; }
     }
     if (this.meta.runtime?.floodlit) {
-      const k = night * (buildingUniforms.uNight.value >= 0 ? 1 : 1);
+      const k = night * lit;
+      if (k === this.lastWash) return;
+      this.lastWash = k;
       for (const m of this.materials) m.emissive.setRGB(1.0, 0.78, 0.55).multiplyScalar((m.emissiveMap ? 0.35 : 0.12) * k);
     }
   }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { assertAnchors } from '../materials/patch';
 import { shopOpen } from '../../shared/nightlife';
 
 /**
@@ -90,6 +91,7 @@ const VERT_BODY = /* glsl */`
 
 /** Add the lamp array to a shader (call from onBeforeCompile). */
 export function injectLampLights(shader: THREE.WebGLProgramParametersWithUniforms) {
+  assertAnchors('LocalLights', shader.vertexShader, shader.fragmentShader, ['common', 'worldpos_vertex'], ['common', 'lights_fragment_end']);
   Object.assign(shader.uniforms, lampUniforms);
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', `#include <common>\n${VERT_DECL}`)

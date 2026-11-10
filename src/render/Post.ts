@@ -46,7 +46,14 @@ export class Post {
     this.composer.addPass(this.smaaPass);
   }
 
-  setSize(w: number, h: number) { this.composer.setSize(w, h); this.reflection?.setSize(w, h); }
+  private readonly sizeTmp = new THREE.Vector2();
+  /** `w, h` are CSS pixels (the composer applies the pixel ratio itself); the reflection target is sized from the
+   *  drawing buffer so "half resolution" means half of what is rendered, not a quarter of it on a 2x display. */
+  setSize(w: number, h: number) {
+    this.composer.setSize(w, h, false);   // false: keep the canvas CSS size from index.html, do not write inline px
+    const s = this.renderer.getDrawingBufferSize(this.sizeTmp);
+    this.reflection?.setSize(s.x, s.y);
+  }
 
   /**
    * Night grading: a lower, softer bloom knee so lamps, headlights and the tower's sparkle glow while lit windows

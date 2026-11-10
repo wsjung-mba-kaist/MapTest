@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
-import { EdgeFlag, NodeFlag } from '../../../shared/paths';
+import { NodeFlag } from '../../../shared/paths';
 import { hash32 } from '../../../shared/hash';
 import { armPhase, signalState, SIGNAL_GREEN, SIGNAL_AMBER } from '../../../shared/signals';
 import type { CrossingTable } from '../../../shared/crossings';
 import { busModel, carColor, loadCarKit, makeBusMaterial, makeCarMaterial, type CarModel } from './CarKit';
 import type { LocalLight } from '../../render/LocalLights';
+import { AgentPool } from './AgentPool';
 
 const CAP = 384;
 const VARIANTS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi'] as const;
@@ -22,9 +23,8 @@ const STOP_BACK = 5;          // stop line: metres before the junction node
  * Moving cars on the drivable graph: right-hand lanes, leader following, hash-chosen turns, quadratic junction
  * curves, tunnel/boundary sinks and night lights. Deterministic conveyor spawning like the crowd.
  */
-export class Traffic {
+export class Traffic extends AgentPool {
   readonly group = new THREE.Group();
-  count = 0;
   private models: CarModel[] = [];
   private meshes: THREE.InstancedMesh[] = [];
   private readonly uniforms = { uLights: { value: 0 }, uTime: { value: 0 } };
@@ -41,15 +41,19 @@ export class Traffic {
   private readonly vCruise = new Float32Array(CAP);
   private readonly variant = new Uint8Array(CAP);
   private readonly seed = new Uint32Array(CAP);
+  /** paint colour per car, computed once at spawn (bit 24 set = valid) — carColor() + setHex per car per frame was pure waste */
+  private readonly colHex = new Uint32Array(CAP);
+  private readonly hdg = { x: 0, z: 0 };
+  private readonly slotCounts = new Uint16Array(64);
   private readonly hop = new Uint16Array(CAP);
   private readonly nextE = new Int32Array(CAP);
   private readonly nextDir = new Int8Array(CAP);
   private readonly turn = new Int8Array(CAP);        // -1 left, +1 right at the next junction
   private readonly brake = new Uint8Array(CAP);
   private readonly odo = new Float32Array(CAP);
-  private readonly px = new Float32Array(CAP);
+  protected readonly px = new Float32Array(CAP);
   private readonly py = new Float32Array(CAP);
-  private readonly pz = new Float32Array(CAP);
+  protected readonly pz = new Float32Array(CAP);
   private readonly hx = new Float32Array(CAP);
   private readonly hz = new Float32Array(CAP);
   // junction curve state: jt < 0 = none; else progress (m) along the curve
@@ -58,12 +62,8 @@ export class Traffic {
   private readonly j0 = new Float32Array(CAP * 3);
   private readonly jc = new Float32Array(CAP * 3);
   private readonly j1 = new Float32Array(CAP * 3);
-  private readonly ident = new Array<string>(CAP);
-  private readonly alive = new Set<string>();
-  private readonly seeded = new Set<number>();
   private readonly tmp: EdgePoint = { x: 0, y: 0, z: 0, ux: 0, uz: -1, seg: 0 };
   private readonly color = new THREE.Color();
-  private readonly camDir = new THREE.Vector3(0, 0, -1);
   private laneLists = new Map<number, number[]>();
   /** signal phase per (edge, end): index e*2 + (arriving at b ? 1 : 0); -1 = no signal */
   private readonly sigPhase: Float32Array;
@@ -83,7 +83,12 @@ export class Traffic {
     return true;
   }
 
-  constructor(readonly graph: PathGraph, readonly clock: SimClock) { this.group.name = 'traffic'; this.sigPhase = buildSignalTable(graph); }
+  constructor(readonly graph: PathGraph, readonly clock: SimClock) {
+    super(CAP, NO_SPAWN_NEAR, NO_SPAWN_VIEW);
+    this.columns(this.edge, this.dir, this.lane, this.seg, this.s, this.v, this.vCruise, this.variant, this.seed, this.colHex, this.hop, this.nextE, this.nextDir, this.turn, this.brake, this.odo, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen);
+    this.stridedColumns(3, this.j0, this.jc, this.j1);
+    this.group.name = 'traffic'; this.sigPhase = buildSignalTable(graph);
+  }
 
   async load() {
     const kit = await loadCarKit(VARIANTS);
@@ -130,11 +135,9 @@ export class Traffic {
   setActive(edges: number[], x: number, z: number, radius: number) {
     const next = new Set<number>();
     for (const e of edges) if (this.graph.drivable(e)) next.add(e);
-    const far2 = (radius + 60) * (radius + 60);
-    for (let i = this.count - 1; i >= 0; i--) { const dx = this.px[i] - x, dz = this.pz[i] - z; if (dx * dx + dz * dz > far2) this.remove(i); }
-    for (const e of this.seeded) if (!next.has(e)) this.seeded.delete(e);
-    this.rebuildLanes();
-    for (const e of next) if (!this.seeded.has(e)) { this.seedEdge(e, x, z); this.seeded.add(e); }
+    this.despawnFar(x, z, radius);
+    this.rebuildLanes();   // the gap check in seedEdge reads the lane lists, which the despawn just shuffled
+    this.seedNew(next, e => this.seedEdge(e, x, z));
   }
 
   private density(e: number): number {
@@ -170,9 +173,7 @@ export class Traffic {
           const sPos = dir > 0 ? prog : L - prog;
           const lat = g.laneLat(e, lane, dir);
           g.edgePoint(e, sPos, lat, 0, this.tmp);
-          const dx = this.tmp.x - camX, dz = this.tmp.z - camZ, d2 = dx * dx + dz * dz;
-          if (d2 < NO_SPAWN_NEAR * NO_SPAWN_NEAR) continue;
-          if (d2 < NO_SPAWN_VIEW * NO_SPAWN_VIEW) { const d = Math.sqrt(d2); if ((dx / d) * this.camDir.x + (dz / d) * this.camDir.z > 0.55) continue; }
+          if (this.vetoSpawn(this.tmp.x, this.tmp.z, camX, camZ)) continue;   // too close, or in front of the viewer
           // keep a gap from cars already on this lane
           const key = this.laneKey(e, dir, lane);
           let blocked = false;
@@ -186,7 +187,7 @@ export class Traffic {
           let vi = busLane && hash32(seed, 26) < 0.12 ? BUS : pickVariant(hash32(seed, 25));
           if (vi === BUS && !busLane) vi = 0;
           const sp = vi === BUS ? speed * 0.85 : speed;
-          this.v[i] = sp; this.vCruise[i] = sp; this.variant[i] = vi; this.seed[i] = seed; this.hop[i] = 0;
+          this.v[i] = sp; this.vCruise[i] = sp; this.variant[i] = vi; this.seed[i] = seed; this.hop[i] = 0; this.colHex[i] = 0;
           this.px[i] = this.tmp.x; this.pz[i] = this.tmp.z; this.hx[i] = dir * this.tmp.ux; this.hz[i] = dir * this.tmp.uz;
           this.jt[i] = -1; this.ident[i] = id; this.alive.add(id);
           this.chooseNext(i);
@@ -196,32 +197,15 @@ export class Traffic {
     }
   }
 
-  private remove(i: number) {
-    const last = this.count - 1;
-    this.alive.delete(this.ident[i]);
-    if (i !== last) {
-      for (const a of [this.edge, this.seg, this.nextE] as Int32Array[]) a[i] = a[last];
-      for (const a of [this.dir, this.nextDir, this.turn] as Int8Array[]) a[i] = a[last];
-      this.brake[i] = this.brake[last]; this.odo[i] = this.odo[last];
-      for (const a of [this.lane, this.variant] as Uint8Array[]) a[i] = a[last];
-      for (const a of [this.s, this.v, this.vCruise, this.px, this.py, this.pz, this.hx, this.hz, this.jt, this.jLen] as Float32Array[]) a[i] = a[last];
-      for (const a of [this.j0, this.jc, this.j1]) { a[i * 3] = a[last * 3]; a[i * 3 + 1] = a[last * 3 + 1]; a[i * 3 + 2] = a[last * 3 + 2]; }
-      this.seed[i] = this.seed[last]; this.hop[i] = this.hop[last]; this.ident[i] = this.ident[last];
-    }
-    this.count = last;
-  }
-
   /** Decide the edge after the current one (needed early for gap checks across the junction). */
   private chooseNext(i: number) {
     const g = this.graph;
     const e = this.edge[i], dir = this.dir[i] as 1 | -1;
     const node = g.nodeOf(e, dir, true);
-    // heading at the end of the edge
-    const v0 = g.eV0[e], nv = g.eNv[e];
-    const a = dir > 0 ? v0 + nv - 2 : v0 + 1, b = dir > 0 ? v0 + nv - 1 : v0;
-    const dx = g.vPos[b * 3] - g.vPos[a * 3], dz = g.vPos[b * 3 + 2] - g.vPos[a * 3 + 2], l = Math.hypot(dx, dz) || 1;
+    // heading at the end of the edge (into the node)
+    const h = g.headingInto(e, node, this.hdg);
     const rnd = hash32(this.seed[i], this.hop[i], 26);
-    const next = g.nodeFlag(node, NodeFlag.CAR_SINK) ? null : g.pickNext(node, e, dx / l, dz / l, g.driveAllowed, rnd, 0.7);
+    const next = g.nodeFlag(node, NodeFlag.CAR_SINK) ? null : g.pickNext(node, e, h.x, h.z, g.driveAllowed, rnd, 0.7);
     this.nextE[i] = next ? next.e : -1; this.nextDir[i] = next ? next.dir : 0;
     // turn direction for the indicators: heading of the next edge's first segment vs. this edge's last
     this.turn[i] = 0;
@@ -229,13 +213,14 @@ export class Traffic {
       const nv0 = g.eV0[next.e], nnv = g.eNv[next.e];
       const p = next.dir > 0 ? nv0 : nv0 + nnv - 1, q = next.dir > 0 ? nv0 + 1 : nv0 + nnv - 2;
       const ndx = g.vPos[q * 3] - g.vPos[p * 3], ndz = g.vPos[q * 3 + 2] - g.vPos[p * 3 + 2], nl = Math.hypot(ndx, ndz) || 1;
-      const cross = (ndx / nl) * (-dz / l) + (ndz / nl) * (dx / l);   // dot with the right-hand normal of the current heading
+      const cross = (ndx / nl) * (-h.z) + (ndz / nl) * h.x;   // dot with the right-hand normal of the current heading
       if (Math.abs(cross) > 0.35) this.turn[i] = cross > 0 ? 1 : -1;
     }
   }
 
   private rebuildLanes() {
-    this.laneLists.clear();
+    // keep the per-lane arrays and empty them: ~150 fresh arrays per frame otherwise
+    for (const arr of this.laneLists.values()) arr.length = 0;
     for (let i = 0; i < this.count; i++) {
       const key = this.laneKey(this.edge[i], this.dir[i], this.lane[i]);
       const arr = this.laneLists.get(key); if (arr) arr.push(i); else this.laneLists.set(key, [i]);
@@ -301,7 +286,7 @@ export class Traffic {
       }
     }
     // ---- write instances per variant
-    const counts = new Array<number>(this.meshes.length).fill(0);
+    const counts = this.slotCounts; counts.fill(0, 0, this.meshes.length);
     for (let i = 0; i < this.count; i++) {
       const vi = this.variant[i]; const mesh = this.meshes[vi]; if (!mesh) continue;
       let x: number, y: number, z: number, hx: number, hz: number;
@@ -325,7 +310,8 @@ export class Traffic {
       const a = mesh.instanceMatrix.array as Float32Array, o = slot * 16;
       a[o] = c; a[o + 1] = 0; a[o + 2] = -sn; a[o + 3] = 0; a[o + 4] = 0; a[o + 5] = 1; a[o + 6] = 0; a[o + 7] = 0;
       a[o + 8] = sn; a[o + 9] = 0; a[o + 10] = c; a[o + 11] = 0; a[o + 12] = x; a[o + 13] = y; a[o + 14] = z; a[o + 15] = 1;
-      mesh.setColorAt(slot, this.color.setHex(vi === BUS ? 0xffffff : carColor(hash32(this.seed[i], 27), vi)));
+      if (!(this.colHex[i] & 0x1000000)) this.colHex[i] = 0x1000000 | (vi === BUS ? 0xffffff : carColor(hash32(this.seed[i], 27), vi));
+      mesh.setColorAt(slot, this.color.setHex(this.colHex[i] & 0xffffff));
       const st = this.stateAttrs[vi].array as Float32Array, remain = g.eLen[this.edge[i]] - this.progress(i);
       const indicating = this.lightFx && this.turn[i] !== 0 && (remain < 25 || this.jt[i] >= 0);
       st[slot * 3] = this.lightFx ? this.brake[i] : 0; st[slot * 3 + 1] = indicating ? this.turn[i] : 0; st[slot * 3 + 2] = this.odo[i];
@@ -348,13 +334,24 @@ export class Traffic {
 
   /** The n nearest moving cars (position, speed) for positional audio. */
   nearest(x: number, z: number, n: number): { x: number; y: number; z: number; v: number }[] {
-    const best: { d2: number; i: number }[] = [];
+    const m = this.selectNearest(x, z, n), out: { x: number; y: number; z: number; v: number }[] = [];
+    for (let k = 0; k < m; k++) { const i = this.bestI[k]; out.push({ x: this.px[i], y: this.py[i] + 0.5, z: this.pz[i], v: this.v[i] }); }
+    return out;
+  }
+
+  private readonly bestI = new Int32Array(8); private readonly bestD = new Float64Array(8);
+  /** Insertion-select the n (≤ 8) nearest cars into bestI/bestD without allocating; returns how many were found. */
+  private selectNearest(x: number, z: number, n: number): number {
+    n = Math.min(n, this.bestI.length);
+    let m = 0;
     for (let i = 0; i < this.count; i++) {
       const d2 = (this.px[i] - x) ** 2 + (this.pz[i] - z) ** 2;
-      if (best.length < n) { best.push({ d2, i }); best.sort((a, b) => a.d2 - b.d2); }
-      else if (d2 < best[n - 1].d2) { best[n - 1] = { d2, i }; best.sort((a, b) => a.d2 - b.d2); }
+      if (m === n && d2 >= this.bestD[m - 1]) continue;
+      let k = m < n ? m++ : n - 1;
+      while (k > 0 && this.bestD[k - 1] > d2) { this.bestD[k] = this.bestD[k - 1]; this.bestI[k] = this.bestI[k - 1]; k--; }
+      this.bestD[k] = d2; this.bestI[k] = i;
     }
-    return best.map(b => ({ x: this.px[b.i], y: this.py[b.i] + 0.5, z: this.pz[b.i], v: this.v[b.i] }));
+    return m;
   }
 
   /**
@@ -362,12 +359,10 @@ export class Traffic {
    * pair merged into one 35-degree spot tilted 8 degrees down, and a short red glow behind the car.
    */
   dynamicLights(out: LocalLight[], camX: number, camZ: number, maxCars: number) {
-    const order: { d2: number; i: number }[] = [];
-    for (let i = 0; i < this.count; i++) { const dx = this.px[i] - camX, dz = this.pz[i] - camZ; order.push({ d2: dx * dx + dz * dz, i }); }
-    order.sort((a, b) => a.d2 - b.d2);
+    const m = this.selectNearest(camX, camZ, maxCars);
     const tilt = Math.sin(8 * Math.PI / 180), ct = Math.cos(8 * Math.PI / 180);
-    for (let k = 0; k < Math.min(maxCars, order.length); k++) {
-      const i = order[k].i;
+    for (let k = 0; k < m; k++) {
+      const i = this.bestI[k];
       const hx = this.hx[i], hz = this.hz[i], len = this.models[this.variant[i]]?.length ?? 4.4;
       out.push({ x: this.px[i] + hx * len * 0.45, y: this.py[i] + 0.7, z: this.pz[i] + hz * len * 0.45, radius: 28, r: 1.0, g: 0.95, b: 0.85, intensity: 45, kind: 'dynamic', dx: hx * ct, dy: -tilt, dz: hz * ct, cone: 35 * Math.PI / 180 });
       out.push({ x: this.px[i] - hx * len * 0.5, y: this.py[i] + 0.8, z: this.pz[i] - hz * len * 0.5, radius: 5, r: 1.0, g: 0.08, b: 0.03, intensity: 6, kind: 'dynamic', dx: -hx, dy: -0.2, dz: -hz, cone: 60 * Math.PI / 180 });
@@ -415,17 +410,16 @@ export class Traffic {
 /** Phase of the signal facing each drivable arm, indexed e*2 + (arriving at b ? 1 : 0); -1 where there is none. */
 function buildSignalTable(g: PathGraph): Float32Array {
   const t = new Float32Array(g.eLen.length * 2).fill(-1);
-  const inc: number[] = [];
+  const inc: number[] = [], hdg = { x: 0, z: 0 };
   for (let n = 0; n < g.nodeCount; n++) {
     if (!g.nodeFlag(n, NodeFlag.SIGNAL)) continue;
     for (const e of g.incident(n, inc)) {
       if (!g.drivable(e)) continue;
-      const v0 = g.eV0[e], nv = g.eNv[e]; if (nv < 2) continue;
+      if (g.eNv[e] < 2) continue;
       const atEnd = g.eB[e] === n;
       if (g.isOneway(e) && !atEnd) continue;
-      const i = atEnd ? v0 + nv - 2 : v0 + 1, j = atEnd ? v0 + nv - 1 : v0;
-      const dx = g.vPos[j * 3] - g.vPos[i * 3], dz = g.vPos[j * 3 + 2] - g.vPos[i * 3 + 2], l = Math.hypot(dx, dz) || 1;
-      t[e * 2 + (atEnd ? 1 : 0)] = armPhase(n, dx / l, dz / l);
+      const h = g.headingInto(e, n, hdg);   // the Signals posts use the very same vector
+      t[e * 2 + (atEnd ? 1 : 0)] = armPhase(n, h.x, h.z);
     }
   }
   return t;
@@ -437,4 +431,3 @@ function pickVariant(r: number): number {
   return 0;
 }
 
-void EdgeFlag;

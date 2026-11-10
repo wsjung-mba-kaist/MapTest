@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import { DATA_URL, loadBinMesh } from './DataLoader';
 import { buildingUniforms } from '../materials/FacadeMaterial';
+import { litProbabilityGlsl } from '../../shared/nightlife';
+import { WORLD_HALF } from '../../shared/layout';
 
 /**
  * Distant skyline: one flat-shaded mesh of simplified BD TOPO buildings beyond the detailed square, plus a sparse
@@ -30,7 +32,7 @@ export class FarRing {
     if (pts) { this.windows = pts.geometry.attributes.position.count; pts.layers.enable(REFLECT_LAYER); this.group.add(pts); }
     // ground skirt: a flat ring from the baked square out to the horizon so the far buildings do not stand on the void
     const farHalf = (bm.header.meta?.farHalf as number) ?? 3400;
-    const skirt = new THREE.Mesh(ringGeometry(1536, farHalf + 1500, -1.5), new THREE.MeshStandardMaterial({ color: 0x5a5852, roughness: 1, metalness: 0 }));
+    const skirt = new THREE.Mesh(ringGeometry(WORLD_HALF, farHalf + 1500, -1.5), new THREE.MeshStandardMaterial({ color: 0x5a5852, roughness: 1, metalness: 0 }));
     skirt.name = 'far_skirt'; skirt.receiveShadow = false; skirt.castShadow = false; skirt.matrixAutoUpdate = false;
     skirt.layers.enable(REFLECT_LAYER);
     this.group.add(skirt);
@@ -96,13 +98,7 @@ function windowPoints(geom: THREE.BufferGeometry, cap: number): THREE.Points | n
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */`
       attribute float aSeed; uniform float uNight; uniform float uHour; varying vec3 vCol; varying float vA;
-      float litP(float h) {
-        h = mod(h, 24.0);
-        float hs[17] = float[17](0.,1.,2.,3.,4.,5.,6.,7.,8.,17.,18.,19.,20.,21.,22.,23.,24.);
-        float ps[17] = float[17](0.20,0.15,0.10,0.07,0.06,0.08,0.12,0.10,0.05,0.05,0.09,0.15,0.28,0.40,0.40,0.35,0.20);
-        for (int i = 0; i < 16; i++) if (h >= hs[i] && h <= hs[i + 1]) return mix(ps[i], ps[i + 1], (h - hs[i]) / (hs[i + 1] - hs[i]));
-        return 0.2;
-      }
+      ${litProbabilityGlsl('litP')}
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         float d = max(1.0, -mv.z);

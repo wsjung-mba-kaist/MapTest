@@ -3,9 +3,9 @@ import path from 'node:path';
 import type { FeatureCollection, Geometry } from 'geojson';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { OUT_DIR } from '../config.ts';
+import { CACHE_DIR, DSM_BUDGET, OUT_DIR } from '../config.ts';
 import { ensureDir, exists, readJson, writeJson, fmtBytes } from './http.ts';
-import { loadTheme, type OsmProps } from './overpass.ts';
+import { loadTheme, missingCells, type OsmProps } from './overpass.ts';
 import { loadBuildings } from './bdtopo.ts';
 import { buildSpecs, type BuildingSpec } from './buildings.ts';
 import { extrudeBuilding, triangulateCap, type ChunkBuilders } from './extrude.ts';
@@ -17,32 +17,24 @@ import { buildFurniture } from './furniture.ts';
 import { buildFountains } from './fountains.ts';
 import { buildRail } from './rail.ts';
 import { Heightmap } from '../../shared/heightmap.ts';
-import { ORIGIN, DATUM_ALT, frame } from '../../shared/geo.ts';
-import { CHUNK_SIZE, GRID_N, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, SurfaceFlag, type Manifest } from '../../shared/layout.ts';
-import { area, clipToBox, cleanRing, orient, pointInPoly, type Poly, type Ring } from './polygons.ts';
+import { ORIGIN, DATUM_ALT } from '../../shared/geo.ts';
+import { CHUNK_SIZE, DETAIL_STRIDE, GRID_N, MANIFEST_VERSION, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid, type ChunkInfo, type Manifest } from '../../shared/layout.ts';
+import { area, clipToBox, percentile, pointInPoly, toWorldPolys, type Poly } from './polygons.ts';
 
 export async function loadHeightmap(raw = false): Promise<Heightmap> {
   const meta = await readJson<{ n: number; step: number; origin: number }>(path.join(OUT_DIR, 'terrain.json'));
-  const rawFile = path.join(OUT_DIR, 'terrain_raw.bin');
-  const buf = await fs.readFile(raw && await exists(rawFile) ? rawFile : path.join(OUT_DIR, 'terrain.bin'));
+  // the raw copy moved from public/data to cache/ (bake intermediate); an older checkout may still have it next to terrain.bin
+  const rawFiles = [path.join(CACHE_DIR, 'terrain_raw.bin'), path.join(OUT_DIR, 'terrain_raw.bin')];
+  let file = path.join(OUT_DIR, 'terrain.bin');
+  if (raw) {
+    const found = await (async () => { for (const f of rawFiles) if (await exists(f)) return f; })();
+    // never fall back to terrain.bin: a previous build already lowered its river bed and basins, so buildWater would
+    // take its level from the lowered bed (waterLevelY 1.5 m too low, issue #2) and every layer after it would follow
+    if (!found) throw new Error(`raw DTM missing (${rawFiles.map(f => path.relative(process.cwd(), f)).join(' or ')}); run npm run bake:terrain to rebuild it from the cached elevation quads`);
+    file = found;
+  }
+  const buf = await fs.readFile(file);
   return Heightmap.fromBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), meta);
-}
-
-function toWorldPolys(geom: Geometry): Poly[] {
-  const conv = (ring: number[][]): Ring => cleanRing(ring.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }));
-  const out: Poly[] = [];
-  const push = (coords: number[][][]) => {
-    const rings = coords.map(conv).filter(r => r.length >= 3);
-    if (rings.length) out.push([orient(rings[0], false), ...rings.slice(1).map(r => orient(r, true))]);
-  };
-  if (geom.type === 'Polygon') push(geom.coordinates); else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(push);
-  return out;
-}
-
-function percentile(values: number[], p: number): number {
-  if (!values.length) return NaN;
-  const s = values.slice().sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 }
 
 async function buildWater(water: FeatureCollection<Geometry, OsmProps>, hm: Heightmap): Promise<{ waterLevelY: number; bytes: number; count: number }> {
@@ -58,7 +50,7 @@ async function buildWater(water: FeatureCollection<Geometry, OsmProps>, hm: Heig
     if (isRiver) river.push(...polys);
     else for (const p of polys) {
       if (area(p[0]) < 3) continue;
-      let ys: number[] = [];
+      const ys: number[] = [];
       for (const [x, z] of p[0]) ys.push(hm.sample(x, z));
       basins.push({ poly: p, y: percentile(ys, 0.2) - 0.25 });
     }
@@ -123,6 +115,9 @@ export async function run(_ctx: BakeContext) {
   const water = await loadTheme('water');
   const roads = await loadTheme('roads');
   const points = await loadTheme('points').catch(() => null);
+  // furniture still bakes without points (lamps along the roads only), so the gap goes into the manifest for verify:data
+  const pointsMissing = await missingCells('points');
+  if (pointsMissing) log.warn(`build: the OSM points theme misses ${pointsMissing} Overpass cell(s); furniture there has no OSM lamps, benches or stops (rerun npm run bake:osm, which resumes the missing cells, then bake:build)`);
   const land = await loadTheme('landcover').catch(() => null);
   const summary = await readJson<Record<string, { timestamp?: string }>>(path.join(OUT_DIR, '..', '..', 'cache', 'osm', 'summary.json')).catch(() => ({} as Record<string, { timestamp?: string }>));
 
@@ -152,8 +147,7 @@ export async function run(_ctx: BakeContext) {
   const dsmParts = dsm ? ((b: BuildingSpec) => dsm.partTops(b)) : undefined;
   let detailRows = 0;
   let totalBytes = 0, totalTris = 0, dsmBuildings = 0, dsmTrisTotal = 0, dsmTrisRaw = 0;
-  const DSM_BUDGET = 1_200_000;
-  const chunkInfo: Record<string, { buildings: number; bytes: number; tris: number; dsmTris?: number }> = {};
+  const chunkInfo: Record<string, ChunkInfo> = {};
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const k = chunkKey(i, j);
     const list = byChunk.get(k) ?? [];
@@ -170,25 +164,29 @@ export async function run(_ctx: BakeContext) {
     const buf = encodeBinMesh({ x: o.x, z: o.z }, sections, { buildings: list.length });
     await fs.writeFile(path.join(chunkDir, `${k}.bin`), buf);
     await fs.writeFile(path.join(detailDir, `${k}.bin`), Buffer.from(new Float32Array(cb.details ?? []).buffer));
-    detailRows += (cb.details?.length ?? 0) / 9;
+    detailRows += (cb.details?.length ?? 0) / DETAIL_STRIDE;
     const tris = (cb.walls.indices.length + cb.roofs.indices.length + cb.tops.indices.length + cb.dsm!.indices.length) / 3;
     chunkInfo[k] = { buildings: list.length, bytes: buf.length, tris, ...(cb.dsm!.indices.length ? { dsmTris: cb.dsm!.indices.length / 3 } : {}) };
     totalBytes += buf.length; totalTris += tris;
   }
   log.info(`buildings: ${GRID_N * GRID_N} chunks, ${fmtBytes(totalBytes)}, ${(totalTris / 1e6).toFixed(2)} M tris (LOD0), ${detailRows} roof detail rows`);
   if (dsm) log.info(`dsm: ${dsmBuildings} landmark footprints capped, ${(dsmTrisRaw / 1e6).toFixed(2)} M -> ${(dsmTrisTotal / 1e6).toFixed(2)} M tris`);
+  if (dsm?.simplifyFailures) log.warn(`dsm: ${dsm.simplifyFailures} cap(s) went out unsimplified (see the per-cap warnings above)`);
   if (dsmTrisTotal > DSM_BUDGET) throw new Error(`dsm: ${dsmTrisTotal} triangles exceed the ${DSM_BUDGET} budget; raise the grid step or the simplification error in dsmroof.ts`);
 
+  // Fountains first: they place each jet at "local ground - 0.25 m" (fountains.ts), and buildWater then lowers
+  // hm.data in place under every basin, so sampled afterwards the same expression put the jets on the lowered bed
+  // instead of the water surface. buildFountains needs nothing from buildWater's result.
+  const fo = await buildFountains(water, hm);
   const w = await buildWater(water, hm);
   const br = await buildBridges(roads, hm, w.waterLevelY, makeFlowField(riverArms(water)));
   const fu = await buildFurniture(roads, points, specs, hm, w.waterLevelY, land);
-  const fo = await buildFountains(water, hm);
   const ra = await buildRail(roads, hm, w.waterLevelY, makeFlowField(riverArms(water)));
 
   // later steps (paths, markings, streets) add their own files/counts: keep them across a rebuild
   const prevManifest = await readJson<Manifest>(path.join(OUT_DIR, 'manifest.json')).catch(() => null);
   const manifest: Manifest = {
-    version: 1,
+    version: MANIFEST_VERSION,
     generated: new Date().toISOString(),
     origin: { lon: ORIGIN.lon, lat: ORIGIN.lat },
     datumAlt: DATUM_ALT,
@@ -197,12 +195,11 @@ export async function run(_ctx: BakeContext) {
     gridN: GRID_N,
     waterLevelY: w.waterLevelY,
     osmTimestamp: summary.buildings?.timestamp,
-    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal },
+    counts: { ...(prevManifest?.counts ?? {}), buildings: specs.length - outside, water: w.count, bridges: br.count, furniture: fu.count, roofDetails: detailRows, fountainJets: fo.count, railLines: ra.lines, dsmBuildings, dsmTris: dsmTrisTotal, dsmFailed: dsm?.failedGroups ?? 0, pointsMissingCells: pointsMissing },
     heightSources: { osm: stats.osm, bdtopo: stats.bdtopo, levels: stats.levels, default: stats.default, plinths: stats.plinths, parts: stats.parts, mansard: stats.mansard, flat: stats.flat, curved: stats.curved, monument: stats.monument, landmark: stats.landmark },
     files: { ...(prevManifest?.files ?? {}), chunks: 'chunks/{i}_{j}.bin', details: 'details/{i}_{j}.bin', terrain: 'terrain.bin', water: 'water.bin', bridges: 'bridges.bin', trees: 'trees.bin', furniture: 'furniture.bin', far: 'far.bin', fountains: 'fountains.json', rail: 'rail.json', groundTiles: 'ground/tiles/{i}_{j}.jpg', overview: 'ground/overview.jpg' },
   };
-  (manifest as Manifest & { chunks: typeof chunkInfo }).chunks = chunkInfo;
+  manifest.chunks = chunkInfo;
   await writeJson(path.join(OUT_DIR, 'manifest.json'), manifest);
   log.info('manifest written');
-  void SurfaceFlag;
 }

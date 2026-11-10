@@ -1,5 +1,5 @@
 import { DATA_URL, fetchJson } from './DataLoader';
-import type { Landmark, LandmarksData } from '../../shared/layout';
+import { LANDMARKS_VERSION, type Landmark, type LandmarksData } from '../../shared/layout';
 import { bearingDeg, landmarkAt, nearestLandmark, sortByDistance } from '../../shared/landmarks';
 
 /** The eight historical viewpoints, used when landmarks.json has not been baked (`npm run bake:landmarks`). */
@@ -21,6 +21,7 @@ export class Landmarks {
   async load() {
     try {
       const d = await fetchJson<LandmarksData>(`${DATA_URL}/landmarks.json`);
+      if (d.version !== LANDMARKS_VERSION) throw new Error(`landmarks.json version ${d.version}, this build reads ${LANDMARKS_VERSION}`);
       this.list = d.landmarks; this.credits = d.credits ?? []; this.baked = true;
     } catch (e) {
       console.warn('landmarks.json missing (npm run bake:landmarks): using the built-in viewpoints', e);

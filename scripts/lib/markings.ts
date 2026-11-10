@@ -11,11 +11,10 @@ import { collectBridges, type Bridge } from './bridges.ts';
 import { makeFlowField, riverArms } from './river.ts';
 import { encodeBinMesh } from './binmesh.ts';
 import { loadHeightmap } from './build.ts';
-import { frame } from '../../shared/geo.ts';
 import { GRID_N, MarkKind, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin, inGrid } from '../../shared/layout.ts';
 import { laneOffset, rightNormal } from '../../shared/paths.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
-import { pointInPoly, type Pt } from './polygons.ts';
+import { pointInPoly, toWorldPts, type Pt } from './polygons.ts';
 import { buildPlaques } from './plaques.ts';
 
 /**
@@ -73,7 +72,6 @@ export class MarkBuilder {
   }
 }
 
-const toPts = (coords: number[][]): Pt[] => coords.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z] as Pt; });
 const segDist = (x: number, z: number, a: Pt, b: Pt) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz; const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)) : 0; return Math.hypot(x - (a[0] + dx * t), z - (a[1] + dz * t)); };
 
 export async function buildMarkings(roads: FeatureCollection<Geometry, OsmProps>, hm: Heightmap, bridges: Bridge[]): Promise<{ strips: number; bytes: number; zebras: number; dashes: number; stops: number }> {
@@ -86,7 +84,7 @@ export async function buildMarkings(roads: FeatureCollection<Geometry, OsmProps>
     const t = f.properties.tags ?? {};
     const spec = classify(t);
     if (!spec || spec.tunnel) continue;
-    const pts = toPts((f.geometry as LineString).coordinates);
+    const pts = toWorldPts((f.geometry as LineString).coordinates);
     if (pts.every(p => Math.abs(p[0]) > WORLD_HALF + 30 || Math.abs(p[1]) > WORLD_HALF + 30)) continue;
     if (spec.drive) streets.push({ pts, width: spec.width, lanesF: spec.lanesF, lanesB: spec.lanesB, laneW: spec.laneW, band: spec.bandCenter, oneway: spec.oneway, cls: spec.cls, steps: spec.steps });
     const marked = (t.footway === 'crossing') && !['unmarked', 'informal'].includes(t.crossing ?? '') && t['crossing:markings'] !== 'no';

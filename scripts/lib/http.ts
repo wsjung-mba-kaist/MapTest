@@ -14,6 +14,14 @@ export interface FetchOpts {
   body?: string;
   /** Called when a retryable failure happens (for logging). */
   onRetry?: (attempt: number, reason: string) => void;
+  /** Further HTTP statuses this server uses for transient failures; 429 and 5xx are always retried, other 4xx fail at once. */
+  retryOn?: number[];
+  /**
+   * cachedBytes only: inspect the fresh download before it is cached. A string is the reason it is bad; the fetch then
+   * throws with it and leaves no file, so the next run downloads again instead of reading a 200-byte XML error back
+   * as a BIL grid (which is how a bad quad used to survive until someone deleted it from cache/ by hand).
+   */
+  validate?: (buf: Buffer) => true | string;
 }
 
 const UA = 'paris-eiffel-walk-bake/0.1 (local open-data bake)';
@@ -25,25 +33,29 @@ export async function fetchRetry(url: string, opts: FetchOpts = {}): Promise<Res
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 120_000);
+    let res: Response | undefined;
+    // Only the network layer (DNS, reset, timeout) is retried blindly. The status is judged *outside* the try: it used
+    // to be thrown inside it, so the catch took a 404 / 403 for a transient failure too and a missing WMTS tile burned
+    // the full 3+10+30+90 s backoff before failing.
     try {
-      const res = await fetch(url, {
+      res = await fetch(url, {
         method: opts.method ?? 'GET',
         body: opts.body,
         headers: { 'User-Agent': UA, ...(opts.headers ?? {}) },
         signal: ctrl.signal,
       });
-      clearTimeout(t);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === retries) throw e;
+      opts.onRetry?.(attempt + 1, e instanceof Error ? e.message : String(e));
+    } finally { clearTimeout(t); }
+    if (res) {
       if (res.ok) return res;
-      const retryable = res.status === 429 || res.status >= 500;
+      const retryable = res.status === 429 || res.status >= 500 || !!opts.retryOn?.includes(res.status);
       const text = (await res.text().catch(() => '')).slice(0, 300);
       lastErr = new Error(`HTTP ${res.status} for ${url}\n${text}`);
       if (!retryable || attempt === retries) throw lastErr;
       opts.onRetry?.(attempt + 1, `HTTP ${res.status}`);
-    } catch (e) {
-      clearTimeout(t);
-      lastErr = e;
-      if (attempt === retries) throw e;
-      opts.onRetry?.(attempt + 1, e instanceof Error ? e.message : String(e));
     }
     await sleep(backoff[Math.min(attempt, backoff.length - 1)]);
   }
@@ -62,9 +74,9 @@ export async function cachedBytes(url: string, rel: string, opts: FetchOpts = {}
   if (await exists(file)) return fs.readFile(file);
   const res = await fetchRetry(url, opts);
   const buf = Buffer.from(await res.arrayBuffer());
-  await ensureDir(path.dirname(file));
-  await fs.writeFile(file + '.part', buf);
-  await fs.rename(file + '.part', file);
+  const verdict = opts.validate?.(buf) ?? true;
+  if (verdict !== true) throw new Error(`${rel}: ${verdict} (${url})`);
+  await writeFileAtomic(file, buf);
   return buf;
 }
 
@@ -78,9 +90,14 @@ export async function cachedJson<T = unknown>(url: string, rel: string, opts: Fe
 
 export const limit = (n: number) => pLimit(n);
 
-export async function writeJson(file: string, data: unknown) {
+/** Write via `<file>.part` + rename, so a crash mid-write leaves the previous file (or nothing), never a truncated one. */
+export async function writeFileAtomic(file: string, data: Buffer | string) {
   await ensureDir(path.dirname(file));
-  await fs.writeFile(file, JSON.stringify(data));
+  await fs.writeFile(file + '.part', data);
+  await fs.rename(file + '.part', file);
+}
+export async function writeJson(file: string, data: unknown) {
+  await writeFileAtomic(file, JSON.stringify(data));
 }
 export async function readJson<T>(file: string): Promise<T> {
   return JSON.parse(await fs.readFile(file, 'utf8')) as T;

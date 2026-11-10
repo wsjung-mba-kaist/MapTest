@@ -3,6 +3,7 @@ import { REFLECT_LAYER } from '../render/WaterReflection';
 import { DATA_URL, loadBinMesh } from './DataLoader';
 import { createRoofTopMaterial, createWallMaterial } from '../materials/FacadeMaterial';
 import { chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
+import type { Terrain } from './Terrain';
 
 /** Bridge decks (ortho-projected per chunk, so they get the 21 cm tile like the terrain), stone sides/piers and parapets. */
 export class Bridges {
@@ -42,9 +43,12 @@ export class Bridges {
 
   setOverview(tex: THREE.Texture | null) { for (const d of this.decks.values()) d.mat.setOverview(tex); }
   setTile(i: number, j: number, tex: THREE.Texture | null) { this.decks.get(chunkKey(i, j))?.mat.setTile(tex); }
-  /** Bind the tiles that streamed in before the bridges loaded. */
-  primeTiles(textureOf: (i: number, j: number) => THREE.Texture | null) {
-    for (const key of this.decks.keys()) { const [i, j] = key.split('_').map(Number); const t = textureOf(i, j); if (t) this.setTile(i, j, t); }
+  /** Bind the overview and the tiles that streamed in before the bridges loaded, then follow the terrain's texture events. */
+  attachTerrain(terrain: Terrain) {
+    this.setOverview(terrain.overview);
+    for (const key of this.decks.keys()) { const [i, j] = key.split('_').map(Number); const t = terrain.textureOf(i, j); if (t) this.setTile(i, j, t); }
+    terrain.onTileChanged.add((i, j, tex) => this.setTile(i, j, tex));
+    terrain.onOverview.add(tex => this.setOverview(tex));
   }
 }
 

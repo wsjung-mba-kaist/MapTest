@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FAR_TRAFFIC_FAR, FAR_TRAFFIC_NEAR } from '../radii';
 import type { PathGraph, EdgePoint } from './PathGraph';
 import type { SimClock } from './SimClock';
 import { buildingUniforms } from '../../materials/FacadeMaterial';
@@ -31,7 +32,7 @@ export class FarTraffic {
   private readonly posAttr: THREE.BufferAttribute;
   private readonly hdgAttr: THREE.BufferAttribute;
   private readonly tmp: EdgePoint = { x: 0, y: 0, z: 0, ux: 0, uz: -1, seg: 0 };
-  private readonly uniforms = { uNight: buildingUniforms.uNight, uNear: { value: 260 }, uFar: { value: 420 } };
+  private readonly uniforms = { uNight: buildingUniforms.uNight, uNear: { value: FAR_TRAFFIC_NEAR }, uFar: { value: FAR_TRAFFIC_FAR } };
 
   constructor(readonly graph: PathGraph, readonly clock: SimClock) {
     this.group.name = 'fartraffic';

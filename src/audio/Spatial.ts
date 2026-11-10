@@ -98,7 +98,11 @@ export class Spatial {
   constructor(private readonly ctx: AudioContext, private readonly out: AudioNode) {}
 
   /** Listener pose from the camera (world metres; the graph uses the same axes as the scene). */
+  private lx = NaN; private ly = 0; private lz = 0; private lfx = 0; private lfy = 0; private lfz = 0;
   setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number) {
+    // skip when the pose did not move: the same nine automation events every frame are the bulk of the audio-thread load
+    if (Math.abs(x - this.lx) < 0.02 && Math.abs(y - this.ly) < 0.02 && Math.abs(z - this.lz) < 0.02 && Math.abs(fx - this.lfx) < 0.002 && Math.abs(fy - this.lfy) < 0.002 && Math.abs(fz - this.lfz) < 0.002) return;
+    this.lx = x; this.ly = y; this.lz = z; this.lfx = fx; this.lfy = fy; this.lfz = fz;
     const l = this.ctx.listener, t = this.ctx.currentTime;
     this.fwd.x = fx; this.fwd.y = fy; this.fwd.z = fz;
     if (l.positionX) {
@@ -109,7 +113,15 @@ export class Spatial {
   }
 
   /** Assign this frame's sources (nearest first per kind) to the pool; the rest fade out. */
+  private acc = 0;
+  /**
+   * 20 Hz: every Voice.set issues 4-7 automation events and the listener 9, so per frame that was ~100 events
+   * (6000/s) on the audio thread for values the setTargetAtTime smoothing already blurs over 30-300 ms.
+   */
   update(sources: SpatialSource[], dt: number) {
+    this.acc += dt;
+    if (this.acc < 0.05) return;
+    dt = this.acc; this.acc = 0;
     const used = new Map<SpatialKind, number>();
     for (const s of sources) {
       const n = used.get(s.kind) ?? 0;

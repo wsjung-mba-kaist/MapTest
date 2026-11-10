@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { loadTexture } from '../world/DataLoader';
+import { assertAnchors, checkSamplerBudget } from './patch';
+import { loadTexture, assetUrl } from '../world/DataLoader';
 import { withLamps } from '../render/LocalLights';
-import { buildingUniforms } from './FacadeMaterial';
+import { globalUniforms } from '../render/GlobalUniforms';
 import { ORTHO_MARGIN, ORTHO_TILE_M, WORLD_HALF } from '../../shared/layout';
 
 /**
@@ -32,7 +33,7 @@ let detailPromise: Promise<void> | null = null;
 export function loadGroundDetail(): Promise<void> {
   if (detailPromise) return detailPromise;
   const rep = (t: THREE.Texture, srgb: boolean) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 16; return t; };
-  const tex = (name: string, srgb: boolean) => loadTexture(`/textures/pbr/${name}.jpg`, srgb).then(t => rep(t, srgb));
+  const tex = (name: string, srgb: boolean) => loadTexture(assetUrl(`textures/pbr/${name}.jpg`), srgb).then(t => rep(t, srgb));
   detailPromise = Promise.all([
     tex('Asphalt033_color', true), tex('Asphalt033_normal', false),
     tex('PavingStones138_color', true), tex('PavingStones138_normal', false),
@@ -68,7 +69,8 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
   if (opts.street) mat.defines = { STREET_SLAB: '' };
   mat.customProgramCacheKey = () => opts.street ? 'ground-v3-street' : 'ground-v3';
   mat.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, shared, own, { uNight: buildingUniforms.uNight });
+    assertAnchors('GroundMaterial', shader.vertexShader, shader.fragmentShader, ['common', 'uv_vertex'], ['common']);
+    Object.assign(shader.uniforms, shared, own, { uNight: globalUniforms.uNight });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 uvOv;\nvarying vec3 vWorldPosG; varying vec3 vNormalWG; varying vec2 vUvOv; varying vec2 vUvG;\n#ifdef STREET_SLAB\nattribute float sflag; varying float vSFlag;\n#endif')
       .replace('#include <uv_vertex>', /* glsl */`#include <uv_vertex>
@@ -200,6 +202,7 @@ export function createGroundMaterial(opts: { street?: boolean } = {}): GroundMat
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, gRough, uHasDetail);')
       // kerb faces sit in the slab's own shadow most of the day: a little ambient lift keeps them readable stone grey
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef STREET_SLAB\nif (vSFlag > 0.5) totalEmissiveRadiance += diffuseColor.rgb * 0.08;\n#endif');
+    checkSamplerBudget('GroundMaterial', shader.fragmentShader);
   };
   withLamps(mat);
   mat.setTile = t => { mat.map = t; own.uHasTile.value = t ? 1 : 0; mat.needsUpdate = true; };

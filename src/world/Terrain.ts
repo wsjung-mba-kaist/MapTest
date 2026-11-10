@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { REFLECT_LAYER } from '../render/WaterReflection';
 import type { Heightmap } from '../../shared/heightmap';
-import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, TERRAIN_MESH_SEGMENTS, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
+import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, TERRAIN_MESH_SEGMENTS, WORLD_HALF, chunkIndexOf, chunkKey, chunkOrigin } from '../../shared/layout';
 import { DATA_URL, loadTexture, PriorityLoader } from './DataLoader';
 import { createGroundMaterial, loadGroundDetail, setGroundWaterLevel, type GroundMaterial } from '../materials/GroundMaterial';
 
@@ -14,9 +14,18 @@ interface ChunkTile {
   fullRequested: boolean;
 }
 
+/** A plain listener list: `add` subscribes, `emit` calls each in subscription order. */
+export class Listeners<A extends unknown[]> {
+  private readonly fns: ((...a: A) => void)[] = [];
+  add(fn: (...a: A) => void) { this.fns.push(fn); }
+  emit(...a: A) { for (const f of this.fns) f(...a); }
+}
+
 /**
  * Ground: one heightmap mesh per chunk textured with its ortho tile.
  * Near chunks get the 1536² tile, everything else the 512² version.
+ * Roof tops, bridge decks and sidewalk slabs are shaded from the same textures: they subscribe to the three events below
+ * instead of polling `textureOf` every frame.
  */
 export class Terrain {
   readonly group = new THREE.Group();
@@ -26,8 +35,12 @@ export class Terrain {
   fullRadius = 1;      // chunks around the player that get full-res tiles
   segments = TERRAIN_MESH_SEGMENTS;
   overview: THREE.Texture | null = null;
-  onTileChanged: (i: number, j: number, tex: THREE.Texture) => void = () => {};
-  onOverview: (tex: THREE.Texture) => void = () => {};
+  /** a chunk's bound ortho texture changed (`textureOf` now returns `tex`); null when the full tile was dropped before the small one had landed */
+  readonly onTileChanged = new Listeners<[i: number, j: number, tex: THREE.Texture | null]>();
+  /** a chunk's surface mask streamed in */
+  readonly onMask = new Listeners<[i: number, j: number, tex: THREE.Texture]>();
+  /** the overview texture landed */
+  readonly onOverview = new Listeners<[tex: THREE.Texture]>();
 
   constructor(readonly heightmap: Heightmap) {
     this.group.name = 'terrain';
@@ -54,7 +67,7 @@ export class Terrain {
       tex.anisotropy = 16;
       this.overview = tex;
       for (const t of this.tiles.values()) t.mesh.material.setOverview(tex);
-      this.onOverview(tex);
+      this.onOverview.emit(tex);
     });
     void loadGroundDetail();
     for (const t of this.tiles.values()) { this.queueSmall(t); this.queueMask(t); }
@@ -80,7 +93,7 @@ export class Terrain {
       const wx = ox + lx, wz = oz + lz;
       pos[k * 3] = lx; pos[k * 3 + 1] = this.heightmap.sample(wx, wz); pos[k * 3 + 2] = lz;
       uv[k * 2] = (lx + ORTHO_MARGIN) / ORTHO_TILE_M; uv[k * 2 + 1] = 1 - (lz + ORTHO_MARGIN) / ORTHO_TILE_M;
-      uvOv[k * 2] = (wx + 1536) / 3072; uvOv[k * 2 + 1] = 1 - (wz + 1536) / 3072;
+      uvOv[k * 2] = (wx + WORLD_HALF) / (2 * WORLD_HALF); uvOv[k * 2 + 1] = 1 - (wz + WORLD_HALF) / (2 * WORLD_HALF);
       k++;
     }
     const idx = new Uint32Array(n * n * 6);
@@ -120,6 +133,7 @@ export class Terrain {
       tex.anisotropy = 4;
       t.mask = tex;
       t.mesh.material.setMask(tex);
+      this.onMask.emit(t.i, t.j, tex);
     });
   }
 
@@ -141,7 +155,7 @@ export class Terrain {
   private apply(t: ChunkTile, tex: THREE.Texture) {
     t.mesh.material.setTile(tex);
     t.mesh.material.color.set(0xffffff);
-    this.onTileChanged(t.i, t.j, tex);
+    this.onTileChanged.emit(t.i, t.j, tex);
   }
 
   setWaterLevel(y: number) { setGroundWaterLevel(y); }
@@ -149,6 +163,7 @@ export class Terrain {
   /** Call every frame with the player position; streams full-res tiles around it. */
   update(x: number, z: number) {
     this.playerX = x; this.playerZ = z;
+    this.loader.reprioritise();
     const { i: ci, j: cj } = chunkIndexOf(x, z);
     for (const t of this.tiles.values()) {
       const near = Math.abs(t.i - ci) <= this.fullRadius && Math.abs(t.j - cj) <= this.fullRadius;
@@ -156,7 +171,8 @@ export class Terrain {
       else if (t.fullRequested && (Math.abs(t.i - ci) > this.fullRadius + 1 || Math.abs(t.j - cj) > this.fullRadius + 1)) {
         // Clear the flag whether or not the texture ever landed: a request that was still queued when the player
         // walked away used to leave fullRequested stuck true, and the chunk kept its 512² tile for good.
-        if (t.full) { t.full.dispose(); t.full = undefined; if (t.small) this.apply(t, t.small); }
+        // (listeners hear the drop even when no small tile has landed yet, so no one keeps the disposed texture bound)
+        if (t.full) { t.full.dispose(); t.full = undefined; if (t.small) this.apply(t, t.small); else this.onTileChanged.emit(t.i, t.j, null); }
         else this.loader.cancel(`f_${t.i}_${t.j}`);
         t.fullRequested = false;
       }

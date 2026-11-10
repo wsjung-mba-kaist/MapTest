@@ -3,7 +3,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, MODELS_DIR, OUT_DIR } from '../config.ts';
+import { ENV, CACHE_DIR, MODELS_DIR, OUT_DIR } from '../config.ts';
 import { heroFootprints } from './landmarks_footprints.ts';
 import { ensureDir, exists, readJson, writeJson } from './http.ts';
 import { loadTheme } from './overpass.ts';
@@ -38,13 +38,12 @@ async function loadLuma(file: string, size: number): Promise<Float32Array> {
 
 /** Estimate the capture-time sun from the tower shadow in the overview. */
 function estimateSun(luma: Float32Array, size: number): SunEstimate {
-  const envAz = parseFloat(process.env.ORTHO_SUN_AZ ?? ''), envEl = parseFloat(process.env.ORTHO_SUN_ELEV ?? '');
   const mPerPx = (WORLD_HALF * 2) / size;
   const toPx = (x: number, z: number) => [(x + WORLD_HALF) / mPerPx, (z + WORLD_HALF) / mPerPx];
   const sample = (x: number, z: number) => { const [px, pz] = toPx(x, z); const i = Math.round(px), j = Math.round(pz); return i >= 0 && j >= 0 && i < size && j < size ? luma[j * size + i] : 1; };
-  if (Number.isFinite(envAz) && Number.isFinite(envEl)) {
-    const az = envAz * Math.PI / 180;
-    return { azDeg: envAz, elevDeg: envEl, shadowDirWorld: [-Math.sin(az), Math.cos(az)], shadowLenM: TOWER_H / Math.tan(envEl * Math.PI / 180), source: 'env' };
+  if (ENV.orthoSun) {
+    const { azDeg, elevDeg } = ENV.orthoSun, az = azDeg * Math.PI / 180;
+    return { azDeg, elevDeg, shadowDirWorld: [-Math.sin(az), Math.cos(az)], shadowLenM: TOWER_H / Math.tan(elevDeg * Math.PI / 180), source: 'env' };
   }
   // ring medians give a local reference brightness per radius
   const radii: number[] = []; for (let r = 90; r <= 520; r += 2) radii.push(r);
@@ -158,20 +157,36 @@ export async function collectCasters(): Promise<{ casters: Caster[]; crowns: Cro
 export { DEFAULT_SUN };
 
 export async function run(ctx: BakeContext) {
-  if (process.env.DESHADOW === '0') { log.info('deshadow: skipped (DESHADOW=0)'); return; }
+  if (!ENV.deshadow) { log.info('deshadow: skipped (DESHADOW=0)'); return; }
   const groundDir = path.join(OUT_DIR, 'ground');
   const rawDir = path.join(CACHE_DIR, 'ortho_raw');
   const stamp = path.join(groundDir, 'deshadow.json');
-  if (!ctx.force && await exists(stamp)) { log.info('deshadow: cached'); return; }
+  const gj = path.join(groundDir, 'ground.json');
+  // the stamp remembers which ortho output (`generated` in ground.json) it brightened: a rebaked ortho must be processed again,
+  // which the plain "stamp exists" check used to skip. Data from before either stamp existed compares undefined to undefined: cached.
+  const ground = await readJson<{ generated?: string }>(gj).catch(() => ({} as { generated?: string }));
+  const prevStamp = await readJson<{ orthoGenerated?: string }>(stamp).catch(() => null);
+  const orthoChanged = !!prevStamp && prevStamp.orthoGenerated !== ground.generated;
+  if (!ctx.force && prevStamp && !orthoChanged) { log.info('deshadow: cached'); return; }
+  if (orthoChanged) log.info(`deshadow: ortho output changed (${prevStamp!.orthoGenerated ?? 'unstamped'} -> ${ground.generated ?? 'unstamped'}), raw copies of the rewritten tiles are refreshed`);
+  const stampTime = prevStamp ? (await fs.stat(stamp)).mtimeMs : 0;
   await ensureDir(rawDir); await ensureDir(path.join(rawDir, 'tiles'));
-  // keep pristine originals (copy once)
-  const copyOnce = async (rel: string) => { const dst = path.join(rawDir, rel); if (!await exists(dst)) await fs.copyFile(path.join(groundDir, rel), dst); return dst; };
+  // pristine originals: copied once, and again for a tile ortho rewrote after the last pass (newer than the stamp). A tile the last
+  // pass brightened is older than the stamp and keeps its raw copy, or it would be lifted twice.
+  const copyOnce = async (rel: string) => {
+    const src = path.join(groundDir, rel), dst = path.join(rawDir, rel);
+    if (!await exists(dst) || (orthoChanged && (await fs.stat(src)).mtimeMs > stampTime)) await fs.copyFile(src, dst);
+    return dst;
+  };
   const rawOverview = await copyOnce('overview.jpg');
 
-  const luma = await loadLuma(rawOverview, 2048);
-  const detected = estimateSun(luma, 2048);
-  log.info(`deshadow: detector says azimuth ${detected.azDeg.toFixed(1)}°, elevation ${detected.elevDeg.toFixed(1)}° (${detected.source})`);
-  const sun = detected.source === 'env' || process.env.ORTHO_SUN_AUTO === '1' ? detected : DEFAULT_SUN;
+  // the detector walks 720 directions over the 2048 px overview and its answer is used only with ORTHO_SUN_AUTO=1 or an
+  // explicit ORTHO_SUN_AZ/ELEV (which it returns verbatim); every other run used to pay for it and then take DEFAULT_SUN
+  let sun = DEFAULT_SUN;
+  if (ENV.orthoSun || ENV.orthoSunAuto) {
+    sun = estimateSun(await loadLuma(rawOverview, 2048), 2048);
+    log.info(`deshadow: detector says azimuth ${sun.azDeg.toFixed(1)}°, elevation ${sun.elevDeg.toFixed(1)}° (${sun.source})`);
+  }
   log.info(`deshadow: capture sun azimuth ${sun.azDeg.toFixed(1)}°, elevation ${sun.elevDeg.toFixed(1)}° (tower shadow ${sun.shadowLenM.toFixed(0)} m toward ${sun.shadowDirWorld.map(v => v.toFixed(2))}) — ${sun.source}`);
 
   const { casters, crowns } = await collectCasters();
@@ -200,8 +215,7 @@ export async function run(ctx: BakeContext) {
   const maskO = await sharp({ create: { width: OVERVIEW_PX, height: OVERVIEW_PX, channels: 3, background: 'black' } }).composite(quads).png().toBuffer();
   const gO = await deshadowImage(rawOverview, maskO, OVERVIEW_PX, path.join(groundDir, 'overview.jpg'), 80);
   const meanGain = gains.reduce((s, v) => s + v, 0) / gains.length;
-  await writeJson(stamp, { sun, meanTileGain: meanGain, overviewGain: gO, recover: RECOVER, generated: new Date().toISOString() });
-  const gj = path.join(groundDir, 'ground.json');
+  await writeJson(stamp, { sun, meanTileGain: meanGain, overviewGain: gO, recover: RECOVER, generated: new Date().toISOString(), orthoGenerated: ground.generated });
   try { const g = await readJson<Record<string, unknown>>(gj); g.captureSun = sun; await writeJson(gj, g); } catch { /* optional */ }
   log.info(`deshadow: done, mean tile gain ${meanGain.toFixed(2)}, overview gain ${gO.toFixed(2)}`);
 }

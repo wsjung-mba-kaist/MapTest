@@ -2,11 +2,14 @@ import type { Landmark } from '../../shared/layout';
 import { CATEGORY_LABEL, bearingDeg, fmtDistance } from '../../shared/landmarks';
 import { CATEGORY_COLOR } from './PlacePanel';
 import { DATA_URL } from '../world/DataLoader';
+import { kbdNodes, restoreFocus, trapTab } from './dom';
+import { S } from './strings';
 
 /**
  * L: the landmark list (#places), nearest first, with a search box, category chips, thumbnails, hotkey chips and a
  * heading arrow; click a row to glide there. While it is open App calls `update` so distances and arrows follow
- * the player; the order stays as it was on opening so rows do not move under the cursor.
+ * the player; the order stays as it was on opening so rows do not move under the cursor. Focus goes to the first
+ * row (or the search box) on show, Tab stays inside, and hide() returns it to the opener.
  */
 export class PlaceList {
   private readonly root = document.createElement('div');
@@ -17,18 +20,20 @@ export class PlaceList {
   private items: { lm: Landmark; row: HTMLButtonElement; dist: HTMLSpanElement; arrow: HTMLSpanElement }[] = [];
   private category: string | null = null;
   private currentId: string | null = null;
+  private returnTo: Element | null = null;
   open = false;
 
   constructor(parent: HTMLElement, private readonly onPick: (lm: Landmark) => void, private readonly onClose: () => void) {
     this.root.id = 'places'; this.root.className = 'modal'; this.root.hidden = true;
-    this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', '명소 목록');
+    this.root.setAttribute('role', 'dialog'); this.root.setAttribute('aria-modal', 'true'); this.root.setAttribute('aria-label', S.places.title);
     const head = document.createElement('div'); head.className = 'head';
-    head.innerHTML = '<b>명소</b><span class="hint"><kbd>1</kbd>–<kbd>8</kbd> 바로 이동 · <kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd> · <kbd>L</kbd> 닫기</span>';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close'; close.setAttribute('aria-label', '닫기');
+    const title = document.createElement('b'); title.textContent = S.places.head;
+    const hint = document.createElement('span'); hint.className = 'hint'; hint.append(...kbdNodes(S.places.hint));
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '✕'; close.className = 'close'; close.setAttribute('aria-label', S.modal.close);
     close.addEventListener('click', () => this.onClose());
-    head.appendChild(close);
+    head.append(title, hint, close);
     const tools = document.createElement('div'); tools.className = 'tools';
-    this.search.type = 'search'; this.search.placeholder = '이름 검색 (한 · 불 · 영)'; this.search.setAttribute('aria-label', '명소 검색');
+    this.search.type = 'search'; this.search.placeholder = S.places.search; this.search.setAttribute('aria-label', S.places.searchAria);
     this.search.addEventListener('input', () => this.rebuild());
     this.chips.className = 'chips';
     tools.append(this.search, this.chips);
@@ -36,6 +41,7 @@ export class PlaceList {
     this.root.append(head, tools, this.rows);
     this.root.addEventListener('pointerdown', e => e.stopPropagation());
     this.root.addEventListener('keydown', e => {
+      trapTab(this.root, e);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         const btns = this.items.map(i => i.row).filter(b => !b.hidden);
         if (!btns.length) return;
@@ -49,6 +55,7 @@ export class PlaceList {
 
   show(list: { landmark: Landmark; dist: number }[], x: number, z: number, yaw: number, currentId: string | null = null) {
     this.list = list; this.currentId = currentId;
+    if (!this.open) this.returnTo = document.activeElement;   // a re-show while open (refresh) keeps the original opener
     this.buildChips();
     this.rebuild();
     this.update(x, z, yaw);
@@ -56,7 +63,11 @@ export class PlaceList {
     (this.items.find(i => !i.row.hidden)?.row ?? this.search).focus();
   }
 
-  hide() { this.root.hidden = true; this.open = false; }
+  hide() {
+    const was = this.open;
+    this.root.hidden = true; this.open = false;
+    if (was) { restoreFocus(this.returnTo); this.returnTo = null; }
+  }
 
   /** 4 Hz while open: distances and arrows follow the player */
   update(x: number, z: number, yaw: number) {
@@ -79,7 +90,7 @@ export class PlaceList {
       b.addEventListener('click', () => { this.category = cat; for (const c of this.chips.children) c.classList.remove('on'); b.classList.add('on'); this.rebuild(); });
       this.chips.appendChild(b);
     };
-    chip('전체', null);
+    chip(S.places.all, null);
     for (const c of cats) chip(CATEGORY_LABEL[c] ?? c, c, CATEGORY_COLOR[c]);
   }
 

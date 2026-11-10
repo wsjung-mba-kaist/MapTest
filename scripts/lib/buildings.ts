@@ -1,12 +1,12 @@
 import type { FeatureCollection, Geometry, MultiPolygon, Polygon } from 'geojson';
-import { frame } from '../../shared/geo.ts';
+import { Style } from '../../shared/layout.ts';
 import type { Heightmap } from '../../shared/heightmap.ts';
 import { HAUSSMANN, ROOF_OVERRIDES } from '../config.ts';
 import { LANDMARK_MODELS } from '../landmarks_models.ts';
 import { heroFootprints, inHero } from './landmarks_footprints.ts';
 import type { OsmProps } from './overpass.ts';
 import type { BdTopoProps } from './bdtopo.ts';
-import { area, bboxOf, centroid, cleanRing, minAreaRect, orient, pointInPoly, type MinRect, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, bboxOf, centroid, minAreaRect, pointInPoly, toWorldPolys, type MinRect, type Poly, type Pt } from './polygons.ts';
 import { log } from './log.ts';
 
 export type RoofKind = 'flat' | 'mansard' | 'hipped' | 'gabled' | 'pyramidal' | 'dome' | 'onion' | 'cone' | 'round' | 'skillion';
@@ -14,7 +14,7 @@ export type RoofKind = 'flat' | 'mansard' | 'hipped' | 'gabled' | 'pyramidal' | 
 export const CURVED_ROOFS: ReadonlySet<RoofKind> = new Set<RoofKind>(['dome', 'onion', 'cone']);
 export type HeightSource = 'osm' | 'bdtopo' | 'levels' | 'default';
 
-export const enum Style { Haussmann = 0, Modern = 1, Stone = 2, Industrial = 3, Monument = 4 }
+export { Style };   // facade style ids live in shared/layout.ts (the shader and the runtime decode them)
 
 /** Roof surface material; the id travels in the roof vertices' meta.z and picks the shader branch. */
 export type RoofMat = 'zinc' | 'slate' | 'tile' | 'copper' | 'lead' | 'glass' | 'gilded' | 'painted';
@@ -99,20 +99,8 @@ export function parseColour(v: string | undefined): [number, number, number] | n
   return NAMED[s] ?? null;
 }
 
-function toWorldPolys(geom: Geometry): Poly[] {
-  const conv = (ring: number[][]): Ring => cleanRing(ring.map(([lon, lat]) => { const w = frame.toWorld(lon, lat); return [w.x, w.z]; }));
-  const polys: Poly[] = [];
-  const push = (coords: number[][][]) => {
-    const rings = coords.map(conv).filter(r => r.length >= 3);
-    if (!rings.length) return;
-    const outer = orient(rings[0], false);
-    const holes = rings.slice(1).map(r => orient(r, true)).filter(r => area(r) > 1);
-    polys.push([outer, ...holes]);
-  };
-  if (geom.type === 'Polygon') push(geom.coordinates);
-  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(push);
-  return polys;
-}
+/** toWorldPolys minus holes under 1 m²: OSM slivers between building parts, which would punch pinholes through a roof cap. */
+const footprintPolys = (geom: Geometry): Poly[] => toWorldPolys(geom).map(([outer, ...holes]) => [outer, ...holes.filter(r => area(r) > 1)]);
 
 class GridIndex<T extends { bbox: [number, number, number, number] }> {
   private cells = new Map<string, T[]>();
@@ -202,7 +190,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
     const p = f.properties;
     if (p.hauteur == null || p.hauteur < 2.5) continue;
     if (p.nature === 'Tour, donjon' && p.hauteur > 100) continue;
-    for (const rings of toWorldPolys(f.geometry)) {
+    for (const rings of footprintPolys(f.geometry)) {
       const a = area(rings[0]); if (a < 4) continue;
       bdIndex.add({ rings, area: a, bbox: bboxOf(rings), p }); bdCount++;
     }
@@ -237,7 +225,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
     // the cascade below handed them the Haussmann default: a barge became an 18.5 m mansard block, half-sunk.
     const floating = tags.building === 'houseboat' || tags.building === 'boat' || tags.floating === 'yes' || tags.man_made === 'pier';
 
-    for (const rings of toWorldPolys(f.geometry)) {
+    for (const rings of footprintPolys(f.geometry)) {
       const a = area(rings[0]);
       if (a < 4) { stats.skipped++; continue; }
       const c = centroid(rings[0]);
@@ -275,7 +263,7 @@ export function buildSpecs(osm: FeatureCollection<Geometry, OsmProps>, bd: Featu
       const shapedRise = (available: number) => roofHeightTag ?? angleRise ?? (kindTag ? defaultRise(kindTag, minor, available) : 4.5);
 
       // ---- height cascade
-      let eave = 0, ridge = 0, source: HeightSource = 'default', bdp: BdTopoProps | null = null;
+      let eave: number, ridge: number, source: HeightSource, bdp: BdTopoProps | null = null;
       let lowDefault = false;   // an untagged footprint too small or too narrow to be an apartment block
       if (heightTag != null && heightTag > 1.5) {
         // OSM "height" is the total height including the roof.

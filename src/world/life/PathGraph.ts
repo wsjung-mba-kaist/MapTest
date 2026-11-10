@@ -1,6 +1,6 @@
 import { DATA_URL, fetchBuffer } from '../DataLoader';
 import { parseBinMesh } from '../../../shared/binmesh';
-import { EdgeFlag, NodeFlag, laneOffset, rightNormal, type PathsMeta } from '../../../shared/paths';
+import { EdgeFlag, NodeFlag, edgeHeadingInto, laneOffset, rightNormal, type PathsMeta, PATHS_VERSION } from '../../../shared/paths';
 
 /** A point on the network: position, unit heading (x/z) and the segment index used as a search hint. */
 export interface EdgePoint { x: number; y: number; z: number; ux: number; uz: number; seg: number }
@@ -24,8 +24,9 @@ export class PathGraph {
   get nodeCount() { return this.adjStart.length; }
 
   async load() {
-    const { header, arrays } = parseBinMesh(await fetchBuffer(`${DATA_URL}/paths.bin`));
+    const { header, arrays } = parseBinMesh(await fetchBuffer(`${DATA_URL}/paths.bin`), 'paths.bin');
     this.meta = header.meta as unknown as PathsMeta;
+    if (this.meta?.version !== PATHS_VERSION) throw new Error(`paths.bin version ${this.meta?.version}, this build reads ${PATHS_VERSION} — re-run npm run bake:paths`);
     const g = (sec: string, attr: string) => arrays.get(sec)!.attrs.get(attr)!;
     this.nodePos = g('nodes', 'pos') as Float32Array; this.adjStart = g('nodes', 'adjStart') as Uint32Array; this.adjCount = g('nodes', 'adjCount') as Uint8Array; this.nodeFlags = g('nodes', 'flags') as Uint8Array;
     this.adj = g('adj', 'edge') as Uint32Array;
@@ -130,8 +131,7 @@ export class PathGraph {
       const e = this.adj[s + k];
       if (e === fromEdge) continue;
       const dir: 1 | -1 = this.eA[e] === node ? 1 : -1;
-      if (dir < 0 && this.isOneway(e) && allowed === this.driveAllowed) continue;
-      if (!allowed(e, dir)) continue;
+      if (!allowed(e, dir)) continue;   // driveAllowed already refuses the wrong way down a one-way street
       // heading of the candidate's first segment
       const v0 = this.eV0[e], nv = this.eNv[e];
       const i = dir > 0 ? v0 : v0 + nv - 1, j = dir > 0 ? v0 + 1 : v0 + nv - 2;
@@ -145,6 +145,8 @@ export class PathGraph {
     for (const cnd of cand) { r -= cnd.w; if (r <= 0) return { e: cnd.e, dir: cnd.dir }; }
     return { e: cand[cand.length - 1].e, dir: cand[cand.length - 1].dir };
   }
+  /** Unit direction of travel along `e` on arriving at `node` (shared/paths.ts edgeHeadingInto: signals, cars and crossings agree). */
+  headingInto(e: number, node: number, out: { x: number; z: number }) { return edgeHeadingInto(this, e, node, out); }
   readonly driveAllowed = (e: number, dir: 1 | -1) => this.drivable(e) && !(dir < 0 && this.isOneway(e));
   readonly walkAllowed = (e: number, _dir: 1 | -1) => this.walkable(e);
   readonly flags = EdgeFlag;

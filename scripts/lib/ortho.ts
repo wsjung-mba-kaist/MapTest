@@ -1,11 +1,10 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import type { BakeContext } from '../bake.ts';
 import { log } from './log.ts';
-import { CACHE_DIR, OUT_DIR, ORTHO_OVERVIEW_ZOOM, ORTHO_ZOOM, WMTS_ORTHO } from '../config.ts';
+import { OUT_DIR, ORTHO_OVERVIEW_ZOOM, ORTHO_ZOOM, WMTS_ORTHO } from '../config.ts';
 import { heroFootprints } from './landmarks_footprints.ts';
-import { cachedBytes, ensureDir, exists, limit } from './http.ts';
+import { cachedBytes, ensureDir, exists, limit, readJson, writeJson } from './http.ts';
 import { frame, lonLatToTile, TILE_SIZE } from '../../shared/geo.ts';
 import { CHUNK_SIZE, GRID_N, ORTHO_MARGIN, ORTHO_TILE_M, ORTHO_TILE_PX, OVERVIEW_PX, WORLD_HALF, chunkOrigin, chunkKey } from '../../shared/layout.ts';
 import { loadTheme } from './overpass.ts';
@@ -161,18 +160,34 @@ async function downloadRange(store: TileStore, half: number, label: string) {
   log.info(`ortho ${label}: ${total} tiles on disk`);
 }
 
+const tileFile = (key: string, small: boolean) => path.join(tilesDir, `${key}${small ? '_s' : ''}.jpg`);
+
+/** true when the overview and both JPEGs of every chunk tile exist: nothing to warp, so nothing to download. */
+async function allOutputsExist(): Promise<boolean> {
+  if (!await exists(path.join(groundDir, 'overview.jpg'))) return false;
+  for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) { const k = chunkKey(i, j); if (!await exists(tileFile(k, false)) || !await exists(tileFile(k, true))) return false; }
+  return true;
+}
+
 export async function run(ctx: BakeContext) {
   await ensureDir(tilesDir);
+  const groundJson = path.join(groundDir, 'ground.json');
+  const prevMeta = await readJson<Record<string, unknown>>(groundJson).catch(() => null);
   const inpaint = await loadHeroInpaints();
   log.info(inpaint.length ? `ortho: ${inpaint.length} hero footprint(s) to inpaint (${inpaint.map(i => `${i.cx.toFixed(0)},${i.cz.toFixed(0)}`).join('; ')})` : 'ortho: no hero footprint (run osm step first) - skipping inpaint');
 
   const near = new TileStore(ORTHO_ZOOM);
   const far = new TileStore(ORTHO_OVERVIEW_ZOOM, 400);
-  await downloadRange(near, WORLD_HALF + ORTHO_MARGIN, 'near');
-  await downloadRange(far, WORLD_HALF, 'overview');
+  // with every output on disk the warp below touches no source tile, and cachedBytes used to read ~5000 cached JPEGs just to prove they exist
+  if (ctx.force || !await allOutputsExist()) {
+    await downloadRange(near, WORLD_HALF + ORTHO_MARGIN, 'near');
+    await downloadRange(far, WORLD_HALF, 'overview');
+  } else log.info('ortho: every tile and the overview exist, download skipped');
 
   const overviewOut = path.join(groundDir, 'overview.jpg');
+  let overviewWritten = false;
   if (ctx.force || !await exists(overviewOut)) {
+    overviewWritten = true;
     const t = Date.now();
     const buf = await warpRegion(far, -WORLD_HALF, -WORLD_HALF, WORLD_HALF * 2, OVERVIEW_PX, inpaint);
     await sharp(buf, { raw: { width: OVERVIEW_PX, height: OVERVIEW_PX, channels: 3 } }).jpeg({ quality: 82, mozjpeg: true }).toFile(overviewOut);
@@ -183,8 +198,8 @@ export async function run(ctx: BakeContext) {
   const t0 = Date.now();
   for (let j = 0; j < GRID_N; j++) for (let i = 0; i < GRID_N; i++) {
     const key = chunkKey(i, j);
-    const out = path.join(tilesDir, `${key}.jpg`);
-    const outS = path.join(tilesDir, `${key}_s.jpg`);
+    const out = tileFile(key, false);
+    const outS = tileFile(key, true);
     if (!ctx.force && await exists(out) && await exists(outS)) { skipped++; continue; }
     const o = chunkOrigin(i, j);
     const buf = await warpRegion(near, o.x - ORTHO_MARGIN, o.z - ORTHO_MARGIN, ORTHO_TILE_M, ORTHO_TILE_PX, inpaint);
@@ -195,6 +210,10 @@ export async function run(ctx: BakeContext) {
     if (written % 12 === 0) log.info(`ortho: ${written} tiles written (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
   }
   log.info(`ortho: ${written} chunk tiles written, ${skipped} cached, ${CHUNK_SIZE} m chunks with ${ORTHO_MARGIN} m margin`);
-  await fs.writeFile(path.join(groundDir, 'ground.json'), JSON.stringify({ tilePx: ORTHO_TILE_PX, tileM: ORTHO_TILE_M, margin: ORTHO_MARGIN, overviewPx: OVERVIEW_PX, overviewHalf: WORLD_HALF, small: 512, inpaint: inpaint.length > 0 }));
-  void CACHE_DIR;
+  // `generated` is the stamp deshadow keys its re-run on, so it moves only when a tile or the overview was rewritten; a run that
+  // rewrote nothing keeps the previous stamp (none for data baked before it existed) and deshadow's `captureSun` with it
+  const changed = written > 0 || overviewWritten;
+  const generated = changed ? new Date().toISOString() : prevMeta?.generated;
+  const captureSun = changed ? undefined : prevMeta?.captureSun;
+  await writeJson(groundJson, { tilePx: ORTHO_TILE_PX, tileM: ORTHO_TILE_M, margin: ORTHO_MARGIN, overviewPx: OVERVIEW_PX, overviewHalf: WORLD_HALF, small: 512, inpaint: inpaint.length > 0, generated, captureSun });
 }

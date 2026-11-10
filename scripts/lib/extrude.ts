@@ -1,9 +1,10 @@
 import earcut from 'earcut';
+import { HAUSSMANN } from '../config.ts';
 import { SurfaceFlag, ORTHO_MARGIN, CHUNK_SIZE, packStyleSeed } from '../../shared/layout.ts';
 import { bearingToDir } from '../../shared/geo.ts';
 import { GeomBuilder } from './binmesh.ts';
 import { CURVED_ROOFS, type BuildingSpec, type RoofKind } from './buildings.ts';
-import { area, centroid, clipToBand, distToRing, erodeRing, orient, perimeter, pointInRing, signedArea, type MinRect, type Poly, type Pt, type Ring } from './polygons.ts';
+import { area, centroid, clipToBand, erodeRing, orient, perimeter, pointInRing, type MinRect, type Poly, type Pt, type Ring } from './polygons.ts';
 import { placeRoofDetails } from './roofdetails.ts';
 
 export interface ChunkBuilders {
@@ -18,7 +19,8 @@ export type DsmParts = (b: BuildingSpec) => ((p: Pt) => number) | null;
 /** Hook for the DSM cap (scripts/lib/dsmroof.ts): returns null to fall back to the analytic roof. */
 export type DsmHook = (gb: GeomBuilder, b: BuildingSpec, ox: number, oz: number, meta: [number, number, number, number], tint: [number, number, number]) => { trisBefore: number; trisAfter: number; wallTop: (p: Pt) => number } | null;
 
-const MANSARD = { inset1: 1.3, rise1Max: 4.0, inset2Max: 4.0 };
+/** mansard profile (config.HAUSSMANN): first inset, max rise of the steep brisis, max inset of the terrasson */
+const MANSARD = { inset1: HAUSSMANN.mansardInset1, rise1Max: HAUSSMANN.mansardRise1Max, inset2Max: HAUSSMANN.mansardInset2Max };
 /**
  * Extra wall-top samples along a long edge, matching the spacing the surface fit uses. Without them one quad spans
  * the whole edge and its top is a straight line between the two ends: the Maison de la Radio had a 42 m facade
@@ -99,24 +101,6 @@ function addWallsProfile(gb: GeomBuilder, ring: Ring, y0: number, groundY: numbe
       gb.quad(i0, i1, i2, i3);
       u += seg;
     }
-  }
-}
-
-/** Sloped quads between ring r0 at y0 and the vertex-corresponding ring r1 at y1. */
-function addSlope(gb: GeomBuilder, r0: Ring, r1: Ring, y0: number, y1: number, ox: number, oz: number, meta: Meta, tint: Tint) {
-  const n = r0.length;
-  let u = 0;
-  for (let i = 0; i < n; i++) {
-    const a = r0[i], b = r0[(i + 1) % n], a1 = r1[i], b1 = r1[(i + 1) % n];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const rise = Math.hypot(y1 - y0, Math.hypot(a1[0] - a[0], a1[1] - a[1]));
-    const c: [number, number, number, number] = [tint[0], tint[1], tint[2], SurfaceFlag.RoofSlope];
-    const i0 = gb.vertex(a[0] - ox, y0, a[1] - oz, u, 0, meta, c);
-    const i1 = gb.vertex(b[0] - ox, y0, b[1] - oz, u + len, 0, meta, c);
-    const i2 = gb.vertex(b1[0] - ox, y1, b1[1] - oz, u + len, rise, meta, c);
-    const i3 = gb.vertex(a1[0] - ox, y1, a1[1] - oz, u, rise, meta, c);
-    gb.quad(i0, i1, i2, i3);
-    u += len;
   }
 }
 
@@ -251,7 +235,7 @@ function addCone(gb: GeomBuilder, ring: Ring, y0: number, rise: number, ox: numb
 interface ProfileFrame { axis: Pt; perp: Pt; centre: Pt; half: number }
 
 /** Ridge axis and cross direction of a gabled / round / skillion roof from roof:direction, roof:orientation or the min-area rect. */
-export function profileFrame(b: BuildingSpec, kind: RoofKind): ProfileFrame {
+export function profileFrame(b: BuildingSpec, _kind: RoofKind): ProfileFrame {
   const rect = b.rect;
   const longDir: Pt = rect.w >= rect.h ? [Math.cos(rect.angle), Math.sin(rect.angle)] : [-Math.sin(rect.angle), Math.cos(rect.angle)];
   const shortDir: Pt = [-longDir[1], longDir[0]];
@@ -451,5 +435,4 @@ function extrudeAnalytic(b: BuildingSpec, cb: ChunkBuilders, ox: number, oz: num
   if (!roofDone) {
     addCap(cb.tops, b.rings, yEave, ox, oz, rmeta, roofTint, topFlag);
   }
-  void signedArea; void addSlope; void distToRing;
 }
